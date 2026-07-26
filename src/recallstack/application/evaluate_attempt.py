@@ -14,7 +14,11 @@ from recallstack.config import RecallStackConfig
 from recallstack.db.models import Mastery, utcnow
 from recallstack.db.repositories import RepositoryStore
 from recallstack.domain.schemas import AttemptEvaluationResult
-from recallstack.learning.code_loader import load_code_lookup, resolve_local_repo_root, snippet_for_ref
+from recallstack.learning.code_loader import (
+    load_code_lookup,
+    resolve_local_repo_root,
+    snippet_for_ref,
+)
 from recallstack.learning.hint_engine import HintEngine
 from recallstack.learning.mastery_calculator import MasteryCalculator, MasterySignals
 from recallstack.learning.rubric_evaluator import RubricEvaluator

@@ -102,74 +102,74 @@ export default function ConceptPage() {
   if (loading) {
     return (
       <AppShell title="概念词条">
-        <p className="text-slate-500">加载中…</p>
+        <p className="text-[var(--rs-muted)]">加载中…</p>
       </AppShell>
     );
   }
   if (error || !concept) {
     return (
       <AppShell title="概念词条">
-        <p className="text-red-600">{error || "概念不存在"}</p>
+        <p className="text-[var(--rs-danger)]">{error || "概念不存在"}</p>
       </AppShell>
     );
   }
 
   return (
     <AppShell>
-      <div className="mb-4 text-sm text-slate-500 flex items-center justify-between gap-3 flex-wrap">
+      <div className="mb-4 text-sm text-[var(--rs-muted)] flex items-center justify-between gap-3 flex-wrap">
         <div className="flex gap-4">
           <Link
             to={`/repositories/${concept.repository_id}`}
-            className="hover:underline text-indigo-700"
+            className="hover:underline text-[var(--rs-accent)]"
           >
             ← 返回仓库 Wiki
           </Link>
           {concept.wiki_page_id && (
             <Link
               to={`/repositories/${concept.repository_id}?page=${encodeURIComponent(concept.wiki_page_id)}`}
-              className="hover:underline text-slate-600"
+              className="hover:underline text-[var(--rs-ink-2)]"
             >
               打开对应 Wiki 词条
             </Link>
           )}
         </div>
-        <span className="text-xs text-slate-400">词条 · {concept.slug}</span>
+        <span className="text-xs text-[var(--rs-muted)]">词条 · {concept.slug}</span>
       </div>
 
-      <article className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+      <article className="bg-white border border-[var(--rs-line)] rounded-2xl overflow-hidden">
         {/* 1. 是什么 */}
-        <header className="px-6 md:px-8 py-6 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-indigo-50">
-          <div className="text-xs uppercase tracking-wide text-slate-400 mb-2">1 · 是什么</div>
-          <h1 className="text-3xl font-bold text-slate-900 mb-2">{concept.title}</h1>
+        <header className="px-6 md:px-8 py-6 border-b border-[var(--rs-line)] bg-[var(--rs-surface-2)]">
+          <div className="text-xs uppercase tracking-wide text-[var(--rs-muted)] mb-2">1 · 是什么</div>
+          <h1 className="text-3xl font-bold text-[var(--rs-ink)] mb-2">{concept.title}</h1>
           {concept.stale && (
-            <div className="inline-block text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 mb-2">
+            <div className="inline-block text-sm text-[var(--rs-warning)] bg-[var(--rs-warning-soft)] border border-[var(--rs-warning)] rounded-lg px-3 py-1.5 mb-2">
               这个词条对应旧版本代码
             </div>
           )}
-          <p className="text-slate-700 leading-relaxed max-w-3xl">{concept.description}</p>
+          <p className="text-[var(--rs-ink-2)] leading-relaxed max-w-3xl">{concept.description}</p>
         </header>
 
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px]">
           <div className="p-6 md:p-8 space-y-10">
             {/* 2. 为什么重要 */}
             <section>
-              <h2 className="text-lg font-semibold text-slate-900 mb-2">2 · 为什么重要</h2>
-              <p className="text-slate-700 leading-relaxed">
+              <h2 className="text-lg font-semibold text-[var(--rs-ink)] mb-2">2 · 为什么重要</h2>
+              <p className="text-[var(--rs-ink-2)] leading-relaxed">
                 {concept.why_learn || "理解该概念有助于建立对仓库主流程的心智模型。"}
               </p>
             </section>
 
             {/* 3. 源码证据 */}
             <section>
-              <h2 className="text-lg font-semibold text-slate-900 mb-2">3 · 源码证据</h2>
-              <p className="text-sm text-slate-500 mb-3">
+              <h2 className="text-lg font-semibold text-[var(--rs-ink)] mb-2">3 · 源码证据</h2>
+              <p className="text-sm text-[var(--rs-muted)] mb-3">
                 Wiki 的可信度来自证据。先读这些位置，再做回忆。
               </p>
               <ul className="space-y-2">
                 {(concept.source_references || []).map((ref, i) => (
                   <li key={`${ref.path}-${i}`}>
                     <button
-                      className="w-full text-left font-mono text-sm px-3 py-2 rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 text-slate-800"
+                      className="w-full text-left font-mono text-sm px-3 py-2 rounded-lg border border-[var(--rs-line)] hover:border-[var(--rs-accent)] hover:bg-[var(--rs-accent-soft)] text-[var(--rs-ink)]"
                       onClick={() => openRef(ref)}
                     >
                       {ref.path}
@@ -181,8 +181,8 @@ export default function ConceptPage() {
               </ul>
               {snippet && (
                 <div className="mt-4">
-                  <div className="text-xs text-slate-500 mb-1">{snippetPath}</div>
-                  <pre className="bg-slate-900 text-slate-100 text-xs rounded-xl p-4 overflow-auto max-h-96 whitespace-pre-wrap">
+                  <div className="text-xs text-[var(--rs-muted)] mb-1">{snippetPath}</div>
+                  <pre className="bg-[var(--rs-ink)] text-[var(--rs-surface)] text-xs rounded-xl p-4 overflow-auto max-h-96 whitespace-pre-wrap">
                     {snippet}
                   </pre>
                 </div>
@@ -191,17 +191,17 @@ export default function ConceptPage() {
 
             {/* 4. 关系 */}
             <section>
-              <h2 className="text-lg font-semibold text-slate-900 mb-3">4 · 调用 / 依赖关系</h2>
+              <h2 className="text-lg font-semibold text-[var(--rs-ink)] mb-3">4 · 调用 / 依赖关系</h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="border border-slate-200 rounded-xl p-4">
-                  <h3 className="text-sm font-semibold text-slate-700 mb-2">先修概念</h3>
+                <div className="border border-[var(--rs-line)] rounded-xl p-4">
+                  <h3 className="text-sm font-semibold text-[var(--rs-ink-2)] mb-2">先修概念</h3>
                   {prereqs.length === 0 ? (
-                    <p className="text-sm text-slate-400">无（可作为入口）</p>
+                    <p className="text-sm text-[var(--rs-muted)]">无（可作为入口）</p>
                   ) : (
                     <ul className="space-y-1">
                       {prereqs.map((c) => (
                         <li key={c.id}>
-                          <Link className="text-sm text-indigo-700 hover:underline" to={`/concepts/${c.id}`}>
+                          <Link className="text-sm text-[var(--rs-accent)] hover:underline" to={`/concepts/${c.id}`}>
                             {c.title}
                           </Link>
                         </li>
@@ -209,15 +209,15 @@ export default function ConceptPage() {
                     </ul>
                   )}
                 </div>
-                <div className="border border-slate-200 rounded-xl p-4">
-                  <h3 className="text-sm font-semibold text-slate-700 mb-2">相关概念</h3>
+                <div className="border border-[var(--rs-line)] rounded-xl p-4">
+                  <h3 className="text-sm font-semibold text-[var(--rs-ink-2)] mb-2">相关概念</h3>
                   {related.length === 0 ? (
-                    <p className="text-sm text-slate-400">无</p>
+                    <p className="text-sm text-[var(--rs-muted)]">无</p>
                   ) : (
                     <ul className="space-y-1">
                       {related.map((c) => (
                         <li key={c.id}>
-                          <Link className="text-sm text-indigo-700 hover:underline" to={`/concepts/${c.id}`}>
+                          <Link className="text-sm text-[var(--rs-accent)] hover:underline" to={`/concepts/${c.id}`}>
                             {c.title}
                           </Link>
                         </li>
@@ -230,7 +230,7 @@ export default function ConceptPage() {
 
             {/* 5. 30 秒自测 */}
             <section>
-              <h2 className="text-lg font-semibold text-slate-900 mb-3">5 · 30 秒自测</h2>
+              <h2 className="text-lg font-semibold text-[var(--rs-ink)] mb-3">5 · 30 秒自测</h2>
               <InlineProbe
                 item={probeItem}
                 onCompleted={(r) => {
@@ -248,39 +248,39 @@ export default function ConceptPage() {
             </section>
 
             {/* 6. 深入练习 */}
-            <section className="border-t border-slate-100 pt-6">
+            <section className="border-t border-[var(--rs-line)] pt-6">
               <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
-                <h2 className="text-lg font-semibold text-slate-900">6 · 深入练习</h2>
+                <h2 className="text-lg font-semibold text-[var(--rs-ink)]">6 · 深入练习</h2>
                 {items.length > 0 && (
                   <Link
                     to={`/session/${(probeItem || items[0]).id}`}
-                    className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm"
+                    className="px-3 py-1.5 bg-[var(--rs-accent)] text-white rounded-lg text-sm"
                   >
                     开始本概念会话（{items.length} 题）
                   </Link>
                 )}
               </div>
-              <p className="text-sm text-slate-500 mb-3">
+              <p className="text-sm text-[var(--rs-muted)] mb-3">
                 按 active_recall → code_trace → teach_back 顺序连续练习，提交后自动进入下一题。
               </p>
               {items.length === 0 ? (
-                <p className="text-sm text-slate-400">暂无练习题。</p>
+                <p className="text-sm text-[var(--rs-muted)]">暂无练习题。</p>
               ) : (
                 <ul className="space-y-2">
                   {items.map((item, idx) => (
                     <li
                       key={item.id}
-                      className="flex items-center justify-between gap-3 border border-slate-200 rounded-xl px-4 py-3"
+                      className="flex items-center justify-between gap-3 border border-[var(--rs-line)] rounded-xl px-4 py-3"
                     >
                       <div className="min-w-0">
-                        <div className="text-[11px] uppercase tracking-wide text-slate-400 mb-1">
+                        <div className="text-[11px] uppercase tracking-wide text-[var(--rs-muted)] mb-1">
                           {idx + 1}. {item.item_type}
                         </div>
-                        <div className="text-sm text-slate-800 line-clamp-2">{item.prompt}</div>
+                        <div className="text-sm text-[var(--rs-ink)] line-clamp-2">{item.prompt}</div>
                       </div>
                       <Link
                         to={`/session/${item.id}`}
-                        className="text-sm text-indigo-700 hover:underline shrink-0"
+                        className="text-sm text-[var(--rs-accent)] hover:underline shrink-0"
                       >
                         从这里开始
                       </Link>
@@ -292,8 +292,8 @@ export default function ConceptPage() {
           </div>
 
           {/* 7. 掌握度 */}
-          <aside className="border-t lg:border-t-0 lg:border-l border-slate-100 p-6 bg-slate-50 space-y-4">
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+          <aside className="border-t lg:border-t-0 lg:border-l border-[var(--rs-line)] p-6 bg-[var(--rs-surface-2)] space-y-4">
+            <div className="text-xs font-semibold uppercase tracking-wide text-[var(--rs-muted)]">
               7 · 掌握与复习
             </div>
             <Meta
@@ -316,20 +316,20 @@ export default function ConceptPage() {
             {items.length > 0 && (
               <Link
                 to={`/session/${(probeItem || items[0]).id}`}
-                className="block text-center w-full px-4 py-2.5 bg-indigo-600 text-white rounded-lg text-sm"
+                className="block text-center w-full px-4 py-2.5 bg-[var(--rs-accent)] text-white rounded-lg text-sm"
               >
                 开始练习会话
               </Link>
             )}
             <Link
               to={`/repositories/${concept.repository_id}?mode=learn`}
-              className="block text-center w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm text-slate-700"
+              className="block text-center w-full px-4 py-2.5 border border-[var(--rs-line-strong)] rounded-lg text-sm text-[var(--rs-ink-2)]"
             >
               回到学习路径
             </Link>
             <Link
               to="/reviews"
-              className="block text-center w-full px-4 py-2.5 border border-slate-300 rounded-lg text-sm text-slate-700"
+              className="block text-center w-full px-4 py-2.5 border border-[var(--rs-line-strong)] rounded-lg text-sm text-[var(--rs-ink-2)]"
             >
               打开复习队列
             </Link>
@@ -343,8 +343,8 @@ export default function ConceptPage() {
 function Meta({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-xs text-slate-500 mb-1">{label}</div>
-      <div className="text-sm font-medium text-slate-900">{value}</div>
+      <div className="text-xs text-[var(--rs-muted)] mb-1">{label}</div>
+      <div className="text-sm font-medium text-[var(--rs-ink)]">{value}</div>
     </div>
   );
 }

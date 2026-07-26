@@ -43,6 +43,7 @@ from recallstack.domain.schemas import (
     VersionOut,
     WikiOut,
     WikiPageOut,
+    WikiSearchOut,
 )
 from recallstack.jobs import get_job_runner
 from recallstack.security import SecurityError
@@ -218,11 +219,17 @@ def analyze_repository(
         except Exception as exc:  # noqa: BLE001
             raise api_error(500, "analyze_failed", "Analysis failed", {"error": str(exc)[:500]}) from exc
 
-    # create pending version marker via sync analyze is heavy; enqueue job
+    # Background path. Flip the existing version to "queued" *before* enqueuing so
+    # a poller never sees a stale "ready" and concludes the rescan already finished.
+    latest = store.get_latest_version(repository_id)
+    if latest:
+        latest.status = "queued"
+        latest.error_message = None
+        db.commit()
+        db.refresh(latest)
+
     runner = get_job_runner()
     runner.enqueue("analyze", _run_analyze, repository_id)
-    # return latest version if any, else a synthetic pending view via quick create
-    latest = store.get_latest_version(repository_id)
     if latest:
         return version_out(latest)
 
@@ -296,6 +303,42 @@ def get_repository_wiki(
         raise api_error(404, "wiki_not_found", "Wiki not generated yet — re-analyze repository")
     concepts = store.list_concepts(repository_id, version.id)
     return wiki_out(repository_id, version, concepts)
+
+
+@router.get("/repositories/{repository_id}/wiki/search", response_model=WikiSearchOut)
+def search_repository_wiki(
+    repository_id: str,
+    q: str,
+    limit: int = 20,
+    db: Session = Depends(get_db_session),
+) -> WikiSearchOut:
+    """Rank wiki pages against a free-text query.
+
+    Deterministic and LLM-free: search has to work on a freshly scanned repo
+    with no API key configured.
+    """
+    from recallstack.learning.wiki_search import build_documents, search
+
+    store = RepositoryStore(db)
+    if not store.get_repository(repository_id):
+        raise api_error(404, "repository_not_found", "Repository not found")
+    version = store.get_latest_version(repository_id)
+    if not version or not (version.wiki_pages or {}).get("pages"):
+        return WikiSearchOut(query=q, total=0, results=[])
+
+    concepts = store.list_concepts(repository_id, version.id)
+    concept_paths = {
+        c.slug: [str(ref.get("path", "")) for ref in (c.source_references or [])]
+        for c in concepts
+    }
+    concept_ids = {c.slug: c.id for c in concepts}
+    docs = build_documents(
+        (version.wiki_pages or {}).get("pages") or [],
+        concept_paths=concept_paths,
+        concept_ids=concept_ids,
+    )
+    results = search(docs, q, limit=max(1, min(limit, 50)))
+    return WikiSearchOut(query=q, total=len(results), results=results)
 
 
 @router.get("/repositories/{repository_id}/wiki/pages/{page_id:path}", response_model=WikiPageOut)

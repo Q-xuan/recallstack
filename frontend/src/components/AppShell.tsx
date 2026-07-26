@@ -1,4 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
+import { useTheme } from "../lib/theme";
 
 type Props = {
   children: React.ReactNode;
@@ -29,10 +30,11 @@ const NAV = [
 
 export default function AppShell({ children, title, subtitle, actions, flush }: Props) {
   const { pathname } = useLocation();
+  const [theme, toggleTheme] = useTheme();
 
   return (
     <div className="min-h-screen">
-      <header className="sticky top-0 z-30 border-b border-black/5 bg-white/75 backdrop-blur-xl">
+      <header className="rs-appbar">
         <div
           className={`h-[52px] flex items-center justify-between gap-4 px-4 md:px-6 ${
             flush ? "max-w-none" : "max-w-6xl mx-auto"
@@ -54,11 +56,7 @@ export default function AppShell({ children, title, subtitle, actions, flush }: 
                   <Link
                     key={item.to}
                     to={item.to}
-                    className={`px-3 py-1.5 rounded-full text-[13px] transition-colors ${
-                      active
-                        ? "bg-black/[0.06] text-[var(--rs-ink)] font-semibold"
-                        : "text-[var(--rs-ink-2)] hover:bg-black/[0.04]"
-                    }`}
+                    className={`rs-navlink ${active ? "is-active" : ""}`}
                   >
                     {item.label}
                   </Link>
@@ -66,8 +64,19 @@ export default function AppShell({ children, title, subtitle, actions, flush }: 
               })}
             </nav>
           </div>
-          <div className="hidden md:block text-[12px] text-[var(--rs-muted)] truncate">
-            从调用栈，到知识栈
+          <div className="flex items-center gap-3 shrink-0">
+            <div className="hidden lg:block text-[12px] text-[var(--rs-muted)] truncate">
+              从调用栈，到知识栈
+            </div>
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="rs-icon-btn"
+              title={theme === "dark" ? "切换到浅色" : "切换到深色"}
+              aria-label={theme === "dark" ? "切换到浅色" : "切换到深色"}
+            >
+              {theme === "dark" ? "☀" : "☾"}
+            </button>
           </div>
         </div>
       </header>

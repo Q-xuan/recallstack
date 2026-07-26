@@ -155,21 +155,21 @@ export default function LearningSessionPage() {
   if (loading) {
     return (
       <AppShell title="练习会话">
-        <p className="text-slate-500">加载题目…</p>
+        <p className="text-[var(--rs-muted)]">加载题目…</p>
       </AppShell>
     );
   }
   if (error && !item) {
     return (
       <AppShell title="练习会话">
-        <p className="text-red-600">{error}</p>
+        <p className="text-[var(--rs-danger)]">{error}</p>
       </AppShell>
     );
   }
   if (!item) {
     return (
       <AppShell title="练习会话">
-        <p className="text-slate-500">题目不存在</p>
+        <p className="text-[var(--rs-muted)]">题目不存在</p>
       </AppShell>
     );
   }
@@ -179,19 +179,19 @@ export default function LearningSessionPage() {
 
   return (
     <AppShell title="练习会话" subtitle={progressLabel}>
-      <div className="mb-4 text-sm text-slate-500 flex items-center justify-between gap-3 flex-wrap">
+      <div className="mb-4 text-sm text-[var(--rs-muted)] flex items-center justify-between gap-3 flex-wrap">
         <div className="flex gap-3 items-center">
-          <Link to={`/concepts/${item.concept_id}`} className="hover:underline text-indigo-700">
+          <Link to={`/concepts/${item.concept_id}`} className="hover:underline text-[var(--rs-accent)]">
             返回词条
           </Link>
           {queue && (
-            <span className="text-xs text-slate-400">
+            <span className="text-xs text-[var(--rs-muted)]">
               已完成 {queue.completed_count}/{queue.total}
               {mode === "review" ? " · 复习模式" : ""}
             </span>
           )}
         </div>
-        <span className="text-xs uppercase tracking-wide text-slate-400">{item.item_type}</span>
+        <span className="text-xs uppercase tracking-wide text-[var(--rs-muted)]">{item.item_type}</span>
       </div>
 
       {queue && queue.items.length > 1 && (
@@ -208,7 +208,7 @@ export default function LearningSessionPage() {
                 }
                 className={[
                   "h-2.5 w-8 rounded-full transition-colors",
-                  active ? "bg-indigo-600" : done ? "bg-emerald-400" : "bg-slate-200",
+                  active ? "bg-[var(--rs-accent)]" : done ? "bg-[var(--rs-success)]" : "bg-[var(--rs-surface-3)]",
                 ].join(" ")}
                 title={`${idx + 1}. ${q.item_type}`}
               />
@@ -218,30 +218,30 @@ export default function LearningSessionPage() {
       )}
 
       {item.stale && (
-        <div className="mb-4 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+        <div className="mb-4 text-sm text-[var(--rs-warning)] bg-[var(--rs-warning-soft)] border border-[var(--rs-warning)] rounded-lg px-3 py-2">
           这个题目对应旧版本代码。
         </div>
       )}
 
-      <div className="bg-white border border-slate-200 rounded-xl p-5 mb-4">
-        <h1 className="text-xl font-semibold text-slate-900 mb-2">问题</h1>
-        <p className="text-slate-800 whitespace-pre-wrap">{item.prompt}</p>
+      <div className="bg-white border border-[var(--rs-line)] rounded-xl p-5 mb-4">
+        <h1 className="text-xl font-semibold text-[var(--rs-ink)] mb-2">问题</h1>
+        <p className="text-[var(--rs-ink)] whitespace-pre-wrap">{item.prompt}</p>
       </div>
 
       {(item.evidence_snippets?.length || item.source_references?.length) ? (
-        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-4">
+        <div className="bg-[var(--rs-surface-2)] border border-[var(--rs-line)] rounded-xl p-4 mb-4">
           <button
             type="button"
             className="w-full flex items-center justify-between text-left"
             onClick={() => setEvidenceOpen((v) => !v)}
           >
             <div>
-              <h2 className="text-sm font-semibold text-slate-800">可引用证据</h2>
-              <p className="text-xs text-slate-500 mt-0.5">
+              <h2 className="text-sm font-semibold text-[var(--rs-ink)]">可引用证据</h2>
+              <p className="text-xs text-[var(--rs-muted)] mt-0.5">
                 先主动回忆；卡住再展开。作答请点名文件或符号。
               </p>
             </div>
-            <span className="text-xs text-indigo-700 shrink-0 ml-3">
+            <span className="text-xs text-[var(--rs-accent)] shrink-0 ml-3">
               {evidenceOpen ? "收起" : "展开"}
             </span>
           </button>
@@ -256,18 +256,18 @@ export default function LearningSessionPage() {
                   }))
               ).map((ref, i) => (
                 <li key={`${ref.path}-${i}`} className="text-sm">
-                  <div className="font-mono text-xs text-indigo-800 mb-1">
+                  <div className="font-mono text-xs text-[var(--rs-accent)] mb-1">
                     {ref.path}
                     {ref.start_line ? `:${ref.start_line}` : ""}
                     {ref.end_line && ref.end_line !== ref.start_line ? `-${ref.end_line}` : ""}
                     {ref.symbol ? ` · ${ref.symbol}` : ""}
                   </div>
                   {ref.snippet ? (
-                    <pre className="text-xs bg-white border border-slate-200 rounded-lg p-3 overflow-x-auto text-slate-700 whitespace-pre">
+                    <pre className="text-xs bg-white border border-[var(--rs-line)] rounded-lg p-3 overflow-x-auto text-[var(--rs-ink-2)] whitespace-pre">
                       {ref.snippet}
                     </pre>
                   ) : (
-                    <p className="text-xs text-slate-400">
+                    <p className="text-xs text-[var(--rs-muted)]">
                       {ref.available === false
                         ? "本地片段暂不可用（可能是远程仓库或路径失效）"
                         : "仅路径引用"}
@@ -282,22 +282,22 @@ export default function LearningSessionPage() {
 
       {!result ? (
         <>
-          <label className="block text-sm font-medium text-slate-700 mb-2">你的回答</label>
+          <label className="block text-sm font-medium text-[var(--rs-ink-2)] mb-2">你的回答</label>
           <textarea
             value={answer}
             onChange={(e) => setAnswer(e.target.value)}
             rows={8}
-            className="w-full border border-slate-300 rounded-xl p-3 text-slate-800 focus:ring-2 focus:ring-indigo-200 outline-none"
+            className="w-full border border-[var(--rs-line-strong)] rounded-xl p-3 text-[var(--rs-ink)] focus:ring-2 focus:ring-[var(--rs-accent-soft)] outline-none"
             placeholder="用自己的话作答，尽量引用源码中的模块/符号…"
           />
 
           <div className="mt-4 flex flex-wrap items-center gap-4">
-            <label className="text-sm text-slate-700">
+            <label className="text-sm text-[var(--rs-ink-2)]">
               自信度
               <select
                 value={confidence}
                 onChange={(e) => setConfidence(Number(e.target.value))}
-                className="ml-2 border border-slate-300 rounded-lg px-2 py-1"
+                className="ml-2 border border-[var(--rs-line-strong)] rounded-lg px-2 py-1"
               >
                 {[1, 2, 3, 4, 5].map((n) => (
                   <option key={n} value={n}>
@@ -306,35 +306,35 @@ export default function LearningSessionPage() {
                 ))}
               </select>
             </label>
-            <div className="text-sm text-slate-500">提示等级：{currentLevel}/5</div>
+            <div className="text-sm text-[var(--rs-muted)]">提示等级：{currentLevel}/5</div>
           </div>
 
           {hintText && (
-            <div className="mt-4 bg-indigo-50 border border-indigo-100 rounded-xl p-4 text-sm text-slate-700 whitespace-pre-wrap">
+            <div className="mt-4 bg-[var(--rs-accent-soft)] border border-[var(--rs-line)] rounded-xl p-4 text-sm text-[var(--rs-ink-2)] whitespace-pre-wrap">
               {hintText}
             </div>
           )}
 
-          {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+          {error && <p className="mt-3 text-sm text-[var(--rs-danger)]">{error}</p>}
 
           <div className="mt-5 flex flex-wrap gap-3">
             <button
               onClick={requestHint}
-              className="px-4 py-2 border border-slate-300 rounded-lg text-sm hover:bg-slate-50"
+              className="px-4 py-2 border border-[var(--rs-line-strong)] rounded-lg text-sm hover:bg-[var(--rs-hover)]"
               disabled={currentLevel >= 5}
             >
               申请提示
             </button>
             <button
               onClick={revealAnswer}
-              className="px-4 py-2 border border-amber-300 text-amber-800 rounded-lg text-sm hover:bg-amber-50"
+              className="px-4 py-2 border border-[var(--rs-warning)] text-[var(--rs-warning)] rounded-lg text-sm hover:bg-[var(--rs-warning-soft)]"
             >
               显示完整解释
             </button>
             <button
               onClick={submit}
               disabled={!canSubmit}
-              className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm disabled:opacity-50"
+              className="px-4 py-2 bg-[var(--rs-accent)] text-white rounded-lg text-sm disabled:opacity-50"
             >
               {submitting ? "提交中…" : "提交回答"}
             </button>
@@ -342,17 +342,17 @@ export default function LearningSessionPage() {
         </>
       ) : (
         <div className="space-y-4">
-          <div className="bg-white border border-slate-200 rounded-xl p-5">
+          <div className="bg-white border border-[var(--rs-line)] rounded-xl p-5">
             <div className="flex items-center justify-between gap-3 mb-2">
-              <h2 className="font-semibold text-slate-900">评价</h2>
+              <h2 className="font-semibold text-[var(--rs-ink)]">评价</h2>
               {result.evaluation_source && (
-                <span className="text-[11px] uppercase tracking-wide text-slate-400">
+                <span className="text-[11px] uppercase tracking-wide text-[var(--rs-muted)]">
                   {result.evaluation_source === "llm" ? "LLM + rubric" : "deterministic"}
                 </span>
               )}
             </div>
-            <p className="text-slate-800 mb-2">{result.evaluation.feedback}</p>
-            <div className="text-sm text-slate-600 space-y-1">
+            <p className="text-[var(--rs-ink)] mb-2">{result.evaluation.feedback}</p>
+            <div className="text-sm text-[var(--rs-ink-2)] space-y-1">
               <div>得分：{result.score.toFixed(2)}</div>
               <div>FSRS Rating：{result.fsrs_rating}</div>
               <div>掌握度：{result.mastery_score?.toFixed(2) ?? "—"}</div>
@@ -366,20 +366,20 @@ export default function LearningSessionPage() {
               <div>遗漏点：{(result.evaluation.missing_points || []).join(", ") || "—"}</div>
             </div>
             {result.evaluation.suggested_revision && (
-              <p className="mt-3 text-sm text-indigo-800">
+              <p className="mt-3 text-sm text-[var(--rs-accent)]">
                 改进建议：{result.evaluation.suggested_revision}
               </p>
             )}
             {result.evaluation.follow_up_question && (
-              <p className="mt-2 text-sm text-slate-600">
+              <p className="mt-2 text-sm text-[var(--rs-ink-2)]">
                 追问：{result.evaluation.follow_up_question}
               </p>
             )}
           </div>
 
-          <div className="bg-white border border-slate-200 rounded-xl p-5">
-            <h2 className="font-semibold text-slate-900 mb-2">源码证据</h2>
-            <ul className="text-sm text-slate-700 space-y-1">
+          <div className="bg-white border border-[var(--rs-line)] rounded-xl p-5">
+            <h2 className="font-semibold text-[var(--rs-ink)] mb-2">源码证据</h2>
+            <ul className="text-sm text-[var(--rs-ink-2)] space-y-1">
               {(result.evaluation.source_evidence || []).map((ref, i) => (
                 <li key={i}>
                   {ref.path}
@@ -391,9 +391,9 @@ export default function LearningSessionPage() {
           </div>
 
           {result.expected_answer_outline && (
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-5">
-              <h2 className="font-semibold text-slate-900 mb-2">答案提纲</h2>
-              <pre className="text-sm text-slate-700 whitespace-pre-wrap">
+            <div className="bg-[var(--rs-surface-2)] border border-[var(--rs-line)] rounded-xl p-5">
+              <h2 className="font-semibold text-[var(--rs-ink)] mb-2">答案提纲</h2>
+              <pre className="text-sm text-[var(--rs-ink-2)] whitespace-pre-wrap">
                 {result.expected_answer_outline}
               </pre>
             </div>
@@ -404,27 +404,27 @@ export default function LearningSessionPage() {
               <button
                 type="button"
                 onClick={goNext}
-                className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm"
+                className="px-4 py-2 bg-[var(--rs-accent)] text-white rounded-lg text-sm"
               >
                 下一题
               </button>
             ) : (
               <Link
                 to={`/concepts/${item.concept_id}`}
-                className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm"
+                className="px-4 py-2 bg-[var(--rs-accent)] text-white rounded-lg text-sm"
               >
                 完成本轮 · 返回词条
               </Link>
             )}
             <Link
               to={`/concepts/${item.concept_id}`}
-              className="px-4 py-2 border border-slate-300 rounded-lg text-sm"
+              className="px-4 py-2 border border-[var(--rs-line-strong)] rounded-lg text-sm"
             >
               返回词条
             </Link>
             <Link
               to="/reviews"
-              className="px-4 py-2 border border-slate-300 rounded-lg text-sm"
+              className="px-4 py-2 border border-[var(--rs-line-strong)] rounded-lg text-sm"
             >
               查看复习队列
             </Link>

@@ -154,6 +154,22 @@ class WikiOut(BaseModel):
     sidebar: list[WikiSidebarItemOut]
 
 
+class WikiSearchResultOut(BaseModel):
+    page_id: str
+    title: str
+    kind: str
+    score: float
+    matched_terms: int = 0
+    snippet: str = ""
+    concept_id: str | None = None
+
+
+class WikiSearchOut(BaseModel):
+    query: str
+    total: int
+    results: list[WikiSearchResultOut] = Field(default_factory=list)
+
+
 class ConceptOut(BaseModel):
     id: str
     repository_id: str

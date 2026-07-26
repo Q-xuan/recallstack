@@ -16,15 +16,11 @@ export default function InlineProbe({ item, onCompleted }: Props) {
 
   const canSubmit = useMemo(
     () => Boolean(item) && answer.trim().length > 0 && !submitting && !result,
-    [item, answer, submitting, result]
+    [item, answer, submitting, result],
   );
 
   if (!item) {
-    return (
-      <div className="border border-dashed border-slate-300 rounded-xl p-4 text-sm text-slate-500">
-        No probe item available yet.
-      </div>
-    );
+    return <div className="rs-probe-empty">暂无自测题。</div>;
   }
 
   async function submit() {
@@ -50,18 +46,13 @@ export default function InlineProbe({ item, onCompleted }: Props) {
   }
 
   return (
-    <div className="border border-indigo-200 bg-indigo-50/40 rounded-xl p-4 md:p-5">
-      <div className="flex items-center justify-between gap-3 mb-2">
-        <div>
-          <div className="text-xs font-semibold uppercase tracking-wide text-indigo-700">
-            30s probe · active recall
-          </div>
-          <p className="text-xs text-slate-500 mt-0.5">Recall first. Outline stays hidden until you submit.</p>
-        </div>
-        <span className="text-[11px] text-slate-400 uppercase">{item.item_type}</span>
+    <div className="rs-probe">
+      <div className="flex items-start justify-between gap-3 mb-2">
+        <div className="rs-eyebrow">30 秒自测 · 主动回忆</div>
+        <span className="rs-chip">{item.item_type}</span>
       </div>
 
-      <p className="text-slate-900 font-medium mb-3">{item.prompt}</p>
+      <p className="rs-probe-prompt">{item.prompt}</p>
 
       {!result ? (
         <>
@@ -69,16 +60,16 @@ export default function InlineProbe({ item, onCompleted }: Props) {
             value={answer}
             onChange={(e) => setAnswer(e.target.value)}
             rows={4}
-            className="w-full border border-slate-300 rounded-lg p-3 text-sm bg-white focus:ring-2 focus:ring-indigo-200 outline-none"
-            placeholder="Answer in your own words; name modules/symbols when you can…"
+            className="rs-input rs-textarea"
+            placeholder="用自己的话作答；能说出模块或符号名更好…"
           />
           <div className="mt-3 flex flex-wrap items-center gap-3">
-            <label className="text-sm text-slate-700">
-              Confidence
+            <label className="text-[13px] text-[var(--rs-ink-2)] flex items-center gap-2">
+              信心
               <select
                 value={confidence}
                 onChange={(e) => setConfidence(Number(e.target.value))}
-                className="ml-2 border border-slate-300 rounded-md px-2 py-1 bg-white"
+                className="rs-input h-8 w-auto text-[13px]"
               >
                 {[1, 2, 3, 4, 5].map((n) => (
                   <option key={n} value={n}>
@@ -88,32 +79,35 @@ export default function InlineProbe({ item, onCompleted }: Props) {
               </select>
             </label>
             <button
+              type="button"
               onClick={submit}
               disabled={!canSubmit}
-              className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm disabled:opacity-50"
+              className="rs-btn rs-btn-primary h-9 px-4 text-[13px]"
             >
-              {submitting ? "Submitting…" : "Submit probe"}
+              {submitting ? "提交中…" : "提交答案"}
             </button>
           </div>
-          {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+          {error && <div className="rs-alert mt-3">{error}</div>}
         </>
       ) : (
-        <div className="bg-white border border-slate-200 rounded-lg p-4 space-y-2">
-          <p className="text-sm text-slate-800">{result.evaluation.feedback}</p>
-          <div className="text-xs text-slate-500 space-y-1">
-            <div>Score {result.score.toFixed(2)} · FSRS {result.fsrs_rating}</div>
+        <div className="rs-probe-result">
+          <p className="text-[13.5px] text-[var(--rs-ink)]">{result.evaluation.feedback}</p>
+          <div className="text-[12px] text-[var(--rs-muted)] rs-tabular space-y-1 mt-2">
             <div>
-              Mastery {result.mastery_score?.toFixed(2) ?? "—"} · next review{" "}
+              得分 {result.score.toFixed(2)} · FSRS {result.fsrs_rating}
+            </div>
+            <div>
+              掌握度 {result.mastery_score?.toFixed(2) ?? "—"} · 下次复习{" "}
               {result.next_review_at ? new Date(result.next_review_at).toLocaleString() : "—"}
             </div>
             {result.evaluation.suggested_revision && (
-              <div className="text-indigo-800">Next: {result.evaluation.suggested_revision}</div>
+              <div className="text-[var(--rs-accent)]">
+                下一步：{result.evaluation.suggested_revision}
+              </div>
             )}
           </div>
           {result.expected_answer_outline && (
-            <pre className="text-xs text-slate-600 whitespace-pre-wrap bg-slate-50 rounded-md p-3 mt-2">
-              {result.expected_answer_outline}
-            </pre>
+            <pre className="rs-probe-outline">{result.expected_answer_outline}</pre>
           )}
         </div>
       )}

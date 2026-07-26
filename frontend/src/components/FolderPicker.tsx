@@ -51,43 +51,43 @@ export default function FolderPicker({ open, onClose, onSelect, initialPath }: P
   const files = listing?.files || [];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+    <div className="rs-modal-backdrop">
+      <div className="rs-modal">
+        <div className="rs-modal-head">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">选择本地文件夹</h2>
-            <p className="text-xs text-slate-500 mt-1">
+            <h2 className="rs-modal-title">选择本地文件夹</h2>
+            <p className="rs-modal-sub">
               浏览器不能直接打开系统文件夹对话框，这里通过本机后端浏览目录。
             </p>
           </div>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-800 text-sm">
+          <button onClick={onClose} className="rs-btn rs-btn-ghost h-8 px-3 text-[12px]">
             关闭
           </button>
         </div>
 
-        <div className="px-5 py-3 border-b border-slate-100 flex flex-wrap gap-2">
+        <div className="rs-modal-roots">
           {roots.map((r) => (
             <button
               key={r.path}
               onClick={() => load(r.path)}
-              className="px-2.5 py-1 text-xs rounded-full border border-slate-300 text-slate-700 hover:bg-slate-50"
+              className="rs-btn rs-btn-ghost h-7 px-3 text-[12px]"
             >
               {r.name}
             </button>
           ))}
         </div>
 
-        <div className="px-5 py-3 bg-slate-50 border-b border-slate-100">
-          <div className="text-xs text-slate-500 mb-1">当前路径</div>
-          <div className="font-mono text-sm text-slate-800 break-all">{current || "…"}</div>
+        <div className="rs-modal-path">
+          <div className="rs-eyebrow mb-1">当前路径</div>
+          <div className="rs-modal-pathvalue">{current || "…"}</div>
         </div>
 
-        <div className="max-h-80 overflow-y-auto px-2 py-2">
-          {loading && <p className="px-3 py-2 text-sm text-slate-500">加载中…</p>}
-          {error && <p className="px-3 py-2 text-sm text-red-600">{error}</p>}
+        <div className="rs-modal-body">
+          {loading && <p className="px-3 py-2 text-[13px] text-[var(--rs-muted)]">加载中…</p>}
+          {error && <p className="rs-alert m-2">{error}</p>}
           {!loading && listing?.parent && (
             <button
-              className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 text-sm text-slate-700"
+              className="rs-fs-row"
               onClick={() => load(listing.parent || undefined)}
             >
               ↑ 上级目录
@@ -97,22 +97,22 @@ export default function FolderPicker({ open, onClose, onSelect, initialPath }: P
             dirs.map((d: FsEntry) => (
               <button
                 key={d.path}
-                className="w-full text-left px-3 py-2 rounded-lg hover:bg-indigo-50 text-sm text-slate-800 flex items-center gap-2"
+                className="rs-fs-row"
                 onClick={() => load(d.path)}
                 onDoubleClick={() => load(d.path)}
               >
-                <span className="text-indigo-600">📁</span>
+                <span aria-hidden>📁</span>
                 <span className="truncate">{d.name}</span>
               </button>
             ))}
           {!loading && dirs.length === 0 && !error && (
-            <p className="px-3 py-2 text-sm text-slate-400">此目录下没有可见子文件夹</p>
+            <p className="px-3 py-2 text-[13px] text-[var(--rs-muted)]">此目录下没有可见子文件夹</p>
           )}
           {!loading && files.length > 0 && (
-            <div className="mt-2 px-3 pt-2 border-t border-slate-100">
-              <div className="text-xs text-slate-400 mb-1">文件预览（不可选）</div>
+            <div className="mt-2 px-3 pt-2 border-t border-[var(--rs-line)]">
+              <div className="rs-eyebrow mb-1">文件预览（不可选）</div>
               {files.slice(0, 8).map((f) => (
-                <div key={f.path} className="text-xs text-slate-400 py-0.5 truncate">
+                <div key={f.path} className="text-[12px] text-[var(--rs-muted)] py-0.5 truncate">
                   📄 {f.name}
                 </div>
               ))}
@@ -120,19 +120,19 @@ export default function FolderPicker({ open, onClose, onSelect, initialPath }: P
           )}
         </div>
 
-        <div className="px-5 py-4 border-t border-slate-200 flex items-center justify-between gap-3">
-          <div className="text-xs text-slate-500 truncate">将导入：{current || "未选择"}</div>
+        <div className="rs-modal-foot">
+          <div className="text-[12px] text-[var(--rs-muted)] truncate">将导入：{current || "未选择"}</div>
           <div className="flex gap-2 shrink-0">
             <button
               onClick={onClose}
-              className="px-4 py-2 text-sm rounded-lg border border-slate-300 text-slate-700"
+              className="rs-btn rs-btn-ghost"
             >
               取消
             </button>
             <button
               disabled={!current}
               onClick={() => current && onSelect(current)}
-              className="px-4 py-2 text-sm rounded-lg bg-indigo-600 text-white disabled:opacity-50"
+              className="rs-btn rs-btn-primary"
             >
               选择此文件夹
             </button>

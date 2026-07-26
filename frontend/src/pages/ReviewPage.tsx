@@ -30,13 +30,13 @@ export default function ReviewPage() {
       title="复习模式"
       subtitle="按概念调度，不打断 Wiki 证据链。完成后可回到词条继续阅读。"
     >
-      {loading && <p className="text-slate-500">加载中…</p>}
-      {error && <p className="text-red-600">{error}</p>}
+      {loading && <p className="text-[var(--rs-muted)]">加载中…</p>}
+      {error && <p className="text-[var(--rs-danger)]">{error}</p>}
       {!loading && !error && items.length === 0 && (
-        <div className="bg-white border border-slate-200 rounded-2xl p-6 text-slate-500">
+        <div className="bg-white border border-[var(--rs-line)] rounded-2xl p-6 text-[var(--rs-muted)]">
           今天没有到期复习。去读一个词条并完成 30 秒自测吧。
           <div className="mt-4">
-            <Link to="/repositories" className="text-indigo-700 hover:underline">
+            <Link to="/repositories" className="text-[var(--rs-accent)] hover:underline">
               打开仓库 Wiki
             </Link>
           </div>
@@ -47,11 +47,11 @@ export default function ReviewPage() {
         {items.map((item) => (
           <li
             key={item.concept_id}
-            className="bg-white border border-slate-200 rounded-2xl p-4 flex items-center justify-between gap-4"
+            className="bg-white border border-[var(--rs-line)] rounded-2xl p-4 flex items-center justify-between gap-4"
           >
             <div>
-              <div className="font-medium text-slate-900">{item.title}</div>
-              <div className="text-xs text-slate-500 mt-1">
+              <div className="font-medium text-[var(--rs-ink)]">{item.title}</div>
+              <div className="text-xs text-[var(--rs-muted)] mt-1">
                 mastery {item.mastery_score.toFixed(2)}
                 {item.next_review_at
                   ? ` · due ${new Date(item.next_review_at).toLocaleString()}`
@@ -62,14 +62,14 @@ export default function ReviewPage() {
             <div className="flex gap-2 shrink-0">
               <Link
                 to={`/concepts/${item.concept_id}`}
-                className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
+                className="px-3 py-2 border border-[var(--rs-line-strong)] rounded-lg text-sm"
               >
                 先看词条
               </Link>
               {item.item_id ? (
                 <Link
                   to={`/session/${item.item_id}?mode=review`}
-                  className="px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm"
+                  className="px-3 py-2 bg-[var(--rs-accent)] text-white rounded-lg text-sm"
                 >
                   开始复习会话
                 </Link>

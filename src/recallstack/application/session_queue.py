@@ -8,7 +8,11 @@ from sqlalchemy.orm import Session
 
 from recallstack.config import RecallStackConfig
 from recallstack.db.repositories import RepositoryStore
-from recallstack.learning.code_loader import load_code_lookup, resolve_local_repo_root, snippet_for_ref
+from recallstack.learning.code_loader import (
+    load_code_lookup,
+    resolve_local_repo_root,
+    snippet_for_ref,
+)
 
 SessionMode = Literal["concept", "review"]
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -147,3 +148,95 @@ def test_reject_bad_git_url(client: TestClient):
         json={"source_type": "github", "source_location": "ssh://git@github.com/a/b.git"},
     )
     assert r.status_code == 400
+
+
+def _analyzed_repo(client: TestClient) -> str:
+    created = client.post(
+        "/api/recallstack/repositories",
+        json={
+            "source_type": "local",
+            "source_location": client.fixture_repo,  # type: ignore[attr-defined]
+            "name": "fixture",
+        },
+    )
+    assert created.status_code == 200, created.text
+    repo_id = created.json()["id"]
+    analyzed = client.post(f"/api/recallstack/repositories/{repo_id}/analyze?wait=true")
+    assert analyzed.status_code == 200, analyzed.text
+    return repo_id
+
+
+def test_wiki_search_ranks_pages(client: TestClient):
+    repo_id = _analyzed_repo(client)
+
+    r = client.get(f"/api/recallstack/repositories/{repo_id}/wiki/search", params={"q": "app"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["query"] == "app"
+    assert body["total"] == len(body["results"]) > 0
+    top = body["results"][0]
+    assert top["page_id"] and top["title"] and top["kind"]
+    assert top["score"] > 0
+
+    # Searching a source file name reaches the concept that cites it.
+    by_file = client.get(
+        f"/api/recallstack/repositories/{repo_id}/wiki/search", params={"q": "main.py"}
+    )
+    assert by_file.status_code == 200
+    assert by_file.json()["results"]
+
+    # An empty query is not an error — it just has no results.
+    blank = client.get(f"/api/recallstack/repositories/{repo_id}/wiki/search", params={"q": ""})
+    assert blank.status_code == 200
+    assert blank.json()["results"] == []
+
+
+def test_wiki_search_on_unanalyzed_repo_is_empty_not_404(client: TestClient):
+    created = client.post(
+        "/api/recallstack/repositories",
+        json={
+            "source_type": "local",
+            "source_location": client.fixture_repo,  # type: ignore[attr-defined]
+        },
+    )
+    repo_id = created.json()["id"]
+    r = client.get(f"/api/recallstack/repositories/{repo_id}/wiki/search", params={"q": "app"})
+    assert r.status_code == 200
+    assert r.json()["results"] == []
+
+
+def test_wiki_search_unknown_repo_is_404(client: TestClient):
+    r = client.get("/api/recallstack/repositories/does-not-exist/wiki/search", params={"q": "app"})
+    assert r.status_code == 404
+
+
+def test_concept_pages_cross_link_and_cite_evidence(client: TestClient):
+    repo_id = _analyzed_repo(client)
+    wiki = client.get(f"/api/recallstack/repositories/{repo_id}/wiki")
+    assert wiki.status_code == 200, wiki.text
+    pages = {p["id"]: p for p in wiki.json()["pages"]}
+
+    concept_pages = [p for pid, p in pages.items() if pid.startswith("concepts/")]
+    assert concept_pages, "analyze should emit concept pages"
+    for page in concept_pages:
+        assert page["concept_id"], "concept pages must resolve back to their concept row"
+        assert "difficulty" in page["content"].lower() or "难度" in page["content"]
+
+    # At least one concept cites a source location in `path:line` form, which is
+    # what the reader turns into an inline snippet.
+    assert any(
+        re.search(r"`[\w./\-]+\.\w+:\d+", p["content"]) for p in concept_pages
+    ), "expected at least one path:line source citation"
+
+    # Reading Guide steps link to the concept pages they describe.
+    guide = pages.get("reading-guide")
+    if guide:
+        assert "](concepts/" in guide["content"]
+
+
+def test_background_analyze_marks_version_queued(client: TestClient):
+    repo_id = _analyzed_repo(client)
+    r = client.post(f"/api/recallstack/repositories/{repo_id}/analyze?wait=false")
+    assert r.status_code == 200, r.text
+    # A poller must not see a stale "ready" and think the rescan already finished.
+    assert r.json()["status"] in {"queued", "pending", "scanning"}

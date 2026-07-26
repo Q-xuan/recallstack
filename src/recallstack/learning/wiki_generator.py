@@ -7,6 +7,7 @@ LLM-enhanced WikiData is optional; deterministic pages always exist.
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 from recallstack.domain.schemas import ConceptDraft
@@ -154,42 +155,92 @@ def build_deterministic_wiki_data(
     )
 
 
+def _format_ref(ref: Any) -> str:
+    """Render a source reference as ``path:start-end``.
+
+    The frontend detects this shape inside inline code and turns it into an
+    expandable snippet, so the format has to stay stable — and it still reads
+    fine as plain text in an exported Markdown wiki.
+    """
+    loc = ref.path.replace("\\", "/")
+    if ref.start_line:
+        loc += f":{ref.start_line}"
+        if ref.end_line and ref.end_line != ref.start_line:
+            loc += f"-{ref.end_line}"
+    return loc
+
+
 def append_concept_pages(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
-    """Attach concept wiki pages so learning objects live inside the wiki tree."""
+    """Attach concept wiki pages so learning objects live inside the wiki tree.
+
+    Concept pages are wiki articles first: evidence and cross-links come before
+    the self-check, and prerequisites/dependents are real links so the concept
+    graph is navigable by reading alone.
+    """
     if not concepts:
         return wiki
 
     from repowiki.core.wiki_builder import SidebarItem
 
+    title_by_slug = {c.slug: c.title for c in concepts}
+    # Invert prerequisites once so each page can show what it unlocks.
+    dependents: dict[str, list[str]] = {}
+    for c in concepts:
+        for pre in c.prerequisites:
+            if pre in title_by_slug:
+                dependents.setdefault(pre, []).append(c.slug)
+
+    def link(slug: str) -> str:
+        return f"[{title_by_slug.get(slug, slug)}](concepts/{slug})"
+
     concept_sidebar = SidebarItem(title="Concepts", page_id="", children=[])
     for i, c in enumerate(concepts):
         page_id = f"concepts/{c.slug}"
+        minutes = c.estimated_minutes or 10
         lines = [
             f"# {c.title}\n",
             f"> {c.why_learn or c.description}\n",
+            t(
+                f"**Difficulty** {c.difficulty}/5 · **Reading time** ~{minutes} min · "
+                f"**Importance** {c.importance:.2f}\n",
+                f"**难度** {c.difficulty}/5 · **阅读时长** 约 {minutes} 分钟 · "
+                f"**重要度** {c.importance:.2f}\n",
+            ),
             f"{c.description}\n",
-            "## Why this matters\n",
+            t("## Why this matters\n", "## 为什么重要\n"),
             f"{c.why_learn or t('Understanding this concept builds a mental model of the main flow.', '理解该概念有助于建立仓库主流程心智模型。')}\n",
-            "## Source evidence\n",
+            t("## Source evidence\n", "## 源码证据\n"),
         ]
-        for ref in c.source_references[:8]:
-            loc = ref.path
-            if ref.start_line:
-                loc += f":{ref.start_line}"
-                if ref.end_line:
-                    loc += f"-{ref.end_line}"
-            if ref.symbol:
-                loc += f" (`{ref.symbol}`)"
-            lines.append(f"- `{loc}`")
+        if c.source_references:
+            for ref in c.source_references[:8]:
+                symbol = f" — `{ref.symbol}`" if ref.symbol else ""
+                lines.append(f"- `{_format_ref(ref)}`{symbol}")
+        else:
+            lines.append(
+                t(
+                    "_No file-level evidence was extracted for this concept._",
+                    "_该概念未能提取到文件级证据。_",
+                )
+            )
         lines.append("")
-        if c.prerequisites:
-            lines.append("## Prerequisites\n")
-            for p in c.prerequisites:
-                lines.append(f"- `{p}`")
+
+        prereqs = [p for p in c.prerequisites if p in title_by_slug]
+        if prereqs:
+            lines.append(t("## Read first\n", "## 先读\n"))
+            for p in prereqs:
+                lines.append(f"- {link(p)}")
             lines.append("")
+
+        unlocks = dependents.get(c.slug, [])
+        if unlocks:
+            lines.append(t("## Leads to\n", "## 继续读\n"))
+            for d in unlocks[:8]:
+                lines.append(f"- {link(d)}")
+            lines.append("")
+
         lines.extend(
             [
-                "## Practice\n",
+                t("## Self-check\n", "## 自测\n"),
                 t(
                     "1. Explain the responsibility boundary in your own words\n"
                     "2. Point to at least one source evidence location\n"
@@ -198,8 +249,6 @@ def append_concept_pages(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
                     "2. 指出至少一处源码证据\n"
                     "3. 说明它与先修概念的关系\n",
                 ),
-                "\n",
-                f"_concept_slug: `{c.slug}`_\n",
             ]
         )
         wiki.pages.append(
@@ -214,6 +263,32 @@ def append_concept_pages(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
         concept_sidebar.children.append(SidebarItem(title=c.title, page_id=page_id))
     if concept_sidebar.children:
         wiki.sidebar.append(concept_sidebar)
+    return wiki
+
+
+def link_reading_guide(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
+    """Turn Reading Guide step headings into links to their concept pages.
+
+    The guide's steps are generated 1:1 from concepts, so leaving them as plain
+    text forces the reader back to the sidebar to find the page being described.
+    """
+    if not concepts:
+        return wiki
+    slug_by_title = {c.title: c.slug for c in concepts}
+    for page in wiki.pages:
+        if page.id != "reading-guide":
+            continue
+        out: list[str] = []
+        for line in page.content.split("\n"):
+            match = re.match(r"^## Step (\d+): (.+?)( \(~[^)]*\))?$", line)
+            if match:
+                number, title, suffix = match.group(1), match.group(2), match.group(3) or ""
+                slug = slug_by_title.get(title)
+                if slug:
+                    out.append(f"## Step {number}: [{title}](concepts/{slug}){suffix}")
+                    continue
+            out.append(line)
+        page.content = "\n".join(out)
     return wiki
 
 
@@ -287,6 +362,7 @@ def build_wiki_payload(
         wiki_data = build_deterministic_wiki_data(project, graph, concepts)
     wiki = WikiBuilder().build(project, wiki_data, graph)
     wiki = append_concept_pages(wiki, concepts)
+    wiki = link_reading_guide(wiki, concepts)
     return {
         "project_name": wiki.project_name,
         "pages": [

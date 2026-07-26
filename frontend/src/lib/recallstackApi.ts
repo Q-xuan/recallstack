@@ -127,6 +127,22 @@ export interface Wiki {
   sidebar: WikiSidebarItem[];
 }
 
+export interface WikiSearchResult {
+  page_id: string;
+  title: string;
+  kind: "overview" | "architecture" | "guide" | "module" | "concept" | "page";
+  score: number;
+  matched_terms: number;
+  snippet: string;
+  concept_id?: string | null;
+}
+
+export interface WikiSearchResponse {
+  query: string;
+  total: number;
+  results: WikiSearchResult[];
+}
+
 export interface LearningPathNode {
   id: string;
   concept_id: string;
@@ -286,6 +302,13 @@ export const recallstackApi = {
   wiki: (id: string) => request<Wiki>(`/repositories/${id}/wiki`),
   wikiPage: (id: string, pageId: string) =>
     request<WikiPage>(`/repositories/${id}/wiki/pages/${encodeURIComponent(pageId)}`),
+  searchWiki: (id: string, query: string, limit = 20, signal?: AbortSignal) => {
+    const q = new URLSearchParams({ q: query, limit: String(limit) });
+    return request<WikiSearchResponse>(
+      `/repositories/${id}/wiki/search?${q.toString()}`,
+      { signal }
+    );
+  },
   concepts: (id: string) =>
     request<{ concepts: Concept[]; edges: ConceptEdge[] }>(`/repositories/${id}/concepts`),
   learningPath: (id: string) => request<LearningPath>(`/repositories/${id}/learning-path`),

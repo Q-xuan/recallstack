@@ -7,15 +7,16 @@ import sys
 from logging.config import fileConfig
 from pathlib import Path
 
-from alembic import context
 from sqlalchemy import engine_from_config, pool
+
+from alembic import context
 
 # ensure src/ is importable
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from recallstack.db.base import Base  # noqa: E402
 from recallstack.db import models  # noqa: F401,E402
+from recallstack.db.base import Base  # noqa: E402
 
 config = context.config
 if config.config_file_name is not None:
