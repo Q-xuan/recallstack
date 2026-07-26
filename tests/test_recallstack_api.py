@@ -281,22 +281,16 @@ def test_progress_detail_is_published_and_localized(client, monkeypatch):
     from recallstack.application.analyze_repository import AnalyzeRepositoryService
     from recallstack.db.session import session_scope
 
-    repo = client.post(
-        "/api/recallstack/repositories",
-        json={"source_type": "local", "source_location": client.fixture_repo},
-    ).json()
-    client.post(f"/api/recallstack/repositories/{repo['id']}/analyze", json={})
+    # Analyze synchronously: a background run would still be writing to this
+    # version (and holding the SQLite write lock) while we publish below.
+    repo_id = _analyzed_repo(client)
 
-    version = client.get(
-        f"/api/recallstack/repositories/{repo['id']}/versions/latest"
-    ).json()
+    version = client.get(f"/api/recallstack/repositories/{repo_id}/versions/latest").json()
 
     with session_scope() as session:
         AnalyzeRepositoryService(session)._publish_progress(version["id"], "Analyzed module 7/24")
 
-    refreshed = client.get(
-        f"/api/recallstack/repositories/{repo['id']}/versions/latest"
-    ).json()
+    refreshed = client.get(f"/api/recallstack/repositories/{repo_id}/versions/latest").json()
     assert refreshed["progress_message"] == "已分析模块 7/24"
 
 
