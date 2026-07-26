@@ -268,3 +268,93 @@ def test_source_preview_refuses_secret_files(client: TestClient):
 
     assert r.status_code == 403, r.text
     assert "sk-should-never-be-served" not in r.text
+
+
+def test_progress_detail_is_published_and_localized(client, monkeypatch):
+    """The LLM stage runs for minutes; the coarse status alone never moves.
+
+    The analyzer already counted modules and threw the count away, so the UI
+    had nothing to show between `llm_enriching` and `ready`.
+    """
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+
+    from recallstack.application.analyze_repository import AnalyzeRepositoryService
+    from recallstack.db.session import session_scope
+
+    repo = client.post(
+        "/api/recallstack/repositories",
+        json={"source_type": "local", "source_location": client.fixture_repo},
+    ).json()
+    client.post(f"/api/recallstack/repositories/{repo['id']}/analyze", json={})
+
+    version = client.get(
+        f"/api/recallstack/repositories/{repo['id']}/versions/latest"
+    ).json()
+
+    with session_scope() as session:
+        AnalyzeRepositoryService(session)._publish_progress(version["id"], "Analyzed module 7/24")
+
+    refreshed = client.get(
+        f"/api/recallstack/repositories/{repo['id']}/versions/latest"
+    ).json()
+    assert refreshed["progress_message"] == "已分析模块 7/24"
+
+
+def test_unrecognized_progress_lines_pass_through():
+    """A message added upstream should degrade to English, not vanish."""
+    from recallstack.application.analyze_repository import AnalyzeRepositoryService
+
+    assert AnalyzeRepositoryService._localize_progress("Something new") == "Something new"
+
+
+def test_starting_a_phase_clears_the_previous_detail():
+    """Otherwise a stale module counter sits under the next phase's label."""
+    from recallstack.application.analyze_repository import AnalyzeRepositoryService
+    from recallstack.db.models import RepositoryVersion
+
+    version = RepositoryVersion(status="scanning", progress_message="已分析模块 7/24")
+
+    class _Session:
+        def commit(self):
+            pass
+
+    service = AnalyzeRepositoryService.__new__(AnalyzeRepositoryService)
+    service.session = _Session()
+    service._set_status(version, "generating_wiki")
+
+    assert version.status == "generating_wiki"
+    assert version.progress_message is None
+
+
+def test_interrupted_runs_are_failed_on_startup(client: TestClient):
+    """A restart mid-analysis otherwise leaves a version the poller waits on forever."""
+    from recallstack.db.models import RepositoryVersion
+    from recallstack.db.session import session_scope
+
+    repo_id = _analyzed_repo(client)
+    version_id = client.get(f"/api/recallstack/repositories/{repo_id}/versions/latest").json()["id"]
+
+    # simulate a process that died partway through the LLM stage
+    with session_scope() as session:
+        session.query(RepositoryVersion).filter(RepositoryVersion.id == version_id).update(
+            {"status": "llm_enriching", "progress_message": "Analyzed module 3/24"}
+        )
+
+    init_recallstack()
+
+    latest = client.get(f"/api/recallstack/repositories/{repo_id}/versions/latest").json()
+    assert latest["status"] == "failed"
+    assert latest["progress_message"] is None
+    assert "interrupted" in (latest["error_message"] or "")
+
+
+def test_startup_leaves_finished_runs_alone(client: TestClient):
+    repo_id = _analyzed_repo(client)
+    before = client.get(f"/api/recallstack/repositories/{repo_id}/versions/latest").json()
+    assert before["status"] == "ready"
+
+    init_recallstack()
+
+    after = client.get(f"/api/recallstack/repositories/{repo_id}/versions/latest").json()
+    assert after["status"] == "ready"
+    assert after["error_message"] is None

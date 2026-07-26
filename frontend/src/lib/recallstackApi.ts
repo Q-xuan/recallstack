@@ -63,6 +63,7 @@ export interface Version {
   commit_sha: string;
   content_hash: string;
   status: string;
+  progress_message?: string | null;
   error_message?: string | null;
   has_wiki?: boolean;
   created_at: string;

@@ -31,10 +31,55 @@ def init_recallstack(database_url: str | None = None) -> None:
     try:
         store = RepositoryStore(session)
         store.ensure_default_user(cfg.default_user_id)
+        _fail_interrupted_versions(session)
         session.commit()
         logger.info("RecallStack DB ready (%s)", url.split("://")[0])
     finally:
         session.close()
+
+
+# Statuses that only a live analysis run can move out of. Analyses run in an
+# in-process thread, so nothing survives a restart to advance them.
+RUNNING_STATUSES = (
+    "queued",
+    "pending",
+    "scanning",
+    "generating_concepts",
+    "generating_wiki",
+    "llm_enriching",
+)
+
+
+def _fail_interrupted_versions(session) -> None:
+    """Mark runs abandoned by a previous process as failed.
+
+    A version left mid-pipeline stays there forever otherwise, and the frontend
+    polls a status that can never change.
+    """
+    from recallstack.db.models import RepositoryVersion, utcnow
+
+    orphans = (
+        session.query(RepositoryVersion)
+        .filter(RepositoryVersion.status.in_(RUNNING_STATUSES))
+        .all()
+    )
+    for version in orphans:
+        version.status = "failed"
+        version.progress_message = None
+        version.error_message = "Analysis was interrupted before it finished. Please run it again."
+        version.completed_at = version.completed_at or utcnow()
+    if orphans:
+        logger.info("Marked %d interrupted analysis run(s) as failed", len(orphans))
+
+
+# Columns added after 0001, as (table, column, type). create_all() leaves an
+# existing table alone, so a database made before one of these was introduced
+# needs it backfilled here or every query against that model fails.
+_OPTIONAL_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("repository_versions", "wiki_pages", "JSON"),
+    ("repository_versions", "progress_message", "VARCHAR(255)"),
+    ("concepts", "wiki_page_id", "VARCHAR(255)"),
+)
 
 
 def _ensure_optional_columns(engine) -> None:
@@ -42,15 +87,12 @@ def _ensure_optional_columns(engine) -> None:
     from sqlalchemy import inspect, text
 
     insp = inspect(engine)
-    if "repository_versions" in insp.get_table_names():
-        cols = {c["name"] for c in insp.get_columns("repository_versions")}
-        if "wiki_pages" not in cols:
-            with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE repository_versions ADD COLUMN wiki_pages JSON"))
-            logger.info("Added repository_versions.wiki_pages")
-    if "concepts" in insp.get_table_names():
-        cols = {c["name"] for c in insp.get_columns("concepts")}
-        if "wiki_page_id" not in cols:
-            with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE concepts ADD COLUMN wiki_page_id VARCHAR(255)"))
-            logger.info("Added concepts.wiki_page_id")
+    tables = set(insp.get_table_names())
+    for table, column, coltype in _OPTIONAL_COLUMNS:
+        if table not in tables:
+            continue
+        if column in {c["name"] for c in insp.get_columns(table)}:
+            continue
+        with engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}"))
+        logger.info("Added %s.%s", table, column)

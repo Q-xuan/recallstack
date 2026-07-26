@@ -779,6 +779,21 @@ a {
   animation: rs-pulse 1.2s ease-in-out infinite;
 }
 
+/*
+ * Detail line for the running step. Set in the normal weight and muted colour
+ * so the counter reads as an aside to the step label rather than competing
+ * with it, and pushed right so the column of step names stays aligned.
+ */
+.rs-pipeline-detail {
+  margin-left: auto;
+  padding-left: 10px;
+  font-size: 12.5px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--rs-muted);
+  white-space: nowrap;
+}
+
 @keyframes rs-pulse {
   50% {
     opacity: 0.3;

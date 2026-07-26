@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import subprocess
 from pathlib import Path
 
@@ -21,7 +22,9 @@ from recallstack.db.models import (
     utcnow,
 )
 from recallstack.db.repositories import RepositoryStore
+from recallstack.db.session import session_scope
 from recallstack.learning.concept_extractor import ConceptExtractor, content_hash_for
+from recallstack.learning.i18n import t
 from recallstack.learning.path_builder import PathBuilder
 from recallstack.learning.question_generator import QuestionGenerator
 from recallstack.learning.stale import compute_changed_paths, mark_stale_for_changed_files
@@ -29,6 +32,19 @@ from recallstack.learning.wiki_generator import build_wiki_payload
 from recallstack.security import SecurityError, validate_git_url, validate_local_path
 
 logger = logging.getLogger(__name__)
+
+# repowiki's progress lines, matched back to a localizable phrase. Unmatched
+# messages pass through unchanged, so adding one upstream degrades to English
+# rather than to nothing.
+_PROGRESS_PHRASES: tuple[tuple[re.Pattern[str], str, str], ...] = (
+    (re.compile(r"^Analyzed module (\d+)/(\d+)$"), "Analyzed module {0}/{1}", "已分析模块 {0}/{1}"),
+    (re.compile(r"^Analyzing (\d+) modules"), "Analyzing {0} modules", "正在分析 {0} 个模块"),
+    (re.compile(r"^Preparing file context"), "Preparing file context", "正在准备文件上下文"),
+    (re.compile(r"^Generating project overview"), "Generating overview", "正在生成项目概览"),
+    (re.compile(r"^Detecting architecture"), "Detecting architecture", "正在识别架构"),
+    (re.compile(r"^Creating reading guide"), "Creating reading guide", "正在生成阅读指南"),
+    (re.compile(r"^Done!?$"), "Done", "完成"),
+)
 
 
 def _sha256_text(text: str) -> str:
@@ -167,8 +183,14 @@ class AnalyzeRepositoryService:
                     from recallstack.learning.wiki_generator import build_llm_enriched_wiki_data
 
                     self._set_status(version, "llm_enriching")
+                    version_id = version.id
                     wiki_data = _run_async(
-                        build_llm_enriched_wiki_data(project, graph, concepts)
+                        build_llm_enriched_wiki_data(
+                            project,
+                            graph,
+                            concepts,
+                            on_progress=lambda msg: self._publish_progress(version_id, msg),
+                        )
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
@@ -332,7 +354,40 @@ class AnalyzeRepositoryService:
 
     def _set_status(self, version: RepositoryVersion, status: str) -> None:
         version.status = status
+        version.progress_message = None
         self.session.commit()
+
+    @staticmethod
+    def _localize_progress(message: str) -> str:
+        """Translate the analyzer's progress lines for the UI.
+
+        repowiki reports in English because its CLI prints these directly; the
+        wiki it produces follows the configured content language, and a Chinese
+        wiki reporting "Analyzing 24 modules..." reads like a leak.
+        """
+        text = message.strip()
+        for pattern, en, zh in _PROGRESS_PHRASES:
+            m = pattern.match(text)
+            if m:
+                return t(en, zh).format(*m.groups())
+        return text
+
+    def _publish_progress(self, version_id: str, message: str) -> None:
+        """Record a detail line for the phase currently running.
+
+        Uses its own short session rather than the pipeline's: the analyzer may
+        invoke this from a worker thread (see ``_run_async``), and an ORM session
+        is not safe to share across threads. Progress is cosmetic, so a failure
+        here must never take the analysis down with it.
+        """
+        try:
+            text = self._localize_progress(message)
+            with session_scope() as session:
+                session.query(RepositoryVersion).filter(
+                    RepositoryVersion.id == version_id
+                ).update({"progress_message": text[:255]})
+        except Exception:  # noqa: BLE001
+            logger.debug("could not publish progress: %s", message, exc_info=True)
 
     def _ingest(self, repo: Repository):
         from repowiki.ingest.local import ingest_local

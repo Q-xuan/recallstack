@@ -124,6 +124,7 @@ class VersionOut(BaseModel):
     commit_sha: str
     content_hash: str
     status: str
+    progress_message: str | None = None
     error_message: str | None = None
     has_wiki: bool = False
     created_at: datetime

@@ -532,7 +532,7 @@ export default function RepositoryPage() {
                 </p>
                 {analyzing ? (
                   <div className="mt-7 max-w-sm mx-auto">
-                    <PipelineSteps status={status || ""} />
+                    <PipelineSteps status={status || ""} detail={version?.progress_message} />
                   </div>
                 ) : (
                   <button
@@ -688,7 +688,7 @@ const PIPELINE: { key: string; label: string }[] = [
   { key: "llm_enriching", label: "模型润色" },
 ];
 
-function PipelineSteps({ status }: { status: string }) {
+function PipelineSteps({ status, detail }: { status: string; detail?: string | null }) {
   const index = PIPELINE.findIndex((s) => s.key === status);
   return (
     <ol className="rs-pipeline">
@@ -698,6 +698,9 @@ function PipelineSteps({ status }: { status: string }) {
           <li key={step.key} className={`rs-pipeline-step is-${state}`}>
             <span className="rs-pipeline-dot" aria-hidden />
             <span>{step.label}</span>
+            {/* The LLM stage runs for minutes; without its per-module counter
+                the whole panel looks frozen. */}
+            {state === "now" && detail && <span className="rs-pipeline-detail">{detail}</span>}
           </li>
         );
       })}

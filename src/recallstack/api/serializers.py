@@ -46,6 +46,7 @@ def version_out(v: RepositoryVersion) -> VersionOut:
         commit_sha=v.commit_sha,
         content_hash=v.content_hash,
         status=v.status,
+        progress_message=v.progress_message,
         error_message=v.error_message,
         has_wiki=bool(v.wiki_pages and (v.wiki_pages or {}).get("pages")),
         created_at=v.created_at,

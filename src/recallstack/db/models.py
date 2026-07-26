@@ -66,6 +66,9 @@ class RepositoryVersion(Base):
     commit_sha: Mapped[str] = mapped_column(String(64), nullable=False)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    # Free-text detail within a status, e.g. "Analyzed module 7/24". The coarse
+    # status alone sits unchanged for minutes on a large repository.
+    progress_message: Mapped[str | None] = mapped_column(String(255), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     # RepoWiki-compatible payload: {project_name, pages[], sidebar[]}
     wiki_pages: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
