@@ -1,4 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
+import { useLang, useT } from "../lib/i18n";
 import { useTheme } from "../lib/theme";
 
 type Props = {
@@ -11,10 +12,11 @@ type Props = {
 };
 
 const NAV = [
-  { to: "/", label: "今日", match: (p: string) => p === "/" || p === "/learn" },
+  { to: "/", zh: "今日", en: "Today", match: (p: string) => p === "/" || p === "/learn" },
   {
     to: "/repositories",
-    label: "知识库",
+    zh: "知识库",
+    en: "Library",
     match: (p: string) =>
       p.startsWith("/repositories") ||
       p.startsWith("/concepts") ||
@@ -23,7 +25,8 @@ const NAV = [
   },
   {
     to: "/reviews",
-    label: "复习",
+    zh: "复习",
+    en: "Review",
     match: (p: string) => p.startsWith("/reviews") || p.startsWith("/learn/reviews"),
   },
 ];
@@ -31,6 +34,8 @@ const NAV = [
 export default function AppShell({ children, title, subtitle, actions, flush }: Props) {
   const { pathname } = useLocation();
   const [theme, toggleTheme] = useTheme();
+  const [lang, setLang] = useLang();
+  const t = useT();
 
   return (
     <div className="min-h-screen">
@@ -46,7 +51,7 @@ export default function AppShell({ children, title, subtitle, actions, flush }: 
                 Recall<span className="text-[var(--rs-accent)]">Stack</span>
               </span>
               <span className="ml-2 text-[11px] font-medium text-[var(--rs-muted)] tracking-wide">
-                回栈
+                {t("回栈", "wiki + recall")}
               </span>
             </Link>
             <nav className="hidden sm:flex items-center gap-1">
@@ -58,7 +63,7 @@ export default function AppShell({ children, title, subtitle, actions, flush }: 
                     to={item.to}
                     className={`rs-navlink ${active ? "is-active" : ""}`}
                   >
-                    {item.label}
+                    {t(item.zh, item.en)}
                   </Link>
                 );
               })}
@@ -66,14 +71,27 @@ export default function AppShell({ children, title, subtitle, actions, flush }: 
           </div>
           <div className="flex items-center gap-3 shrink-0">
             <div className="hidden lg:block text-[12px] text-[var(--rs-muted)] truncate">
-              从调用栈，到知识栈
+              {t("从调用栈，到知识栈", "From call stack to knowledge stack")}
             </div>
+            <button
+              type="button"
+              onClick={() => setLang(lang === "zh" ? "en" : "zh")}
+              className="rs-icon-btn text-[12px] font-medium"
+              title={lang === "zh" ? "Switch to English" : "切换到中文"}
+              aria-label={lang === "zh" ? "Switch to English" : "切换到中文"}
+            >
+              {lang === "zh" ? "EN" : "中"}
+            </button>
             <button
               type="button"
               onClick={toggleTheme}
               className="rs-icon-btn"
-              title={theme === "dark" ? "切换到浅色" : "切换到深色"}
-              aria-label={theme === "dark" ? "切换到浅色" : "切换到深色"}
+              title={
+                theme === "dark" ? t("切换到浅色", "Light mode") : t("切换到深色", "Dark mode")
+              }
+              aria-label={
+                theme === "dark" ? t("切换到浅色", "Light mode") : t("切换到深色", "Dark mode")
+              }
             >
               {theme === "dark" ? "☀" : "☾"}
             </button>

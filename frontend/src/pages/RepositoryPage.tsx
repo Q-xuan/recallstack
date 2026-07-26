@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import AppShell from "../components/AppShell";
+import { tNow, useT } from "../lib/i18n";
 import AskPanel from "../components/AskPanel";
 import CommandPalette from "../components/CommandPalette";
 import ConceptPracticePanel from "../components/ConceptPracticePanel";
@@ -22,16 +23,21 @@ import {
 type Mode = "read" | "learn";
 
 /** Human labels for the analyze pipeline's machine statuses. */
-const STATUS_LABEL: Record<string, string> = {
-  queued: "排队中",
-  pending: "准备中",
-  scanning: "扫描代码",
-  generating_concepts: "抽取概念",
-  generating_wiki: "生成 Wiki",
-  llm_enriching: "模型润色",
-  ready: "就绪",
-  failed: "失败",
+const STATUS_LABEL: Record<string, [string, string]> = {
+  queued: ["排队中", "Queued"],
+  pending: ["准备中", "Preparing"],
+  scanning: ["扫描代码", "Scanning code"],
+  generating_concepts: ["抽取概念", "Extracting concepts"],
+  generating_wiki: ["生成 Wiki", "Building wiki"],
+  llm_enriching: ["模型润色", "LLM enriching"],
+  ready: ["就绪", "Ready"],
+  failed: ["失败", "Failed"],
 };
+
+function statusLabel(status: string | null, t: (zh: string, en: string) => string): string {
+  const pair = STATUS_LABEL[status || ""];
+  return pair ? t(...pair) : status || t("未分析", "Not analyzed");
+}
 
 const RUNNING = new Set([
   "queued",
@@ -58,6 +64,7 @@ export default function RepositoryPage() {
   const mode = (searchParams.get("mode") as Mode) || "read";
   const pageFromUrl = searchParams.get("page") || "index";
 
+  const t = useT();
   const [repos, setRepos] = useState<Repository[]>([]);
   const [repo, setRepo] = useState<Repository | null>(null);
   const [version, setVersion] = useState<Version | null>(null);
@@ -119,14 +126,14 @@ export default function RepositoryPage() {
       setConcepts(g?.concepts ?? []);
       setPath(p);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "加载失败");
+      setError(e instanceof Error ? e.message : tNow("加载失败", "Failed to load"));
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    refreshList().catch((e: unknown) => setError(e instanceof Error ? e.message : "加载失败"));
+    refreshList().catch((e: unknown) => setError(e instanceof Error ? e.message : tNow("加载失败", "Failed to load")));
   }, []);
 
   useEffect(() => {
@@ -154,7 +161,7 @@ export default function RepositoryPage() {
         setStatus(v.status);
         if (!RUNNING.has(v.status)) {
           window.clearInterval(timer);
-          if (v.status === "failed") setError(v.error_message || "分析失败");
+          if (v.status === "failed") setError(v.error_message || tNow("分析失败", "Analysis failed"));
           else await loadRepo(id);
         }
       } catch {
@@ -193,7 +200,7 @@ export default function RepositoryPage() {
       await refreshList();
       navigate(`/repositories/${created.id}`);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "创建失败");
+      setError(err instanceof Error ? err.message : tNow("创建失败", "Create failed"));
     } finally {
       setLoading(false);
     }
@@ -210,7 +217,7 @@ export default function RepositoryPage() {
       setVersion(v);
       setStatus(v.status);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "分析失败");
+      setError(err instanceof Error ? err.message : tNow("分析失败", "Analysis failed"));
       setStatus(version?.status ?? null);
     }
   }
@@ -280,16 +287,22 @@ export default function RepositoryPage() {
   if (!id) {
     return (
       <AppShell
-        title="知识库"
-        subtitle="导入一个代码仓库。一次扫描，生成可阅读、可搜索、可溯源的 Wiki。"
+        title={t("知识库", "Library")}
+        subtitle={t(
+          "导入一个代码仓库。一次扫描，生成可阅读、可搜索、可溯源的 Wiki。",
+          "Import a repository. One scan builds a readable, searchable, source-cited wiki.",
+        )}
       >
         <section className="rs-card p-6 md:p-8">
           <div className="flex items-start justify-between gap-4 flex-wrap mb-6">
             <div>
               <div className="rs-eyebrow">Import</div>
-              <h2 className="mt-1 text-[22px] font-semibold tracking-tight">导入仓库</h2>
+              <h2 className="mt-1 text-[22px] font-semibold tracking-tight">{t("导入仓库", "Import a repository")}</h2>
               <p className="mt-1 text-[14px] text-[var(--rs-ink-2)] max-w-xl">
-                本地目录或 GitHub HTTPS。分析后可在阅读器中浏览架构、模块与词条，并跳转到源码证据。
+                {t(
+                  "本地目录或 GitHub HTTPS。分析后可在阅读器中浏览架构、模块与词条，并跳转到源码证据。",
+                  "A local directory or GitHub HTTPS URL. After analysis, browse architecture, modules and concepts with jumps into the source.",
+                )}
               </p>
             </div>
           </div>
@@ -301,7 +314,7 @@ export default function RepositoryPage() {
                 onChange={(e) => setSourceType(e.target.value as "local" | "github")}
                 className="rs-input h-11 md:w-40"
               >
-                <option value="local">本地目录</option>
+                <option value="local">{t("本地目录", "Local directory")}</option>
                 <option value="github">GitHub HTTPS</option>
               </select>
               <div className="flex-1 flex gap-2">
@@ -310,7 +323,7 @@ export default function RepositoryPage() {
                   onChange={(e) => setSourceLocation(e.target.value)}
                   placeholder={
                     sourceType === "local"
-                      ? "选择文件夹或粘贴绝对路径"
+                      ? t("选择文件夹或粘贴绝对路径", "Pick a folder or paste an absolute path")
                       : "https://github.com/org/repo"
                   }
                   className="rs-input flex-1 h-11"
@@ -322,7 +335,7 @@ export default function RepositoryPage() {
                     onClick={() => setPickerOpen(true)}
                     className="rs-btn rs-btn-ghost"
                   >
-                    浏览…
+                    {t("浏览…", "Browse…")}
                   </button>
                 )}
               </div>
@@ -331,7 +344,7 @@ export default function RepositoryPage() {
                 disabled={loading || !sourceLocation.trim()}
                 className="rs-btn rs-btn-primary h-11 px-5"
               >
-                创建
+                {t("创建", "Create")}
               </button>
             </div>
           </form>
@@ -375,20 +388,20 @@ export default function RepositoryPage() {
   const sidebar = (
     <>
       <div className="rs-wiki-sidebar-head">
-        <div className="rs-eyebrow">{mode === "learn" ? "Learning Path" : "Contents"}</div>
+        <div className="rs-eyebrow">{mode === "learn" ? t("学习路径", "Learning Path") : t("目录", "Contents")}</div>
         <div className="mt-1 text-[15px] font-semibold tracking-tight truncate">
           {wiki?.project_name || repo?.name || "Repository"}
         </div>
         <button type="button" className="rs-searchbox" onClick={() => setPaletteOpen(true)}>
           <span aria-hidden>⌕</span>
-          <span className="flex-1 text-left">搜索 Wiki</span>
+          <span className="flex-1 text-left">{t("搜索 Wiki", "Search wiki")}</span>
           <kbd className="rs-kbd">⌘K</kbd>
         </button>
         {ready && mode === "read" && (
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder="过滤目录…"
+            placeholder={t("过滤目录…", "Filter contents…")}
             className="rs-input h-8 mt-2 text-[12px]"
           />
         )}
@@ -428,7 +441,7 @@ export default function RepositoryPage() {
             filter={filter.trim().toLowerCase()}
           />
         ) : (
-          <p className="px-3 text-[13px] text-[var(--rs-muted)]">尚未生成目录</p>
+          <p className="px-3 text-[13px] text-[var(--rs-muted)]">{t("尚未生成目录", "No contents yet")}</p>
         )}
       </div>
 
@@ -439,7 +452,7 @@ export default function RepositoryPage() {
             className={mode === "read" ? "is-active" : ""}
             onClick={() => setMode("read")}
           >
-            阅读
+            {t("阅读", "Read")}
           </button>
           <button
             type="button"
@@ -447,7 +460,7 @@ export default function RepositoryPage() {
             onClick={() => setMode("learn")}
             disabled={!path}
           >
-            学习路径
+            {t("学习路径", "Learning path")}
           </button>
         </div>
       </div>
@@ -466,20 +479,20 @@ export default function RepositoryPage() {
               type="button"
               className="rs-icon-btn rs-only-narrow"
               onClick={() => setNavOpen(true)}
-              aria-label="打开目录"
+              aria-label={t("打开目录", "Open contents")}
             >
               ☰
             </button>
             <Link to="/repositories" className="rs-btn rs-btn-ghost h-8 px-3 text-[12px] shrink-0">
-              ← 知识库
+              ← {t("知识库", "Library")}
             </Link>
             <div className="min-w-0">
               <div className="text-[14px] font-semibold tracking-tight truncate">
-                {repo?.name || "仓库"}
+                {repo?.name || t("仓库", "Repository")}
               </div>
               <div className="text-[11px] text-[var(--rs-muted)] truncate rs-tabular">
                 {version?.commit_sha ? `${version.commit_sha.slice(0, 10)} · ` : ""}
-                {STATUS_LABEL[status || ""] || status || "未分析"}
+                {statusLabel(status, t)}
               </div>
             </div>
           </div>
@@ -491,7 +504,7 @@ export default function RepositoryPage() {
               onClick={() => setPaletteOpen(true)}
             >
               <span aria-hidden>⌕</span>
-              <span>搜索</span>
+              <span>{t("搜索", "Search")}</span>
               <kbd className="rs-kbd">⌘K</kbd>
             </button>
             {ready && (
@@ -500,7 +513,7 @@ export default function RepositoryPage() {
                 onClick={() => setAskOpen(true)}
                 className="rs-btn rs-btn-secondary h-8 px-3.5 text-[12px]"
               >
-                ✦ 提问
+                ✦ {t("提问", "Ask")}
               </button>
             )}
             <button
@@ -509,10 +522,10 @@ export default function RepositoryPage() {
               disabled={analyzing}
               className="rs-btn rs-btn-primary h-8 px-3.5 text-[12px]"
             >
-              {analyzing ? STATUS_LABEL[status || ""] || "分析中…" : ready ? "重新扫描" : "生成 Wiki"}
+              {analyzing ? statusLabel(status, t) : ready ? t("重新扫描", "Rescan") : t("生成 Wiki", "Build wiki")}
             </button>
             <Link to="/reviews" className="rs-btn rs-btn-ghost h-8 px-3 text-[12px] hidden sm:flex">
-              复习
+              {t("复习", "Review")}
             </Link>
           </div>
         </div>
@@ -535,11 +548,13 @@ export default function RepositoryPage() {
               <div className="rs-wiki-article text-center py-24">
                 <div className="rs-hero-mark">⌘</div>
                 <h1 className="rs-title text-[28px] font-semibold tracking-tight mt-5">
-                  {analyzing ? "正在生成 Wiki" : "生成这个仓库的知识 Wiki"}
+                  {analyzing ? t("正在生成 Wiki", "Building the wiki") : t("生成这个仓库的知识 Wiki", "Build a knowledge wiki for this repository")}
                 </h1>
                 <p className="mt-3 text-[15px] text-[var(--rs-ink-2)] max-w-md mx-auto">
-                  扫描依赖图、入口与模块，生成 Overview、Architecture、Reading Guide 与词条页，
-                  每条结论都带源码引用。
+                  {t(
+                    "扫描依赖图、入口与模块，生成 Overview、Architecture、Reading Guide 与词条页，每条结论都带源码引用。",
+                    "Scans the dependency graph, entry points and modules to build Overview, Architecture, Reading Guide and concept pages, with source citations throughout.",
+                  )}
                 </p>
                 {analyzing ? (
                   <div className="mt-7 max-w-sm mx-auto">
@@ -551,19 +566,19 @@ export default function RepositoryPage() {
                     onClick={handleAnalyze}
                     className="rs-btn rs-btn-primary mt-6 h-11 px-6"
                   >
-                    开始分析
+                    {t("开始分析", "Start analysis")}
                   </button>
                 )}
               </div>
             ) : mode === "learn" && path && !currentPage?.id.startsWith("concepts/") ? (
               <div className="rs-wiki-article">
-                <div className="rs-chip rs-chip-accent mb-4">辅助 · 学习路径</div>
+                <div className="rs-chip rs-chip-accent mb-4">{t("辅助 · 学习路径", "Assistive · learning path")}</div>
                 <h1 className="rs-title text-[34px] font-semibold tracking-tight">{path.title}</h1>
                 <p className="mt-3 text-[16px] leading-relaxed text-[var(--rs-ink-2)] max-w-2xl">
                   {path.description}
                 </p>
                 <div className="mt-2 text-[13px] text-[var(--rs-muted)] rs-tabular">
-                  约 {path.estimated_minutes} 分钟 · {path.nodes.length} 个节点
+                  {t(`约 ${path.estimated_minutes} 分钟 · ${path.nodes.length} 个节点`, `~${path.estimated_minutes} min · ${path.nodes.length} steps`)}
                 </div>
 
                 <ol className="mt-10 space-y-3">
@@ -594,7 +609,7 @@ export default function RepositoryPage() {
                                 onClick={() => openPage(pageId)}
                                 className="rs-btn rs-btn-secondary h-8 px-3 text-[12px] mt-3"
                               >
-                                打开词条 →
+                                {t("打开词条 →", "Open concept →")}
                               </button>
                             )}
                           </div>
@@ -607,7 +622,7 @@ export default function RepositoryPage() {
             ) : currentPage ? (
               <div className="rs-reader">
                 <article className="rs-wiki-article" ref={articleRef}>
-                  <nav className="rs-breadcrumb" aria-label="面包屑">
+                  <nav className="rs-breadcrumb" aria-label={t("面包屑", "Breadcrumb")}>
                     <button type="button" onClick={() => openPage("index")}>
                       {wiki?.project_name || repo?.name || "Wiki"}
                     </button>
@@ -638,10 +653,10 @@ export default function RepositoryPage() {
                   {boundConcept && <ConceptPracticePanel concept={boundConcept} />}
 
                   {(prevPage || nextPage) && (
-                    <nav className="rs-pager" aria-label="上一页 / 下一页">
+                    <nav className="rs-pager" aria-label={t("上一页 / 下一页", "Previous / next page")}>
                       {prevPage ? (
                         <button type="button" onClick={() => openPage(prevPage.page_id)}>
-                          <span className="rs-pager-dir">← 上一页</span>
+                          <span className="rs-pager-dir">← {t("上一页", "Previous")}</span>
                           <span className="rs-pager-title">{prevPage.title}</span>
                         </button>
                       ) : (
@@ -653,7 +668,7 @@ export default function RepositoryPage() {
                           className="rs-pager-next"
                           onClick={() => openPage(nextPage.page_id)}
                         >
-                          <span className="rs-pager-dir">下一页 →</span>
+                          <span className="rs-pager-dir">{t("下一页", "Next")} →</span>
                           <span className="rs-pager-title">{nextPage.title}</span>
                         </button>
                       )}
@@ -666,7 +681,7 @@ export default function RepositoryPage() {
                 </aside>
               </div>
             ) : (
-              <div className="rs-wiki-article text-[var(--rs-muted)]">请选择左侧页面</div>
+              <div className="rs-wiki-article text-[var(--rs-muted)]">{t("请选择左侧页面", "Pick a page on the left")}</div>
             )}
           </main>
         </div>
@@ -683,7 +698,7 @@ export default function RepositoryPage() {
       <AskPanel
         open={askOpen}
         repositoryId={id}
-        repositoryName={wiki?.project_name || repo?.name || "仓库"}
+        repositoryName={wiki?.project_name || repo?.name || t("仓库", "repository")}
         onClose={() => setAskOpen(false)}
         onOpenPage={openPage}
       />
@@ -700,23 +715,19 @@ export default function RepositoryPage() {
   );
 }
 
-const PIPELINE: { key: string; label: string }[] = [
-  { key: "scanning", label: "扫描代码" },
-  { key: "generating_concepts", label: "抽取概念" },
-  { key: "generating_wiki", label: "生成 Wiki" },
-  { key: "llm_enriching", label: "模型润色" },
-];
+const PIPELINE = ["scanning", "generating_concepts", "generating_wiki", "llm_enriching"];
 
 function PipelineSteps({ status, detail }: { status: string; detail?: string | null }) {
-  const index = PIPELINE.findIndex((s) => s.key === status);
+  const t = useT();
+  const index = PIPELINE.indexOf(status);
   return (
     <ol className="rs-pipeline">
       {PIPELINE.map((step, i) => {
         const state = index < 0 ? "wait" : i < index ? "done" : i === index ? "now" : "wait";
         return (
-          <li key={step.key} className={`rs-pipeline-step is-${state}`}>
+          <li key={step} className={`rs-pipeline-step is-${state}`}>
             <span className="rs-pipeline-dot" aria-hidden />
-            <span>{step.label}</span>
+            <span>{statusLabel(step, t)}</span>
             {/* The LLM stage runs for minutes; without its per-module counter
                 the whole panel looks frozen. */}
             {state === "now" && detail && <span className="rs-pipeline-detail">{detail}</span>}

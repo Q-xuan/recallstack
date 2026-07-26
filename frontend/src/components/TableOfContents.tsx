@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { TocEntry } from "../lib/markdown";
+import { useT } from "../lib/i18n";
 
 interface Props {
   entries: TocEntry[];
@@ -14,6 +15,7 @@ interface Props {
  * reader has no map of the page they are in.
  */
 export default function TableOfContents({ entries, scrollRoot }: Props) {
+  const t = useT();
   const [activeId, setActiveId] = useState<string>("");
 
   useEffect(() => {
@@ -47,8 +49,8 @@ export default function TableOfContents({ entries, scrollRoot }: Props) {
   if (entries.length < 2) return null;
 
   return (
-    <nav className="rs-toc" aria-label="页面目录">
-      <div className="rs-toc-title">本页目录</div>
+    <nav className="rs-toc" aria-label={t("页面目录", "Page outline")}>
+      <div className="rs-toc-title">{t("本页目录", "On this page")}</div>
       <ul>
         {entries.map((entry) => (
           <li key={entry.id}>

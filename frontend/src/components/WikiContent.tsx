@@ -2,6 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } fro
 import { createPortal } from "react-dom";
 import CodeBlock from "./CodeBlock";
 import SourcePeek from "./SourcePeek";
+import { useT } from "../lib/i18n";
 import { renderMarkdown, stripLeadingTitle, type TocEntry } from "../lib/markdown";
 
 // Mermaid pulls in cytoscape and katex. Most pages have no diagram, so it is
@@ -33,6 +34,7 @@ export default function WikiContent({
   onLookup,
   onTocChange,
 }: Props) {
+  const t = useT();
   const ref = useRef<HTMLDivElement>(null);
   // The peek is portalled into a slot injected right after the citation's own
   // block, so the code appears where the claim was made instead of at the end.
@@ -188,7 +190,7 @@ export default function WikiContent({
               window.getSelection()?.removeAllRanges();
             }}
           >
-            在 Wiki 中查找「
+            {t("在 Wiki 中查找", "Search wiki for")} 「
             {toolbar.selection.length > 18
               ? `${toolbar.selection.slice(0, 18)}…`
               : toolbar.selection}
@@ -201,7 +203,7 @@ export default function WikiContent({
         {blocks.map((block, i) => {
           if (block.kind === "mermaid") {
             return (
-              <Suspense key={i} fallback={<div className="rs-diagram-loading">图表加载中…</div>}>
+              <Suspense key={i} fallback={<div className="rs-diagram-loading">{t("图表加载中…", "Loading diagram…")}</div>}>
                 <MermaidDiagram code={block.code} />
               </Suspense>
             );

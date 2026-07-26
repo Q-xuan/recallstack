@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import mermaid from "mermaid";
+import { useT } from "../lib/i18n";
 import { readTheme } from "../lib/theme";
 
 mermaid.initialize({ startOnLoad: false, theme: "default" });
@@ -15,6 +16,7 @@ interface Props {
  * get a real viewer: theme-aware, expandable, and never silently clipped.
  */
 export default function MermaidDiagram({ code }: Props) {
+  const t = useT();
   const [error, setError] = useState("");
   const [svg, setSvg] = useState("");
   const [zoomed, setZoomed] = useState(false);
@@ -45,7 +47,7 @@ export default function MermaidDiagram({ code }: Props) {
       })
       .catch((e: unknown) => {
         if (cancelled) return;
-        setError(e instanceof Error ? e.message : "渲染失败");
+        setError(e instanceof Error ? e.message : "render failed");
         setSvg("");
       });
     return () => {
@@ -66,7 +68,7 @@ export default function MermaidDiagram({ code }: Props) {
     // A broken diagram must not hide the source it was generated from.
     return (
       <div className="rs-diagram-error">
-        <p>图表渲染失败：{error}</p>
+        <p>{t("图表渲染失败：", "Diagram failed to render: ")}{error}</p>
         <pre>{code}</pre>
       </div>
     );
@@ -77,7 +79,7 @@ export default function MermaidDiagram({ code }: Props) {
       <figure className="rs-diagram">
         <div className="rs-diagram-body" dangerouslySetInnerHTML={{ __html: svg }} />
         <button type="button" className="rs-diagram-zoom" onClick={() => setZoomed(true)}>
-          放大
+          {t("放大", "Zoom")}
         </button>
       </figure>
 
@@ -89,7 +91,7 @@ export default function MermaidDiagram({ code }: Props) {
             dangerouslySetInnerHTML={{ __html: svg }}
           />
           <button type="button" className="rs-lightbox-close" onClick={() => setZoomed(false)}>
-            关闭 (esc)
+            {t("关闭 (esc)", "Close (esc)")}
           </button>
         </div>
       )}

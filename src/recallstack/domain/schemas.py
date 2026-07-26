@@ -171,8 +171,15 @@ class WikiSearchOut(BaseModel):
     results: list[WikiSearchResultOut] = Field(default_factory=list)
 
 
+class WikiAskTurn(BaseModel):
+    question: str = Field(max_length=2000)
+    answer: str = Field(max_length=20000)
+
+
 class WikiAskIn(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
+    # Prior turns, oldest first, so follow-ups can say "it" and "那个函数".
+    history: list[WikiAskTurn] = Field(default_factory=list, max_length=8)
 
 
 class WikiAskSourceOut(BaseModel):

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import InlineProbe from "./InlineProbe";
+import { tNow, useT } from "../lib/i18n";
 import { AttemptResult, Concept, LearningItem, recallstackApi } from "../lib/recallstackApi";
 
 type Props = {
@@ -16,6 +17,7 @@ type Props = {
  * one click, and the choice sticks for the session.
  */
 export default function ConceptPracticePanel({ concept, compact = false }: Props) {
+  const t = useT();
   const [items, setItems] = useState<LearningItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -31,7 +33,7 @@ export default function ConceptPracticePanel({ concept, compact = false }: Props
         const list = await recallstackApi.listItems(concept.id);
         if (!cancelled) setItems(list);
       } catch (e: unknown) {
-        if (!cancelled) setError(e instanceof Error ? e.message : "练习加载失败");
+        if (!cancelled) setError(e instanceof Error ? e.message : tNow("练习加载失败", "Failed to load practice"));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -67,19 +69,19 @@ export default function ConceptPracticePanel({ concept, compact = false }: Props
           ›
         </span>
         <span className="min-w-0 flex-1 text-left">
-          <span className="rs-practice-title">检验一下是否真的读懂了</span>
+          <span className="rs-practice-title">{t("检验一下是否真的读懂了", "Check you actually understood this")}</span>
           <span className="rs-practice-sub">
-            {items.length} 道自测 · 掌握度 {mastery == null ? "—" : Number(mastery).toFixed(2)}
-            {nextReview ? ` · 下次复习 ${new Date(nextReview).toLocaleDateString()}` : ""}
+            {items.length}{t(" 道自测 · 掌握度 ", " questions · mastery ")}{mastery == null ? "—" : Number(mastery).toFixed(2)}
+            {nextReview ? t(` · 下次复习 ${new Date(nextReview).toLocaleDateString()}`, ` · next review ${new Date(nextReview).toLocaleDateString()}`) : ""}
           </span>
         </span>
-        <span className="rs-chip">{open ? "收起" : "展开"}</span>
+        <span className="rs-chip">{open ? t("收起", "Collapse") : t("展开", "Expand")}</span>
       </button>
 
       {open && (
         <div className="rs-practice-body">
           <p className="rs-practice-hint">
-            证据就在上文。先在脑中合上文章，再作答——回忆比重读更能留下记忆。
+            {t("证据就在上文。先在脑中合上文章，再作答——回忆比重读更能留下记忆。", "The evidence is above. Close the article in your mind first, then answer — recall beats rereading.")}
           </p>
           <InlineProbe item={probeItem} onCompleted={onCompleted} />
           {!compact && (
@@ -88,13 +90,13 @@ export default function ConceptPracticePanel({ concept, compact = false }: Props
                 to={`/session/${probeItem?.id || items[0].id}`}
                 className="rs-btn rs-btn-secondary h-9 px-4 text-[13px]"
               >
-                完整练习（{items.length}）
+                {t("完整练习", "Full practice")}（{items.length}）
               </Link>
               <Link
                 to={`/concepts/${concept.id}`}
                 className="rs-btn rs-btn-ghost h-9 px-4 text-[13px]"
               >
-                概念详情
+                {t("概念详情", "Concept details")}
               </Link>
             </div>
           )}

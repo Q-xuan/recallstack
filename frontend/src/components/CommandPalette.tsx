@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useT } from "../lib/i18n";
 import { recallstackApi, type WikiSearchResult } from "../lib/recallstackApi";
 
 interface Props {
@@ -10,13 +11,13 @@ interface Props {
   onOpenPage: (pageId: string) => void;
 }
 
-const KIND_LABEL: Record<WikiSearchResult["kind"], string> = {
-  overview: "总览",
-  architecture: "架构",
-  guide: "导读",
-  module: "模块",
-  concept: "词条",
-  page: "页面",
+const KIND_LABEL: Record<WikiSearchResult["kind"], [string, string]> = {
+  overview: ["总览", "Overview"],
+  architecture: ["架构", "Architecture"],
+  guide: ["导读", "Guide"],
+  module: ["模块", "Module"],
+  concept: ["词条", "Concept"],
+  page: ["页面", "Page"],
 };
 
 /**
@@ -32,6 +33,7 @@ export default function CommandPalette({
   onClose,
   onOpenPage,
 }: Props) {
+  const t = useT();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<WikiSearchResult[]>([]);
   const [active, setActive] = useState(0);
@@ -112,7 +114,7 @@ export default function CommandPalette({
         onMouseDown={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label="搜索 Wiki"
+        aria-label={t("搜索 Wiki", "Search wiki")}
       >
         <div className="rs-palette-input">
           <span aria-hidden className="rs-palette-icon">
@@ -123,7 +125,7 @@ export default function CommandPalette({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="搜索页面、词条、文件名…"
+            placeholder={t("搜索页面、词条、文件名…", "Search pages, concepts, file names…")}
             autoComplete="off"
             spellCheck={false}
           />
@@ -132,11 +134,11 @@ export default function CommandPalette({
 
         <div className="rs-palette-results">
           {!query.trim() ? (
-            <p className="rs-palette-empty">输入关键字搜索整个 Wiki，支持文件名与中文。</p>
+            <p className="rs-palette-empty">{t("输入关键字搜索整个 Wiki，支持文件名与中文。", "Type to search the whole wiki — file names work too.")}</p>
           ) : loading && !results.length ? (
-            <p className="rs-palette-empty">搜索中…</p>
+            <p className="rs-palette-empty">{t("搜索中…", "Searching…")}</p>
           ) : !results.length ? (
-            <p className="rs-palette-empty">没有匹配「{query.trim()}」的内容。</p>
+            <p className="rs-palette-empty">{t("没有匹配", "No results for")} 「{query.trim()}」</p>
           ) : (
             <ul>
               {results.map((hit, i) => (
@@ -147,7 +149,7 @@ export default function CommandPalette({
                     onMouseEnter={() => setActive(i)}
                     onClick={() => choose(i)}
                   >
-                    <span className="rs-palette-kind">{KIND_LABEL[hit.kind] ?? "页面"}</span>
+                    <span className="rs-palette-kind">{t(...(KIND_LABEL[hit.kind] ?? ["页面", "Page"]))}</span>
                     <span className="min-w-0 flex-1">
                       <span className="rs-palette-title">{highlight(hit.title, terms)}</span>
                       {hit.snippet && (
@@ -164,12 +166,12 @@ export default function CommandPalette({
         <div className="rs-palette-foot">
           <span>
             <kbd className="rs-kbd">↑</kbd>
-            <kbd className="rs-kbd">↓</kbd> 选择
+            <kbd className="rs-kbd">↓</kbd> {t("选择", "select")}
           </span>
           <span>
-            <kbd className="rs-kbd">↵</kbd> 打开
+            <kbd className="rs-kbd">↵</kbd> {t("打开", "open")}
           </span>
-          <span className="ml-auto">{results.length ? `${results.length} 个结果` : ""}</span>
+          <span className="ml-auto">{results.length ? t(`${results.length} 个结果`, `${results.length} results`) : ""}</span>
         </div>
       </div>
     </div>

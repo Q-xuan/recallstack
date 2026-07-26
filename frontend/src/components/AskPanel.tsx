@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import WikiContent from "./WikiContent";
+import { tNow, useT } from "../lib/i18n";
 import { recallstackApi, type WikiAskResponse } from "../lib/recallstackApi";
 
 interface Props {
@@ -29,6 +30,7 @@ export default function AskPanel({
   onClose,
   onOpenPage,
 }: Props) {
+  const t = useT();
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -60,14 +62,19 @@ export default function AskPanel({
     if (!question || busy) return;
     setDraft("");
     setBusy(true);
+    // Completed turns become conversation context so follow-ups can say "it".
+    const history = turns
+      .filter((t) => t.answer)
+      .slice(-4)
+      .map((t) => ({ question: t.question, answer: t.answer!.answer.slice(0, 4000) }));
     setTurns((prev) => [...prev, { question }]);
     try {
-      const res = await recallstackApi.askWiki(repositoryId, question);
+      const res = await recallstackApi.askWiki(repositoryId, question, history);
       setTurns((prev) =>
         prev.map((t, i) => (i === prev.length - 1 ? { ...t, answer: res } : t)),
       );
     } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : "提问失败";
+      const message = e instanceof Error ? e.message : tNow("提问失败", "Request failed");
       setTurns((prev) =>
         prev.map((t, i) => (i === prev.length - 1 ? { ...t, error: message } : t)),
       );
@@ -89,16 +96,16 @@ export default function AskPanel({
         onMouseDown={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label="向仓库提问"
+        aria-label={t("向仓库提问", "Ask the repository")}
       >
         <header className="rs-ask-head">
           <div className="min-w-0">
             <div className="rs-eyebrow">Ask</div>
             <div className="text-[15px] font-semibold tracking-tight truncate">
-              向 {repositoryName} 提问
+              {t("向", "Ask")} {repositoryName}{t(" 提问", "")}
             </div>
           </div>
-          <button type="button" className="rs-icon-btn" onClick={onClose} aria-label="关闭">
+          <button type="button" className="rs-icon-btn" onClick={onClose} aria-label={t("关闭", "Close")}>
             ✕
           </button>
         </header>
@@ -106,11 +113,11 @@ export default function AskPanel({
         <div className="rs-ask-log" ref={logRef}>
           {turns.length === 0 && (
             <div className="rs-ask-hint">
-              <p>基于生成的 Wiki 回答问题,并给出可点击的页面引用。</p>
+              <p>{t("基于生成的 Wiki 回答问题,并给出可点击的页面引用。", "Answers are grounded in the generated wiki, with clickable page citations.")}</p>
               <ul>
-                <li>这个项目的入口在哪?</li>
-                <li>依赖图是怎么构建的?</li>
-                <li>复习调度用了什么算法?</li>
+                <li>{t("这个项目的入口在哪?", "Where is the entry point of this project?")}</li>
+                <li>{t("依赖图是怎么构建的?", "How is the dependency graph built?")}</li>
+                <li>{t("复习调度用了什么算法?", "Which algorithm schedules reviews?")}</li>
               </ul>
             </div>
           )}
@@ -121,7 +128,7 @@ export default function AskPanel({
               {turn.error ? (
                 <div className="rs-alert">{turn.error}</div>
               ) : !turn.answer ? (
-                <div className="rs-ask-thinking">思考中…</div>
+                <div className="rs-ask-thinking">{t("思考中…", "Thinking…")}</div>
               ) : (
                 <div className="rs-ask-a">
                   <WikiContent
@@ -133,7 +140,7 @@ export default function AskPanel({
                   {turn.answer.sources.length > 0 && (
                     <div className="rs-ask-sources">
                       <span className="rs-ask-sources-label">
-                        {turn.answer.engine === "llm" ? "引用页面" : "相关页面"}
+                        {turn.answer.engine === "llm" ? t("引用页面", "Cited pages") : t("相关页面", "Related pages")}
                       </span>
                       {turn.answer.sources.map((s) => (
                         <button
@@ -165,7 +172,7 @@ export default function AskPanel({
                 submit();
               }
             }}
-            placeholder="问点什么…(Enter 发送,Shift+Enter 换行)"
+            placeholder={t("问点什么…(Enter 发送,Shift+Enter 换行)", "Ask anything… (Enter to send, Shift+Enter for newline)")}
             rows={2}
             disabled={busy}
           />
@@ -175,7 +182,7 @@ export default function AskPanel({
             onClick={submit}
             disabled={busy || !draft.trim()}
           >
-            {busy ? "…" : "发送"}
+            {busy ? "…" : t("发送", "Send")}
           </button>
         </footer>
       </aside>

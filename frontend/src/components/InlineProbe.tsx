@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { tNow, useT } from "../lib/i18n";
 import { AttemptResult, LearningItem, recallstackApi } from "../lib/recallstackApi";
 
 type Props = {
@@ -7,6 +8,7 @@ type Props = {
 };
 
 export default function InlineProbe({ item, onCompleted }: Props) {
+  const t = useT();
   const [answer, setAnswer] = useState("");
   const [confidence, setConfidence] = useState(3);
   const [submitting, setSubmitting] = useState(false);
@@ -20,7 +22,7 @@ export default function InlineProbe({ item, onCompleted }: Props) {
   );
 
   if (!item) {
-    return <div className="rs-probe-empty">暂无自测题。</div>;
+    return <div className="rs-probe-empty">{t("暂无自测题。", "No practice questions yet.")}</div>;
   }
 
   async function submit() {
@@ -39,7 +41,7 @@ export default function InlineProbe({ item, onCompleted }: Props) {
       setResult(r);
       onCompleted?.(r);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "提交失败");
+      setError(e instanceof Error ? e.message : tNow("提交失败", "Submit failed"));
     } finally {
       setSubmitting(false);
     }
@@ -48,7 +50,7 @@ export default function InlineProbe({ item, onCompleted }: Props) {
   return (
     <div className="rs-probe">
       <div className="flex items-start justify-between gap-3 mb-2">
-        <div className="rs-eyebrow">30 秒自测 · 主动回忆</div>
+        <div className="rs-eyebrow">{t("30 秒自测 · 主动回忆", "30-second probe · active recall")}</div>
         <span className="rs-chip">{item.item_type}</span>
       </div>
 
@@ -61,11 +63,11 @@ export default function InlineProbe({ item, onCompleted }: Props) {
             onChange={(e) => setAnswer(e.target.value)}
             rows={4}
             className="rs-input rs-textarea"
-            placeholder="用自己的话作答；能说出模块或符号名更好…"
+            placeholder={t("用自己的话作答；能说出模块或符号名更好…", "Answer in your own words; naming modules or symbols is even better…")}
           />
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <label className="text-[13px] text-[var(--rs-ink-2)] flex items-center gap-2">
-              信心
+              {t("信心", "Confidence")}
               <select
                 value={confidence}
                 onChange={(e) => setConfidence(Number(e.target.value))}
@@ -84,7 +86,7 @@ export default function InlineProbe({ item, onCompleted }: Props) {
               disabled={!canSubmit}
               className="rs-btn rs-btn-primary h-9 px-4 text-[13px]"
             >
-              {submitting ? "提交中…" : "提交答案"}
+              {submitting ? t("提交中…", "Submitting…") : t("提交答案", "Submit answer")}
             </button>
           </div>
           {error && <div className="rs-alert mt-3">{error}</div>}
@@ -94,15 +96,15 @@ export default function InlineProbe({ item, onCompleted }: Props) {
           <p className="text-[13.5px] text-[var(--rs-ink)]">{result.evaluation.feedback}</p>
           <div className="text-[12px] text-[var(--rs-muted)] rs-tabular space-y-1 mt-2">
             <div>
-              得分 {result.score.toFixed(2)} · FSRS {result.fsrs_rating}
+              {t("得分", "Score")} {result.score.toFixed(2)} · FSRS {result.fsrs_rating}
             </div>
             <div>
-              掌握度 {result.mastery_score?.toFixed(2) ?? "—"} · 下次复习{" "}
+              {t("掌握度", "Mastery")} {result.mastery_score?.toFixed(2) ?? "—"} · {t("下次复习", "next review")}{" "}
               {result.next_review_at ? new Date(result.next_review_at).toLocaleString() : "—"}
             </div>
             {result.evaluation.suggested_revision && (
               <div className="text-[var(--rs-accent)]">
-                下一步：{result.evaluation.suggested_revision}
+                {t("下一步：", "Next: ")}{result.evaluation.suggested_revision}
               </div>
             )}
           </div>

@@ -318,10 +318,15 @@ export const recallstackApi = {
   wiki: (id: string) => request<Wiki>(`/repositories/${id}/wiki`),
   wikiPage: (id: string, pageId: string) =>
     request<WikiPage>(`/repositories/${id}/wiki/pages/${encodeURIComponent(pageId)}`),
-  askWiki: (id: string, question: string, signal?: AbortSignal) =>
+  askWiki: (
+    id: string,
+    question: string,
+    history: Array<{ question: string; answer: string }> = [],
+    signal?: AbortSignal,
+  ) =>
     request<WikiAskResponse>(`/repositories/${id}/ask`, {
       method: "POST",
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question, history }),
       signal,
     }),
   searchWiki: (id: string, query: string, limit = 20, signal?: AbortSignal) => {

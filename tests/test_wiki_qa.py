@@ -66,3 +66,18 @@ def test_llm_error_text_degrades_to_search():
 
 def test_fallback_answer_without_hits():
     assert "没有找到" in fallback_answer("q", [])
+
+
+def test_history_reaches_the_model_and_retrieval():
+    llm = _FakeLLM("It is called from boot.")
+    history = [{"question": "where is boot?", "answer": "Boot lives in [app](modules/app)."}]
+    result = asyncio.run(
+        answer_question("它在哪里被调用?", _docs(), project_name="demo", llm=llm, history=history)
+    )
+    assert result["engine"] == "llm"
+    # prior turn replayed as user/assistant messages before the final question
+    roles = [m["role"] for m in llm.messages]
+    assert roles == ["system", "user", "assistant", "user"]
+    assert llm.messages[1]["content"] == "where is boot?"
+    # a term-free follow-up still retrieves via the previous question's terms
+    assert any(s["page_id"] == "modules/app" for s in result["sources"])

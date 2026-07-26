@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import CodeBlock from "./CodeBlock";
+import { tNow, useT } from "../lib/i18n";
 import { recallstackApi } from "../lib/recallstackApi";
 
 interface Props {
@@ -70,6 +71,7 @@ function langFor(path: string): string {
  * worth citing.
  */
 export default function SourcePeek({ repositoryId, reference, onClose }: Props) {
+  const t = useT();
   const parsed = parseRef(reference);
   const [code, setCode] = useState<string | null>(null);
   const [range, setRange] = useState<{ start: number; end: number } | null>(null);
@@ -92,7 +94,7 @@ export default function SourcePeek({ repositoryId, reference, onClose }: Props) 
         setCode(res.content);
         setRange({ start: res.start_line, end: res.end_line });
       } catch (e: unknown) {
-        if (!cancelled) setError(e instanceof Error ? e.message : "无法读取源码");
+        if (!cancelled) setError(e instanceof Error ? e.message : tNow("无法读取源码", "Could not read source"));
       }
     })();
     return () => {
@@ -111,18 +113,18 @@ export default function SourcePeek({ repositoryId, reference, onClose }: Props) 
           </div>
           {range && (
             <div className="rs-peek-range rs-tabular">
-              行 {range.start}–{range.end}
+              {t("行", "Lines")} {range.start}–{range.end}
             </div>
           )}
         </div>
         <button type="button" className="rs-btn rs-btn-ghost h-7 px-2.5 text-[12px]" onClick={onClose}>
-          收起
+          {t("收起", "Collapse")}
         </button>
       </div>
       {error ? (
         <p className="rs-peek-error">{error}</p>
       ) : code === null ? (
-        <p className="rs-peek-loading">读取源码…</p>
+        <p className="rs-peek-loading">{t("读取源码…", "Reading source…")}</p>
       ) : (
         <CodeBlock code={code} lang={langFor(parsed.path)} />
       )}

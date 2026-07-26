@@ -80,27 +80,42 @@ def fallback_answer(question: str, sources: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+# Keep replayed answers short: they anchor pronouns, they are not the context.
+HISTORY_TURNS = 4
+HISTORY_ANSWER_CHARS = 1500
+
+
 async def answer_question(
     question: str,
     docs: list[SearchDocument],
     *,
     project_name: str,
     llm: Any | None = None,
+    history: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Return ``{answer, engine, sources}``; never raises on LLM failure."""
-    sources = select_context(docs, question)
+    history = (history or [])[-HISTORY_TURNS:]
+    # A follow-up like "它在哪里被调用?" carries no searchable terms of its own,
+    # so the previous question joins the retrieval query.
+    retrieval_query = question
+    if history:
+        retrieval_query = f"{history[-1]['question']} {question}"
+    sources = select_context(docs, retrieval_query)
     slim = [{k: s[k] for k in ("page_id", "title", "kind", "snippet")} for s in sources]
 
     if llm is None or not sources:
         return {"answer": fallback_answer(question, slim), "engine": "search", "sources": slim}
 
-    messages = [
-        {"role": "system", "content": _SYSTEM_PROMPT.format(project=project_name)},
+    messages = [{"role": "system", "content": _SYSTEM_PROMPT.format(project=project_name)}]
+    for turn in history:
+        messages.append({"role": "user", "content": turn["question"]})
+        messages.append({"role": "assistant", "content": turn["answer"][:HISTORY_ANSWER_CHARS]})
+    messages.append(
         {
             "role": "user",
             "content": f"{_context_block(sources)}\n\nQuestion: {question}",
-        },
-    ]
+        }
+    )
     try:
         text = await llm.complete(messages, temperature=0.2, max_tokens=ANSWER_MAX_TOKENS)
     except Exception as exc:  # noqa: BLE001

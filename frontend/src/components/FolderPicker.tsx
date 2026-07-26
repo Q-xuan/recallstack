@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { tNow, useT } from "../lib/i18n";
 import { FsEntry, FsListResult, FsRoot, recallstackApi } from "../lib/recallstackApi";
 
 type Props = {
@@ -9,6 +10,7 @@ type Props = {
 };
 
 export default function FolderPicker({ open, onClose, onSelect, initialPath }: Props) {
+  const t = useT();
   const [roots, setRoots] = useState<FsRoot[]>([]);
   const [listing, setListing] = useState<FsListResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -21,7 +23,7 @@ export default function FolderPicker({ open, onClose, onSelect, initialPath }: P
       const data = await recallstackApi.listFsDirectory(path);
       setListing(data);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "无法读取目录");
+      setError(e instanceof Error ? e.message : tNow("无法读取目录", "Could not read directory"));
     } finally {
       setLoading(false);
     }
@@ -55,13 +57,13 @@ export default function FolderPicker({ open, onClose, onSelect, initialPath }: P
       <div className="rs-modal">
         <div className="rs-modal-head">
           <div>
-            <h2 className="rs-modal-title">选择本地文件夹</h2>
+            <h2 className="rs-modal-title">{t("选择本地文件夹", "Choose a local folder")}</h2>
             <p className="rs-modal-sub">
-              浏览器不能直接打开系统文件夹对话框，这里通过本机后端浏览目录。
+              {t("浏览器不能直接打开系统文件夹对话框，这里通过本机后端浏览目录。", "Browsers cannot open the system folder dialog, so directories are browsed through the local backend.")}
             </p>
           </div>
           <button onClick={onClose} className="rs-btn rs-btn-ghost h-8 px-3 text-[12px]">
-            关闭
+            {t("关闭", "Close")}
           </button>
         </div>
 
@@ -78,19 +80,19 @@ export default function FolderPicker({ open, onClose, onSelect, initialPath }: P
         </div>
 
         <div className="rs-modal-path">
-          <div className="rs-eyebrow mb-1">当前路径</div>
+          <div className="rs-eyebrow mb-1">{t("当前路径", "Current path")}</div>
           <div className="rs-modal-pathvalue">{current || "…"}</div>
         </div>
 
         <div className="rs-modal-body">
-          {loading && <p className="px-3 py-2 text-[13px] text-[var(--rs-muted)]">加载中…</p>}
+          {loading && <p className="px-3 py-2 text-[13px] text-[var(--rs-muted)]">{t("加载中…", "Loading…")}</p>}
           {error && <p className="rs-alert m-2">{error}</p>}
           {!loading && listing?.parent && (
             <button
               className="rs-fs-row"
               onClick={() => load(listing.parent || undefined)}
             >
-              ↑ 上级目录
+              ↑ {t("上级目录", "Parent directory")}
             </button>
           )}
           {!loading &&
@@ -106,11 +108,11 @@ export default function FolderPicker({ open, onClose, onSelect, initialPath }: P
               </button>
             ))}
           {!loading && dirs.length === 0 && !error && (
-            <p className="px-3 py-2 text-[13px] text-[var(--rs-muted)]">此目录下没有可见子文件夹</p>
+            <p className="px-3 py-2 text-[13px] text-[var(--rs-muted)]">{t("此目录下没有可见子文件夹", "No visible subfolders here")}</p>
           )}
           {!loading && files.length > 0 && (
             <div className="mt-2 px-3 pt-2 border-t border-[var(--rs-line)]">
-              <div className="rs-eyebrow mb-1">文件预览（不可选）</div>
+              <div className="rs-eyebrow mb-1">{t("文件预览（不可选）", "Files (not selectable)")}</div>
               {files.slice(0, 8).map((f) => (
                 <div key={f.path} className="text-[12px] text-[var(--rs-muted)] py-0.5 truncate">
                   📄 {f.name}
@@ -121,20 +123,20 @@ export default function FolderPicker({ open, onClose, onSelect, initialPath }: P
         </div>
 
         <div className="rs-modal-foot">
-          <div className="text-[12px] text-[var(--rs-muted)] truncate">将导入：{current || "未选择"}</div>
+          <div className="text-[12px] text-[var(--rs-muted)] truncate">{t("将导入：", "Will import: ")}{current || t("未选择", "none")}</div>
           <div className="flex gap-2 shrink-0">
             <button
               onClick={onClose}
               className="rs-btn rs-btn-ghost"
             >
-              取消
+              {t("取消", "Cancel")}
             </button>
             <button
               disabled={!current}
               onClick={() => current && onSelect(current)}
               className="rs-btn rs-btn-primary"
             >
-              选择此文件夹
+              {t("选择此文件夹", "Choose this folder")}
             </button>
           </div>
         </div>

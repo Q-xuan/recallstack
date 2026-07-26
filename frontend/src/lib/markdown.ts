@@ -265,7 +265,7 @@ function renderSegment(md: string, toc: TocEntry[], usedIds: Set<string>): strin
         toc.push({ id, level, text: raw.replace(/[`*_]/g, "") });
       }
       out.push(
-        `<h${level} id="${id}" class="rs-heading"><a class="rs-anchor" href="#${id}" aria-label="链接到此节">#</a>${renderInline(
+        `<h${level} id="${id}" class="rs-heading"><a class="rs-anchor" href="#${id}" aria-label="anchor">#</a>${renderInline(
           raw,
         )}</h${level}>`,
       );

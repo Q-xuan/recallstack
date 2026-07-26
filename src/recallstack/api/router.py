@@ -391,6 +391,7 @@ async def ask_repository_wiki(
         docs,
         project_name=repo.name,
         llm=_qa_llm_client(config),
+        history=[{"question": t.question, "answer": t.answer} for t in body.history],
     )
     return WikiAskOut(
         question=body.question.strip(),
