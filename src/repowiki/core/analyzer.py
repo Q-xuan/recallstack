@@ -104,7 +104,7 @@ class Analyzer:
     async def _generate_overview(
         self, project: ProjectContext, key_files: str, tree_hash: str
     ) -> ProjectOverview:
-        cache_key = f"overview:{tree_hash}"
+        cache_key = f"overview:{self.language}:{tree_hash}"
         cached = await self.cache.get(cache_key)
         if cached:
             try:
@@ -188,7 +188,7 @@ class Analyzer:
                 content_parts.append(content)
 
             files_context = "\n\n".join(files_text_parts)
-            cache_key = f"module:{name}:{content_hash(''.join(content_parts))}"
+            cache_key = f"module:{self.language}:{name}:{content_hash(''.join(content_parts))}"
 
             cached = await self.cache.get(cache_key)
             if cached:
@@ -218,7 +218,7 @@ class Analyzer:
     async def _generate_architecture(
         self, project: ProjectContext, key_files: str, tree_hash: str
     ) -> ArchitectureDiagram:
-        cache_key = f"arch:{tree_hash}"
+        cache_key = f"arch:{self.language}:{tree_hash}"
         cached = await self.cache.get(cache_key)
         if cached:
             try:
@@ -279,7 +279,7 @@ class Analyzer:
 
         # key on the actual prompt inputs so an import-only edit that reshuffles
         # the ranking also invalidates the cached guide
-        cache_key = f"guide:{tree_hash}:{content_hash(rankings + module_summaries)}"
+        cache_key = f"guide:{self.language}:{tree_hash}:{content_hash(rankings + module_summaries)}"
         cached = await self.cache.get(cache_key)
         if cached:
             try:

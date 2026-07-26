@@ -5,6 +5,13 @@ from __future__ import annotations
 import json
 import re
 
+_LANG_NAMES = {
+    "en": "English",
+    "zh": "Simplified Chinese (简体中文)",
+    "ja": "Japanese (日本語)",
+    "ko": "Korean (한국어)",
+}
+
 
 def _lang_instruction(language: str) -> str:
     lang_map = {
@@ -16,10 +23,27 @@ def _lang_instruction(language: str) -> str:
     return lang_map.get(language, "Respond in English.")
 
 
-def _json_instruction() -> str:
-    return (
+def _json_instruction(language: str = "en") -> str:
+    """Closing contract for a prompt: JSON shape, then output language.
+
+    The language directive is repeated here rather than left to the system
+    message alone. Every schema in this module is written with English keys and
+    English placeholder values, and smaller models copy the language of that
+    example over a single instruction several hundred tokens earlier.
+    """
+    base = (
         "Output ONLY valid JSON. No markdown fences, no explanation text before or after. "
         "Just the JSON object/array."
+    )
+    name = _LANG_NAMES.get(language)
+    if not name or language == "en":
+        return base
+    return (
+        f"{base}\n\n"
+        f"LANGUAGE: keep the JSON keys exactly as shown above in English, but write "
+        f"every human-readable value in {name}. The placeholder values in the schema "
+        f"are English only to show the shape — do not copy their language. "
+        f"{_lang_instruction(language)}"
     )
 
 
@@ -50,7 +74,7 @@ def build_overview_prompt(file_tree: str, key_files: str, language: str = "en") 
                 '  "setup_instructions": ["step 1", "step 2"],\n'
                 '  "key_features": ["feature 1", "feature 2"]\n'
                 "}\n\n"
-                f"{_json_instruction()}"
+                f"{_json_instruction(language)}"
             ),
         },
     ]
@@ -91,7 +115,7 @@ def build_module_prompt(
                 '  "relationships": [{"source": "a.py", "target": "b.py", "description": "a imports b for..."}],\n'
                 '  "key_concepts": [{"name": "concept", "explanation": "..."}]\n'
                 "}\n\n"
-                f"{_json_instruction()}"
+                f"{_json_instruction(language)}"
             ),
         },
     ]
@@ -128,7 +152,7 @@ def build_architecture_prompt(
                 "}\n\n"
                 "IMPORTANT: Mermaid code must be a single string with \\n for newlines. "
                 "Use simple alphanumeric node IDs. "
-                f"{_json_instruction()}"
+                f"{_json_instruction(language)}"
             ),
         },
     ]
@@ -164,7 +188,7 @@ def build_reading_guide_prompt(
                 '  ],\n'
                 '  "tips": ["general tip 1", "general tip 2"]\n'
                 "}\n\n"
-                f"{_json_instruction()}"
+                f"{_json_instruction(language)}"
             ),
         },
     ]

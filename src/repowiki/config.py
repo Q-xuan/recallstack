@@ -27,11 +27,32 @@ MODEL_ALIASES = {
     "kimi": "openai/kimi-k2.6",
     "glm": "openai/glm-5",
     "minimax": "openai/MiniMax-M2.7",
+    "agnes": "agnes/agnes-2.0-flash",
+    "agnes-2.5": "agnes/agnes-2.5-flash",
+}
+
+# Endpoints for hubs we can name, so configuring a key alone is enough to get
+# running. Keyed by the provider prefix of the resolved model. The generic
+# ``openai/`` prefix is deliberately absent: it names a wire format, not a host,
+# and the aliases above route it at whatever hub the user points REPOWIKI_API_BASE at.
+PROVIDER_API_BASES = {
+    "agnes": "https://apihub.agnes-ai.com/v1",
+    "deepseek": "https://api.deepseek.com/v1",
+}
+
+# Hub-specific key vars that also imply which model to talk to.
+PROVIDER_KEY_ENVS = {
+    "AGNES_API_KEY": "agnes",
+    "DEEPSEEK_API_KEY": "deepseek",
 }
 
 
 def resolve_model(name: str) -> str:
     return MODEL_ALIASES.get(name, name)
+
+
+def provider_of(model: str) -> str:
+    return model.split("/", 1)[0] if "/" in model else ""
 
 
 @dataclass
@@ -58,8 +79,10 @@ class Config:
         cfg = cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
         # env overrides
+        model_chosen = bool(data.get("model"))
         if val := os.getenv("REPOWIKI_MODEL"):
             cfg.model = val
+            model_chosen = True
         if val := os.getenv("REPOWIKI_API_KEY"):
             cfg.api_key = val
         if val := os.getenv("REPOWIKI_API_BASE"):
@@ -67,14 +90,30 @@ class Config:
         if val := os.getenv("REPOWIKI_LANG"):
             cfg.language = val
 
-        # fall back to common provider keys
+        # fall back to provider-specific keys; a hub key also selects its model
+        # unless one was chosen explicitly, so setting AGNES_API_KEY alone works
+        # instead of silently aiming an Agnes key at the DeepSeek default.
+        hub_key = False
         if not cfg.api_key:
-            for env_key in ("DEEPSEEK_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+            for env_key, hub in PROVIDER_KEY_ENVS.items():
+                if val := os.getenv(env_key):
+                    cfg.api_key = val
+                    hub_key = True
+                    if not model_chosen:
+                        cfg.model = hub
+                    break
+        if not cfg.api_key:
+            for env_key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
                 if val := os.getenv(env_key):
                     cfg.api_key = val
                     break
 
         cfg.model = resolve_model(cfg.model)
+        # Only supply an endpoint once the provider is actually established —
+        # named in the model, or implied by its own key var. Pairing the default
+        # model with an unrelated key is a mismatch to surface, not to route.
+        if not cfg.api_base and (model_chosen or hub_key):
+            cfg.api_base = PROVIDER_API_BASES.get(provider_of(cfg.model), "")
         return cfg
 
     def save(self) -> None:
