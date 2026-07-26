@@ -18,6 +18,7 @@ from recallstack.learning.stale import compute_changed_paths
 from recallstack.security import (
     SecurityError,
     filter_source_references,
+    normalize_repo_path,
     validate_git_url,
     validate_local_path,
 )
@@ -246,6 +247,42 @@ def test_source_reference_validation():
     cleaned = filter_source_references(refs, {"app/main.py"})
     assert len(cleaned) == 1
     assert cleaned[0]["path"] == "app/main.py"
+
+
+def test_windows_scanned_paths_still_match_their_references():
+    # Ingestion on Windows reports backslashes; references use forward slashes.
+    # Comparing the raw forms dropped every file below the repository root.
+    refs = [{"path": "src/pkg/mod.py", "start_line": 1}]
+
+    cleaned = filter_source_references(refs, {"src\\pkg\\mod.py"})
+
+    assert [r["path"] for r in cleaned] == ["src/pkg/mod.py"]
+
+
+def test_dotfile_references_keep_their_leading_dot():
+    # lstrip("./") strips a character set, so it used to turn
+    # ".github/workflows/ci.yml" into "github/workflows/ci.yml" — a path that
+    # resolves to nothing on disk.
+    refs = [{"path": "./.github/workflows/ci.yml", "start_line": 1}]
+
+    cleaned = filter_source_references(refs, {".github/workflows/ci.yml"})
+
+    assert [r["path"] for r in cleaned] == [".github/workflows/ci.yml"]
+
+
+def test_env_files_cannot_slip_past_the_block_by_losing_their_dot():
+    # Same character-set bug, but load-bearing: ".env.local" became "env.local",
+    # which no longer matched the ^\.env block, so secrets could be cited as
+    # evidence and then served by the source endpoint.
+    refs = [{"path": ".env.local", "start_line": 1}]
+
+    assert filter_source_references(refs, {".env.local"}) == []
+
+
+def test_normalize_repo_path_still_refuses_to_escape():
+    assert normalize_repo_path("/etc/passwd") == "etc/passwd"
+    assert normalize_repo_path(".\\src\\a.py") == "src/a.py"
+    assert normalize_repo_path("././a.py") == "a.py"
 
 
 def test_git_url_security():

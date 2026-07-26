@@ -240,3 +240,31 @@ def test_background_analyze_marks_version_queued(client: TestClient):
     assert r.status_code == 200, r.text
     # A poller must not see a stale "ready" and think the rescan already finished.
     assert r.json()["status"] in {"queued", "pending", "scanning"}
+
+
+def test_source_preview_reads_a_nested_file(client: TestClient):
+    repo_id = _analyzed_repo(client)
+
+    r = client.get(
+        "/api/recallstack/source",
+        params={"repository_id": repo_id, "path": "app/main.py", "start_line": 1, "end_line": 2},
+    )
+
+    assert r.status_code == 200, r.text
+    assert "def main" in r.json()["content"] or "boot" in r.json()["content"]
+
+
+def test_source_preview_refuses_secret_files(client: TestClient):
+    # `path` is caller-supplied, so the endpoint cannot rely on concepts having
+    # filtered it. It previously served any file inside the repository root.
+    repo_path = Path(client.fixture_repo)  # type: ignore[attr-defined]
+    (repo_path / ".env").write_text("OPENAI_API_KEY=sk-should-never-be-served\n", encoding="utf-8")
+    repo_id = _analyzed_repo(client)
+
+    r = client.get(
+        "/api/recallstack/source",
+        params={"repository_id": repo_id, "path": ".env"},
+    )
+
+    assert r.status_code == 403, r.text
+    assert "sk-should-never-be-served" not in r.text

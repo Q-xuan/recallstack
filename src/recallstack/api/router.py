@@ -694,16 +694,25 @@ def get_source_snippet(
     if repo.source_type != "local":
         raise api_error(400, "unsupported", "Snippet preview currently supports local repos")
 
-    from recallstack.security import validate_local_path
+    from recallstack.security import (
+        is_blocked_filename,
+        normalize_repo_path,
+        validate_local_path,
+    )
 
     try:
         root = validate_local_path(repo.source_location)
     except SecurityError as exc:
         raise api_error(400, exc.code, exc.message) from exc
 
-    rel = path.replace("\\", "/").lstrip("./")
+    rel = normalize_repo_path(path)
     if ".." in rel.split("/"):
         raise api_error(400, "path_escape", "Invalid path")
+    # `path` is caller-supplied, not restricted to paths some concept cited, so
+    # the block list has to be enforced here too. Without it this endpoint hands
+    # out .env files and private keys from anywhere inside the repository.
+    if is_blocked_filename(rel):
+        raise api_error(403, "blocked_file", "This file cannot be previewed")
     file_path = (root / rel).resolve()
     try:
         file_path.relative_to(root)

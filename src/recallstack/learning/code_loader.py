@@ -5,7 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from recallstack.security import is_blocked_filename, validate_local_path
+from recallstack.security import (
+    is_blocked_filename,
+    normalize_repo_path,
+    validate_local_path,
+)
 
 
 def resolve_local_repo_root(source_location: str) -> Path | None:
@@ -34,7 +38,7 @@ def load_code_lookup(
     root = root.resolve()
     seen: list[str] = []
     for ref in source_references or []:
-        path = str(ref.get("path") or "").replace("\\", "/").lstrip("./")
+        path = normalize_repo_path(ref.get("path") or "")
         if not path or path in lookup or path in seen:
             continue
         if ".." in path.split("/") or path.startswith("/"):

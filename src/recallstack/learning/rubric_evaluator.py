@@ -8,6 +8,7 @@ from typing import Any
 
 from recallstack.domain.schemas import AttemptEvaluationResult, Rubric, SourceReference
 from recallstack.learning.i18n import t
+from recallstack.security import normalize_repo_path
 
 
 def _tokens(text: str) -> set[str]:
@@ -26,7 +27,7 @@ def _tokens(text: str) -> set[str]:
 
 def _answer_mentions_path(answer_lower: str, path: str) -> bool:
     """True if answer cites full path, basename, or stem (e.g. service.py / service)."""
-    path = path.replace("\\", "/").lstrip("./")
+    path = normalize_repo_path(path)
     if not path:
         return False
     if path.lower() in answer_lower:
