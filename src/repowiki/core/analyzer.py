@@ -17,6 +17,7 @@ from repowiki.core.models import (
     ReadingGuide,
     WikiData,
 )
+from repowiki.core.modules import group_into_modules
 from repowiki.llm.client import LLMClient
 from repowiki.llm.prompts import (
     build_architecture_prompt,
@@ -129,23 +130,8 @@ class Analyzer:
         return overview
 
     def _group_into_modules(self, files: list[FileInfo]) -> dict[str, list[FileInfo]]:
-        """group files by their top-level directory."""
-        from pathlib import Path
-
-        modules: dict[str, list[FileInfo]] = {}
-        for f in files:
-            parts = Path(f.path).parts
-            if len(parts) == 1:
-                # root-level files go into a "root" module
-                modules.setdefault("root", []).append(f)
-            else:
-                # use the first directory as module name
-                mod = parts[0]
-                # if it's a common wrapper like "src", use the second level
-                if mod in ("src", "lib", "pkg", "internal", "app") and len(parts) > 2:
-                    mod = parts[1]
-                modules.setdefault(mod, []).append(f)
-        return modules
+        """group files into documentable modules (see repowiki.core.modules)."""
+        return group_into_modules(files)
 
     async def _analyze_modules(
         self,

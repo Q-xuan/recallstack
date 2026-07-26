@@ -63,15 +63,14 @@ class WikiBuilder:
             sidebar.append(SidebarItem(title="Architecture", page_id="architecture"))
 
         # 3. module pages
-        module_sidebar = SidebarItem(title="Modules", page_id="", children=[])
         for i, mod in enumerate(wiki_data.modules):
             mod_id = f"modules/{mod.name}"
-            mod_md = self._build_module_page(mod)
+            mod_md = self._build_module_page(mod, graph)
             pages.append(WikiPage(
                 id=mod_id, title=mod.name, content=mod_md,
                 parent_id="modules", order=i,
             ))
-            module_sidebar.children.append(SidebarItem(title=mod.name, page_id=mod_id))
+        module_sidebar = self._build_module_sidebar([m.name for m in wiki_data.modules])
         if module_sidebar.children:
             sidebar.append(module_sidebar)
 
@@ -149,12 +148,42 @@ class WikiBuilder:
 
         return "\n".join(lines)
 
-    def _build_module_page(self, mod) -> str:
+    def _build_module_sidebar(self, names: list[str]) -> SidebarItem:
+        """Nest module entries by path so siblings sit under a shared parent.
+
+        Module names are full repository paths; listed flat they are both wide
+        and repetitive. The tree also gives a home to intermediate directories
+        like ``src/`` that hold no files of their own and so have no page.
+        """
+        root = SidebarItem(title="Modules", page_id="", children=[])
+        nodes: dict[str, SidebarItem] = {}
+
+        def ensure(prefix: str) -> SidebarItem:
+            if prefix in nodes:
+                return nodes[prefix]
+            parent_key, _, leaf = prefix.rpartition("/")
+            parent = ensure(parent_key) if parent_key else root
+            item = SidebarItem(title=leaf or prefix, page_id="", children=[])
+            parent.children.append(item)
+            nodes[prefix] = item
+            return item
+
+        for name in sorted(names):
+            ensure(name).page_id = f"modules/{name}"
+        return root
+
+    def _build_module_page(self, mod, graph: DependencyGraph | None = None) -> str:
         lines = [f"# {mod.name}\n"]
         if mod.purpose:
             lines.append(f"> {mod.purpose}\n")
         if mod.description:
             lines.append(f"{mod.description}\n")
+
+        if graph is not None:
+            neighbourhood = graph.module_mermaid(mod.name)
+            if neighbourhood:
+                lines.append("## Dependencies\n")
+                lines.append("```mermaid\n" + neighbourhood + "\n```\n")
 
         if mod.files:
             lines.append("## Files\n")

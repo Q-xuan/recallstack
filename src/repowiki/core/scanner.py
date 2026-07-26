@@ -273,13 +273,16 @@ def scan_directory(
                 break
 
             full = Path(dirpath) / fname
-            rel = str(full.relative_to(root))
-            rel_posix = full.relative_to(root).as_posix()
+            # POSIX form is the canonical one for everything downstream. Import
+            # resolution, reference filtering and cache keys all compare against
+            # forward-slash paths, so emitting `src\pkg\mod.py` here silently
+            # breaks them on Windows rather than failing anywhere visible.
+            rel = full.relative_to(root).as_posix()
 
             if full.is_symlink():
                 continue
 
-            if ignore_rules.matches(rel_posix):
+            if ignore_rules.matches(rel):
                 continue
 
             if _is_sensitive_name(full):

@@ -35,7 +35,7 @@ def test_scan_respects_gitignore_and_repowikiignore(tmp_path):
     (tmp_path / "private.md").write_text("local notes\n", encoding="utf-8")
     (tmp_path / "src.py").write_text("print('source')\n", encoding="utf-8")
 
-    paths = {f.path.replace("\\", "/") for f in scan_directory(tmp_path)}
+    paths = {f.path for f in scan_directory(tmp_path)}
 
     assert "src.py" in paths
     assert "dist/bundle.js" not in paths
@@ -53,3 +53,21 @@ def test_scan_skips_real_env_files_but_keeps_example(tmp_path):
     assert ".env" not in paths
     assert ".env.local" not in paths
     assert ".env.example" in paths
+
+
+def test_scanned_paths_are_posix_so_imports_can_resolve(tmp_path):
+    """Nested paths must use forward slashes on every platform.
+
+    Import resolution builds forward-slash candidates and looks them up in the
+    set of scanned paths. Emitting native separators here matches nothing on
+    Windows, and the dependency graph comes back with zero edges — PageRank
+    goes uniform and the graph-derived pages vanish, with no error anywhere.
+    """
+    pkg = tmp_path / "src" / "app" / "services"
+    pkg.mkdir(parents=True)
+    (pkg / "users.py").write_text("def get_user(): ...\n", encoding="utf-8")
+
+    paths = {f.path for f in scan_directory(tmp_path)}
+
+    assert "src/app/services/users.py" in paths
+    assert not any("\\" in p for p in paths)

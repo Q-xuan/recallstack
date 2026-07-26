@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath
 import networkx as nx
 
 from repowiki.core.models import ProjectContext
+from repowiki.core.modules import group_into_modules, module_index
 
 # import pattern regexes by language
 _IMPORT_PATTERNS = {
@@ -47,12 +48,16 @@ class DependencyGraph:
     def __init__(self):
         self.graph = nx.DiGraph()
         self._file_paths: set[str] = set()
+        # path -> module, from the same grouping the wiki writes pages for, so
+        # an edge in the diagram always names a module the reader can open.
+        self._module_of: dict[str, str] = {}
 
     @classmethod
     def build_from_project(cls, project: ProjectContext) -> DependencyGraph:
         dg = cls()
         path_set = {f.path for f in project.files}
         dg._file_paths = path_set
+        dg._module_of = module_index(group_into_modules(project.files))
 
         # add all files as nodes
         for f in project.files:
@@ -89,34 +94,90 @@ class DependencyGraph:
         """top N most important files by PageRank."""
         return [path for path, _ in self.rank_files()[:top_n]]
 
+    def module_of(self, path: str) -> str:
+        return self._module_of.get(path) or _get_module(path)
+
     def get_module_dependencies(self) -> dict[str, set[str]]:
-        """edges between top-level directory modules."""
+        """edges between the modules the wiki documents."""
         deps: dict[str, set[str]] = {}
         for src, dst in self.graph.edges:
-            src_mod = _get_module(src)
-            dst_mod = _get_module(dst)
+            src_mod = self.module_of(src)
+            dst_mod = self.module_of(dst)
             if src_mod != dst_mod:
                 deps.setdefault(src_mod, set()).add(dst_mod)
         return deps
 
-    def to_mermaid(self) -> str:
-        """generate a Mermaid flowchart of inter-module dependencies."""
+    def module_neighbours(self, module: str) -> tuple[set[str], set[str]]:
+        """Modules this one imports, and modules that import it."""
+        out: set[str] = set()
+        incoming: set[str] = set()
+        for src, dst in self.graph.edges:
+            src_mod = self.module_of(src)
+            dst_mod = self.module_of(dst)
+            if src_mod == dst_mod:
+                continue
+            if src_mod == module:
+                out.add(dst_mod)
+            elif dst_mod == module:
+                incoming.add(src_mod)
+        return out, incoming
+
+    def module_mermaid(self, module: str) -> str:
+        """Flowchart of one module's immediate neighbourhood.
+
+        Scoped rather than whole-project: a reader on the page for one module
+        needs its edges, and the full graph on every page is wallpaper.
+        """
+        out, incoming = self.module_neighbours(module)
+        if not out and not incoming:
+            return ""
+        lines = ["graph LR"]
+        me = _mermaid_id(module)
+        for dep in sorted(incoming):
+            lines.append(f"  {_mermaid_id(dep)}[{dep}] --> {me}[{module}]")
+        for dep in sorted(out):
+            lines.append(f"  {me}[{module}] --> {_mermaid_id(dep)}[{dep}]")
+        return "\n".join(lines)
+
+    def module_weights(self) -> dict[str, float]:
+        """Total PageRank each module's files carry."""
+        weights: dict[str, float] = {}
+        for path, score in self.rank_files():
+            weights[self.module_of(path)] = weights.get(self.module_of(path), 0.0) + score
+        return weights
+
+    def to_mermaid(self, max_modules: int = 12) -> str:
+        """Mermaid flowchart of inter-module dependencies.
+
+        Restricted to the heaviest modules by PageRank. A mid-sized repository
+        produces fifty-odd edges, and a diagram that dense communicates less
+        than the file list it was meant to summarise.
+        """
         mod_deps = self.get_module_dependencies()
         if not mod_deps:
             return ""
 
+        weights = self.module_weights()
+        involved = set(mod_deps) | {d for ts in mod_deps.values() for d in ts}
+        keep = set(sorted(involved, key=lambda m: -weights.get(m, 0.0))[:max_modules])
+
         lines = ["graph TD"]
         seen_edges = set()
         for src, targets in sorted(mod_deps.items()):
+            if src not in keep:
+                continue
             for dst in sorted(targets):
                 edge = (src, dst)
-                if edge not in seen_edges:
-                    seen_edges.add(edge)
-                    # sanitize node names for Mermaid
-                    s = _mermaid_id(src)
-                    d = _mermaid_id(dst)
-                    lines.append(f"  {s}[{src}] --> {d}[{dst}]")
+                if dst not in keep or edge in seen_edges:
+                    continue
+                seen_edges.add(edge)
+                # sanitize node names for Mermaid
+                s = _mermaid_id(src)
+                d = _mermaid_id(dst)
+                lines.append(f"  {s}[{src}] --> {d}[{dst}]")
 
+        if len(lines) == 1:
+            return ""
         return "\n".join(lines)
 
     def get_entry_points(self) -> list[str]:
@@ -199,6 +260,7 @@ def _pagerank_power_iteration(
 
 
 def _get_module(path: str) -> str:
+    """Fallback for graphs built without a project to group against."""
     parts = Path(path).parts
     if len(parts) <= 1:
         return "root"

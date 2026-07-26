@@ -24,6 +24,7 @@ from repowiki.core.models import (
     ReadingStep,
     WikiData,
 )
+from repowiki.core.modules import ROOT_NAME, group_into_modules
 from repowiki.core.wiki_builder import Wiki, WikiBuilder, WikiPage
 
 
@@ -63,21 +64,16 @@ def build_deterministic_wiki_data(
         ],
     )
 
-    # modules from directory roots
-    modules_map: dict[str, list[Any]] = {}
-    for f in project.files:
-        parts = f.path.replace("\\", "/").split("/")
-        mod = parts[0] if len(parts) > 1 else "Root"
-        if mod in {".", ""}:
-            mod = "Root"
-        modules_map.setdefault(mod, []).append(f)
+    # Same grouping the LLM path and the dependency graph use, so a module keeps
+    # one name across all three and its page can find its own edges.
+    modules_map = group_into_modules(project.files)
 
     module_docs: list[ModuleDoc] = []
-    for name, files in sorted(modules_map.items(), key=lambda x: (-len(x[1]), x[0]))[:20]:
-        display = "Root" if name in {"(root)", "root", "Root"} else name
+    for name, files in sorted(modules_map.items(), key=lambda x: (-len(x[1]), x[0])):
+        is_root = name == ROOT_NAME
         file_docs = [
             FileDoc(
-                path=f.path.replace("\\", "/"),
+                path=f.path,
                 purpose=t("Entrypoint", "入口文件") if getattr(f, "is_entrypoint", False) else t("Source file", "源码文件"),
                 key_symbols=[],
             )
@@ -85,12 +81,12 @@ def build_deterministic_wiki_data(
         ]
         module_docs.append(
             ModuleDoc(
-                name=display,
-                purpose=t(f"{display} module · {len(files)} files", f"{display} 模块 · {len(files)} 个文件"),
+                name=name,
+                purpose=t(f"{name} module · {len(files)} files", f"{name} 模块 · {len(files)} 个文件"),
                 description=(
                     t("Loose root files (README, config, etc.).", "仓库根目录下的散落文件（如 README、配置）。")
-                    if display == "Root"
-                    else t(f"`{display}/` directory boundary from scan + dependency graph.", f"`{display}/` 目录边界，来自扫描与依赖图。")
+                    if is_root
+                    else t(f"`{name}/` directory boundary from scan + dependency graph.", f"`{name}/` 目录边界，来自扫描与依赖图。")
                 ),
                 files=file_docs,
             )
