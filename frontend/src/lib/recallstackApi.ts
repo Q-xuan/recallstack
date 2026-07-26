@@ -144,6 +144,20 @@ export interface WikiSearchResponse {
   results: WikiSearchResult[];
 }
 
+export interface WikiAskSource {
+  page_id: string;
+  title: string;
+  kind: string;
+  snippet: string;
+}
+
+export interface WikiAskResponse {
+  question: string;
+  answer: string;
+  engine: "llm" | "search";
+  sources: WikiAskSource[];
+}
+
 export interface LearningPathNode {
   id: string;
   concept_id: string;
@@ -247,6 +261,7 @@ export interface DueReview {
   next_review_at?: string | null;
   stale: boolean;
   item_id?: string | null;
+  is_new?: boolean;
 }
 
 export interface Dashboard {
@@ -303,6 +318,12 @@ export const recallstackApi = {
   wiki: (id: string) => request<Wiki>(`/repositories/${id}/wiki`),
   wikiPage: (id: string, pageId: string) =>
     request<WikiPage>(`/repositories/${id}/wiki/pages/${encodeURIComponent(pageId)}`),
+  askWiki: (id: string, question: string, signal?: AbortSignal) =>
+    request<WikiAskResponse>(`/repositories/${id}/ask`, {
+      method: "POST",
+      body: JSON.stringify({ question }),
+      signal,
+    }),
   searchWiki: (id: string, query: string, limit = 20, signal?: AbortSignal) => {
     const q = new URLSearchParams({ q: query, limit: String(limit) });
     return request<WikiSearchResponse>(

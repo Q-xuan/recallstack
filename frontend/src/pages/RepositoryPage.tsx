@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import AppShell from "../components/AppShell";
+import AskPanel from "../components/AskPanel";
 import CommandPalette from "../components/CommandPalette";
 import ConceptPracticePanel from "../components/ConceptPracticePanel";
 import FolderPicker from "../components/FolderPicker";
@@ -76,6 +77,7 @@ export default function RepositoryPage() {
   const [navOpen, setNavOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteSeed, setPaletteSeed] = useState<string>("");
+  const [askOpen, setAskOpen] = useState(false);
   const [progress, setProgress] = useState(0);
   const articleRef = useRef<HTMLDivElement>(null);
 
@@ -492,6 +494,15 @@ export default function RepositoryPage() {
               <span>搜索</span>
               <kbd className="rs-kbd">⌘K</kbd>
             </button>
+            {ready && (
+              <button
+                type="button"
+                onClick={() => setAskOpen(true)}
+                className="rs-btn rs-btn-secondary h-8 px-3.5 text-[12px]"
+              >
+                ✦ 提问
+              </button>
+            )}
             <button
               type="button"
               onClick={handleAnalyze}
@@ -666,6 +677,14 @@ export default function RepositoryPage() {
         repositoryId={id}
         initialQuery={paletteSeed}
         onClose={() => setPaletteOpen(false)}
+        onOpenPage={openPage}
+      />
+
+      <AskPanel
+        open={askOpen}
+        repositoryId={id}
+        repositoryName={wiki?.project_name || repo?.name || "仓库"}
+        onClose={() => setAskOpen(false)}
         onOpenPage={openPage}
       />
 

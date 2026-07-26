@@ -41,6 +41,8 @@ from recallstack.domain.schemas import (
     RepositoryOut,
     SessionQueueOut,
     VersionOut,
+    WikiAskIn,
+    WikiAskOut,
     WikiOut,
     WikiPageOut,
     WikiSearchOut,
@@ -317,28 +319,85 @@ def search_repository_wiki(
     Deterministic and LLM-free: search has to work on a freshly scanned repo
     with no API key configured.
     """
-    from recallstack.learning.wiki_search import build_documents, search
+    from recallstack.learning.wiki_search import search
 
     store = RepositoryStore(db)
     if not store.get_repository(repository_id):
         raise api_error(404, "repository_not_found", "Repository not found")
+    docs = _wiki_documents(store, repository_id)
+    results = search(docs, q, limit=max(1, min(limit, 50)))
+    return WikiSearchOut(query=q, total=len(results), results=results)
+
+
+def _wiki_documents(store: RepositoryStore, repository_id: str):
+    """Searchable documents for the latest wiki, or [] before analysis."""
+    from recallstack.learning.wiki_search import build_documents
+
     version = store.get_latest_version(repository_id)
     if not version or not (version.wiki_pages or {}).get("pages"):
-        return WikiSearchOut(query=q, total=0, results=[])
-
+        return []
     concepts = store.list_concepts(repository_id, version.id)
     concept_paths = {
         c.slug: [str(ref.get("path", "")) for ref in (c.source_references or [])]
         for c in concepts
     }
     concept_ids = {c.slug: c.id for c in concepts}
-    docs = build_documents(
+    return build_documents(
         (version.wiki_pages or {}).get("pages") or [],
         concept_paths=concept_paths,
         concept_ids=concept_ids,
     )
-    results = search(docs, q, limit=max(1, min(limit, 50)))
-    return WikiSearchOut(query=q, total=len(results), results=results)
+
+
+def _qa_llm_client(config: RecallStackConfig):
+    """The raw completion client for Q&A, or None to use the search fallback."""
+    if not config.llm_enabled:
+        return None
+    try:
+        from repowiki.config import Config as RepoWikiConfig
+        from repowiki.llm.client import LLMClient
+    except Exception:  # noqa: BLE001
+        return None
+    rw = RepoWikiConfig.load()
+    if not rw.api_key or not rw.model:
+        return None
+    return LLMClient(model=rw.model, api_key=rw.api_key, api_base=rw.api_base or "")
+
+
+@router.post("/repositories/{repository_id}/ask", response_model=WikiAskOut)
+async def ask_repository_wiki(
+    repository_id: str,
+    body: WikiAskIn,
+    db: Session = Depends(get_db_session),
+    config: RecallStackConfig = Depends(get_config),
+) -> WikiAskOut:
+    """Answer a question about the repository, grounded in its wiki pages.
+
+    Falls back to an extractive search answer when no LLM is configured or the
+    call fails — the feature degrades, it never errors out.
+    """
+    from recallstack.learning.wiki_qa import answer_question
+
+    store = RepositoryStore(db)
+    repo = store.get_repository(repository_id)
+    if not repo:
+        raise api_error(404, "repository_not_found", "Repository not found")
+    docs = _wiki_documents(store, repository_id)
+    if not docs:
+        raise api_error(409, "wiki_not_ready", "Analyze the repository first")
+
+    result = await answer_question(
+        body.question.strip(),
+        docs,
+        project_name=repo.name,
+        llm=_qa_llm_client(config),
+    )
+    return WikiAskOut(
+        question=body.question.strip(),
+        answer=result["answer"],
+        engine=result["engine"],
+        sources=result["sources"],
+    )
 
 
 @router.get("/repositories/{repository_id}/wiki/pages/{page_id:path}", response_model=WikiPageOut)
@@ -598,6 +657,25 @@ def due_reviews(
                 next_review_at=m.next_review_at,
                 stale=bool(concept.stale),
                 item_id=items[0].id if items else None,
+            )
+        )
+    # Anki-style: never-attempted concepts count as due for their first pass.
+    # Without this a fresh install has no mastery rows and the queue is empty
+    # forever — review mode only becomes reachable after the user stumbles into
+    # a self-test elsewhere.
+    for concept in store.unlearned_concepts(user_id, limit=10):
+        items = store.list_items(concept.id)
+        if not items:
+            continue
+        out.append(
+            DueReviewOut(
+                concept_id=concept.id,
+                title=concept.title,
+                mastery_score=0.0,
+                next_review_at=None,
+                stale=bool(concept.stale),
+                item_id=items[0].id,
+                is_new=True,
             )
         )
     return out

@@ -171,6 +171,25 @@ class WikiSearchOut(BaseModel):
     results: list[WikiSearchResultOut] = Field(default_factory=list)
 
 
+class WikiAskIn(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+
+
+class WikiAskSourceOut(BaseModel):
+    page_id: str
+    title: str
+    kind: str
+    snippet: str = ""
+
+
+class WikiAskOut(BaseModel):
+    question: str
+    answer: str
+    # "llm" when a model wrote the answer; "search" for the extractive fallback.
+    engine: str
+    sources: list[WikiAskSourceOut] = Field(default_factory=list)
+
+
 class ConceptOut(BaseModel):
     id: str
     repository_id: str
@@ -321,6 +340,8 @@ class DueReviewOut(BaseModel):
     next_review_at: datetime | None
     stale: bool = False
     item_id: str | None = None
+    # Never attempted: queued for its first study pass rather than a re-review.
+    is_new: bool = False
 
 
 class DashboardOut(BaseModel):

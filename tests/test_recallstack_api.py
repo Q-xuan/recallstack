@@ -358,3 +358,71 @@ def test_startup_leaves_finished_runs_alone(client: TestClient):
     after = client.get(f"/api/recallstack/repositories/{repo_id}/versions/latest").json()
     assert after["status"] == "ready"
     assert after["error_message"] is None
+
+
+def test_new_concepts_seed_the_review_queue(client: TestClient):
+    """A fresh install has no mastery rows; review mode must still offer work."""
+    _analyzed_repo(client)
+
+    due = client.get("/api/recallstack/reviews/due").json()
+    assert due, "queue should not be empty before any attempt"
+    assert all(d["is_new"] for d in due)
+    assert all(d["item_id"] for d in due)
+
+    # And the session endpoint starts a run instead of 404ing.
+    resp = client.get("/api/recallstack/sessions/review")
+    assert resp.status_code == 200
+    queue = resp.json()
+    assert queue["mode"] == "review"
+    assert queue["item_ids"]
+
+
+def test_attempted_concept_leaves_the_new_queue(client: TestClient):
+    _analyzed_repo(client)
+    due = client.get("/api/recallstack/reviews/due").json()
+    first = due[0]
+
+    resp = client.post(
+        f"/api/recallstack/items/{first['item_id']}/attempts?mode=review",
+        json={"answer": "it scans the repository and builds the wiki", "confidence": 3},
+    )
+    assert resp.status_code == 200
+
+    after = client.get("/api/recallstack/reviews/due").json()
+    entry = next((d for d in after if d["concept_id"] == first["concept_id"]), None)
+    # Either scheduled into the future (gone) or due again — never "new" again.
+    assert entry is None or not entry["is_new"]
+
+
+def test_ask_falls_back_to_search_without_llm(client: TestClient):
+    """No API key in tests, so /ask must answer extractively with sources."""
+    repo_id = _analyzed_repo(client)
+    resp = client.post(
+        f"/api/recallstack/repositories/{repo_id}/ask",
+        json={"question": "boot 函数在哪里定义?"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["engine"] == "search"
+    assert data["answer"]
+    assert data["sources"], "fallback should still cite ranked pages"
+    assert all(s["page_id"] for s in data["sources"])
+
+
+def test_ask_before_analysis_is_409(client: TestClient):
+    repo = client.post(
+        "/api/recallstack/repositories",
+        json={"source_type": "local", "source_location": client.fixture_repo},
+    ).json()
+    resp = client.post(
+        f"/api/recallstack/repositories/{repo['id']}/ask",
+        json={"question": "anything"},
+    )
+    assert resp.status_code == 409
+
+
+def test_ask_unknown_repo_is_404(client: TestClient):
+    resp = client.post(
+        "/api/recallstack/repositories/nope/ask", json={"question": "hi"}
+    )
+    assert resp.status_code == 404

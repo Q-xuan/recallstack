@@ -63,11 +63,15 @@ class SessionQueueService:
                 raise KeyError("concept_not_found")
         else:
             due = self.store.due_masteries(user_id)
-            if not due:
-                raise KeyError("no_due_reviews")
-            concept = self.store.get_concept(due[0].concept_id)
+            if due:
+                concept = self.store.get_concept(due[0].concept_id)
+            else:
+                # First-time users have no mastery rows yet; start them on the
+                # most important concept they haven't touched.
+                fresh = self.store.unlearned_concepts(user_id, limit=1)
+                concept = fresh[0] if fresh else None
             if not concept:
-                raise KeyError("concept_not_found")
+                raise KeyError("no_due_reviews")
 
         items = self._ordered_items(concept.id)
         if not items:

@@ -180,6 +180,23 @@ class RepositoryStore:
         )
         return list(self.session.scalars(stmt))
 
+    def unlearned_concepts(self, user_id: str, limit: int = 10) -> list[Concept]:
+        """Concepts this user has never attempted, most important first.
+
+        These seed the review queue: without them a fresh install has no
+        mastery rows, ``due_masteries`` is empty forever, and review mode is a
+        dead end until the user happens to self-test from a concept page.
+        """
+        learned = select(Mastery.concept_id).where(Mastery.user_id == user_id)
+        stmt = (
+            select(Concept)
+            .where(Concept.id.not_in(learned))
+            .where(Concept.stale.is_(False))
+            .order_by(Concept.importance.desc(), Concept.created_at.asc())
+            .limit(limit)
+        )
+        return list(self.session.scalars(stmt))
+
     def recent_attempts(self, user_id: str, limit: int = 10) -> list[Attempt]:
         stmt = (
             select(Attempt)
