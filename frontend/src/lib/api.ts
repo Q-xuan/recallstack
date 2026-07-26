@@ -97,38 +97,86 @@ export async function getFileContent(projectId: string, filePath: string) {
   return res.json();
 }
 
+export interface ChatOptions {
+  question?: string;
+  mode?: "chat" | "inline_explain";
+  selection?: string;
+  wiki_page_id?: string;
+  wiki_page_title?: string;
+  surrounding_text?: string;
+}
+
+export interface CodeReference {
+  path: string;
+  line_start: number;
+  line_end: number;
+  snippet?: string;
+}
+
 export function streamChat(
   projectId: string,
-  question: string,
+  questionOrOptions: string | ChatOptions,
   onChunk: (data: any) => void,
   onDone: () => void,
+  onError?: (message: string) => void,
 ) {
+  const body: ChatOptions =
+    typeof questionOrOptions === "string"
+      ? { question: questionOrOptions, mode: "chat" }
+      : { mode: "chat", ...questionOrOptions };
+
   fetch(`${BASE}/project/${projectId}/chat`, {
     method: "POST",
     headers: getHeaders(),
-    body: JSON.stringify({ question }),
-  }).then(async (res) => {
-    const reader = res.body?.getReader();
-    const decoder = new TextDecoder();
-    if (!reader) return;
+    body: JSON.stringify(body),
+  })
+    .then(async (res) => {
+      const contentType = res.headers.get("content-type") || "";
+      // error payloads return JSON object instead of SSE
+      if (!res.ok || contentType.includes("application/json")) {
+        let message = "Request failed";
+        try {
+          const data = await res.json();
+          message = data.error || data.detail || message;
+        } catch {
+          message = res.statusText || message;
+        }
+        onError?.(message);
+        onDone();
+        return;
+      }
 
-    let buffer = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-      for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          try {
-            const data = JSON.parse(line.slice(6));
-            onChunk(data);
-            if (data.done) onDone();
-          } catch {}
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      if (!reader) {
+        onError?.("No response body");
+        onDone();
+        return;
+      }
+
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              onChunk(data);
+              if (data.done) onDone();
+            } catch {
+              /* ignore partial JSON */
+            }
+          }
         }
       }
-    }
-    onDone();
-  });
+      onDone();
+    })
+    .catch((err) => {
+      onError?.(err?.message || "Network error");
+      onDone();
+    });
 }

@@ -36,12 +36,20 @@ def create_app():
         global _cache
         _cache = Cache()
         await _cache.init()
+        # initialize RecallStack learning database
+        try:
+            from recallstack.bootstrap import init_recallstack
+
+            init_recallstack()
+        except Exception:
+            # keep RepoWiki usable even if recallstack deps missing
+            pass
         yield
         await _cache.close()
 
     app = FastAPI(
-        title="RepoWiki",
-        description="Generate wiki documentation for any codebase",
+        title="RecallStack",
+        description="Turn codebases into lasting knowledge (built on RepoWiki)",
         version="0.1.0",
         lifespan=lifespan,
     )
@@ -58,6 +66,13 @@ def create_app():
     app.include_router(scan.router, prefix="/api")
     app.include_router(wiki.router, prefix="/api")
     app.include_router(chat.router, prefix="/api")
+
+    try:
+        from recallstack.api.router import router as recallstack_router
+
+        app.include_router(recallstack_router, prefix="/api")
+    except Exception:
+        pass
 
     @app.get("/api/health")
     async def health():

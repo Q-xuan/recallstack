@@ -127,22 +127,21 @@ class WikiBuilder:
         if arch.description:
             lines.append(f"{arch.description}\n")
 
-        if arch.mermaid_component:
-            lines.append("## Component Diagram\n")
-            lines.append(f"```mermaid\n{arch.mermaid_component}\n```\n")
-
         if arch.components:
             lines.append("## Components\n")
             for c in arch.components:
-                lines.append(f"### {c.name}\n")
-                if c.purpose:
-                    lines.append(f"{c.purpose}\n")
+                purpose = f" — {c.purpose}" if c.purpose else ""
+                lines.append(f"- **{c.name}**{purpose}")
                 if c.files:
-                    lines.append("Files: " + ", ".join(f"`{f}`" for f in c.files) + "\n")
+                    files = ", ".join(f"`{f}`" for f in c.files[:8])
+                    lines.append(f"  - Files: {files}")
+            lines.append("")
 
-        if arch.mermaid_sequence:
-            lines.append("## Sequence Diagram\n")
-            lines.append(f"```mermaid\n{arch.mermaid_sequence}\n```\n")
+        if arch.mermaid_component:
+            lines.append("## Diagram\n")
+            lines.append("```mermaid")
+            lines.append(arch.mermaid_component.strip())
+            lines.append("```\n")
 
         if arch.data_flow:
             lines.append("## Data Flow\n")
@@ -160,14 +159,13 @@ class WikiBuilder:
         if mod.files:
             lines.append("## Files\n")
             for f in mod.files:
-                lines.append(f"### `{f.path}`\n")
-                if f.purpose:
-                    lines.append(f"{f.purpose}\n")
+                purpose = f" — {f.purpose}" if f.purpose else ""
+                lines.append(f"- `{f.path}`{purpose}")
                 if f.key_symbols:
-                    for s in f.key_symbols:
+                    for s in f.key_symbols[:8]:
                         desc = f" - {s.description}" if s.description else ""
-                        lines.append(f"- `{s.name}` ({s.kind}){desc}")
-                    lines.append("")
+                        lines.append(f"  - `{s.name}` ({s.kind}){desc}")
+            lines.append("")
 
         if mod.key_concepts:
             lines.append("## Key Concepts\n")

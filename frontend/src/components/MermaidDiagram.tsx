@@ -42,7 +42,7 @@ export default function MermaidDiagram({ code }: Props) {
   return (
     <div
       ref={ref}
-      className="my-6 flex justify-center overflow-x-auto"
+      className="my-4 flex justify-center overflow-x-auto max-h-[380px] [&_svg]:max-w-full [&_svg]:h-auto"
       dangerouslySetInnerHTML={{ __html: svg }}
     />
   );

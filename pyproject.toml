@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "repowiki"
-version = "0.2.0"
-description = "Open-source DeepWiki alternative - generate comprehensive wiki documentation for any codebase"
+name = "recallstack"
+version = "0.1.0"
+description = "RecallStack — turn codebases into lasting knowledge (built on RepoWiki)"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
@@ -13,8 +13,8 @@ authors = [
     { name = "Yufeng He", email = "40085740+he-yufeng@users.noreply.github.com" },
 ]
 keywords = [
-    "wiki", "documentation", "codebase", "code-analysis", "deepwiki",
-    "repository", "ai", "llm", "developer-tools",
+    "learning", "spaced-repetition", "codebase", "fsrs", "wiki",
+    "active-recall", "developer-tools", "ai", "repowiki",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -27,7 +27,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Documentation",
-    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Education",
 ]
 dependencies = [
     "click>=8.0",
@@ -38,6 +38,9 @@ dependencies = [
     "python-dotenv>=1.0",
     "networkx>=3.0",
     "numpy>=1.24",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "fsrs>=5.0.0",
 ]
 
 [project.optional-dependencies]
@@ -49,11 +52,13 @@ web = [
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.23",
+    "httpx>=0.27",
     "ruff>=0.4",
 ]
 
 [project.scripts]
 repowiki = "repowiki.cli:cli"
+recallstack = "recallstack.cli:cli"
 
 [project.urls]
 Homepage = "https://github.com/he-yufeng/RepoWiki"
@@ -66,7 +71,12 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
-ignore = ["E501"]  # line length handled per-file; prompts and HTML templates naturally long
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/repowiki"]
+packages = ["src/repowiki", "src/recallstack"]

@@ -1,0 +1,445 @@
+"""End-to-end repository analysis pipeline for RecallStack."""
+
+from __future__ import annotations
+
+import hashlib
+import logging
+import subprocess
+from pathlib import Path
+
+from sqlalchemy.orm import Session
+
+from recallstack.config import RecallStackConfig
+from recallstack.db.models import (
+    Concept,
+    ConceptEdge,
+    LearningItem,
+    LearningPath,
+    LearningPathNode,
+    Repository,
+    RepositoryVersion,
+    utcnow,
+)
+from recallstack.db.repositories import RepositoryStore
+from recallstack.learning.concept_extractor import ConceptExtractor, content_hash_for
+from recallstack.learning.path_builder import PathBuilder
+from recallstack.learning.question_generator import QuestionGenerator
+from recallstack.learning.stale import compute_changed_paths, mark_stale_for_changed_files
+from recallstack.learning.wiki_generator import build_wiki_payload
+from recallstack.security import SecurityError, validate_git_url, validate_local_path
+
+logger = logging.getLogger(__name__)
+
+
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def detect_commit_sha(root: Path) -> str:
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+            shell=False,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    # fallback content-based pseudo commit
+    return "local-" + hashlib.sha1(str(root).encode()).hexdigest()[:12]
+
+
+def compute_repo_content_hash(file_hashes: dict[str, str]) -> str:
+    h = hashlib.sha256()
+    for path in sorted(file_hashes):
+        h.update(path.encode())
+        h.update(b":")
+        h.update(file_hashes[path].encode())
+        h.update(b"\n")
+    return h.hexdigest()[:32]
+
+
+def _run_async(coro):
+    """Run a coroutine to completion, safe whether or not an event loop is running."""
+    import asyncio
+    import concurrent.futures
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    # already inside a loop — offload to a worker thread with its own loop
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        return ex.submit(asyncio.run, coro).result()
+
+
+class AnalyzeRepositoryService:
+    def __init__(self, session: Session, config: RecallStackConfig | None = None):
+        self.session = session
+        self.config = config or RecallStackConfig.load()
+        self.store = RepositoryStore(session)
+
+    def create_repository(
+        self,
+        *,
+        source_type: str,
+        source_location: str,
+        name: str | None = None,
+        default_branch: str = "main",
+    ) -> Repository:
+        if source_type == "github":
+            source_location = validate_git_url(source_location)
+            display = name or source_location.rstrip("/").split("/")[-1].removesuffix(".git")
+        elif source_type == "local":
+            path = validate_local_path(source_location)
+            source_location = str(path)
+            display = name or path.name
+        else:
+            raise SecurityError("invalid_source_type", "source_type must be local or github")
+
+        return self.store.create_repository(
+            name=display,
+            source_type=source_type,
+            source_location=source_location,
+            default_branch=default_branch,
+        )
+
+    def analyze(self, repository_id: str) -> RepositoryVersion:
+        repo = self.store.get_repository(repository_id)
+        if not repo:
+            raise KeyError("repository_not_found")
+
+        # ingest
+        project, root = self._ingest(repo)
+        commit_sha = detect_commit_sha(root)
+        file_hashes = {
+            f.path: _sha256_text(f.content or f.preview or f.path) for f in project.files
+        }
+        content_hash = compute_repo_content_hash(file_hashes)
+        existing = self.store.get_version_by_commit(repo.id, commit_sha)
+        if (
+            existing
+            and existing.content_hash == content_hash
+            and existing.status == "ready"
+            and existing.wiki_pages
+            and (existing.wiki_pages or {}).get("pages")
+        ):
+            logger.info("idempotent hit for %s@%s", repo.id, commit_sha)
+            return existing
+
+        old_version = self.store.get_latest_version(repo.id)
+        if existing:
+            version = existing
+            version.status = "pending"
+            version.error_message = None
+            version.content_hash = content_hash
+            version.completed_at = None
+        else:
+            version = self.store.create_version(
+                repository_id=repo.id,
+                commit_sha=commit_sha,
+                content_hash=content_hash,
+                status="pending",
+            )
+        self.session.commit()
+
+        try:
+            self._set_status(version, "scanning")
+            from repowiki.core.graph import DependencyGraph
+
+            graph = DependencyGraph.build_from_project(project)
+            self._set_status(version, "generating_concepts")
+            extractor = ConceptExtractor(max_concepts=self.config.max_concepts)
+            concept_result = extractor.extract(
+                project, graph, commit_sha=commit_sha, wiki_summary=""
+            )
+            concepts = extractor.remove_cyclic_prerequisites(concept_result.concepts)
+
+            self._set_status(version, "generating_wiki")
+            wiki_data = None
+            if self.config.llm_enabled:
+                try:
+                    from recallstack.learning.wiki_generator import build_llm_enriched_wiki_data
+
+                    self._set_status(version, "llm_enriching")
+                    wiki_data = _run_async(
+                        build_llm_enriched_wiki_data(project, graph, concepts)
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "LLM wiki enrichment failed, falling back to deterministic: %s",
+                        exc,
+                    )
+                    wiki_data = None
+            # Real RepoWiki pages from the same graph + concepts (one product, one scan)
+            wiki_payload = build_wiki_payload(project, graph, concepts, wiki_data=wiki_data)
+            version.wiki_pages = wiki_payload
+
+            # stale previous content based on file hash changes
+            if old_version and old_version.id != version.id:
+                old_hashes = self._load_version_file_hashes(old_version)
+                if old_hashes:
+                    changed = compute_changed_paths(old_hashes, file_hashes)
+                    mark_stale_for_changed_files(
+                        self.session,
+                        old_version=old_version,
+                        new_version=version,
+                        changed_paths=changed,
+                    )
+
+            # replace concepts for this version (idempotent re-run)
+            self._clear_version_learning_data(version.id)
+
+            concept_rows: dict[str, Concept] = {}
+            for draft in concepts:
+                refs = [r.model_dump() for r in draft.source_references]
+                ch = content_hash_for(
+                    [draft.slug, draft.title, draft.description] + [r["path"] for r in refs]
+                )
+                row = Concept(
+                    repository_id=repo.id,
+                    repository_version_id=version.id,
+                    slug=draft.slug,
+                    title=draft.title,
+                    description=draft.description,
+                    difficulty=max(1, min(5, draft.difficulty)),
+                    importance=max(0.0, min(1.0, draft.importance)),
+                    source_references=refs,
+                    content_hash=ch,
+                    stale=False,
+                    why_learn=draft.why_learn,
+                    estimated_minutes=draft.estimated_minutes,
+                    wiki_page_id=f"concepts/{draft.slug}",
+                )
+                self.session.add(row)
+                self.session.flush()
+                concept_rows[draft.slug] = row
+
+            # edges: prerequisite + depends_on from module deps
+            for draft in concepts:
+                src = concept_rows.get(draft.slug)
+                if not src:
+                    continue
+                for pre in draft.prerequisites:
+                    tgt = concept_rows.get(pre)
+                    if not tgt:
+                        continue
+                    self.session.add(
+                        ConceptEdge(
+                            source_concept_id=tgt.id,  # prerequisite -> concept
+                            target_concept_id=src.id,
+                            relation_type="prerequisite",
+                        )
+                    )
+
+            mod_deps = graph.get_module_dependencies()
+            slug_by_mod = {}
+            for slug, row in concept_rows.items():
+                if slug.startswith("module-"):
+                    slug_by_mod[slug.removeprefix("module-")] = row
+            for src_mod, targets in mod_deps.items():
+                src_row = slug_by_mod.get(src_mod)
+                if not src_row:
+                    continue
+                for dst_mod in targets:
+                    dst_row = slug_by_mod.get(dst_mod)
+                    if not dst_row or dst_row.id == src_row.id:
+                        continue
+                    self.session.add(
+                        ConceptEdge(
+                            source_concept_id=src_row.id,
+                            target_concept_id=dst_row.id,
+                            relation_type="depends_on",
+                        )
+                    )
+
+            path_result = PathBuilder().build(concepts)
+            path = LearningPath(
+                repository_version_id=version.id,
+                title=path_result.title,
+                description=path_result.description,
+                estimated_minutes=path_result.estimated_minutes,
+            )
+            self.session.add(path)
+            self.session.flush()
+            for node in path_result.nodes:
+                crow = concept_rows.get(node.concept_slug)
+                if not crow:
+                    continue
+                self.session.add(
+                    LearningPathNode(
+                        learning_path_id=path.id,
+                        concept_id=crow.id,
+                        position=node.position,
+                        reason=node.reason,
+                    )
+                )
+
+            # learning items
+            qgen = QuestionGenerator(max_items=self.config.max_items_per_concept)
+            valid_paths = {f.path for f in project.files}
+            for draft in concepts:
+                crow = concept_rows.get(draft.slug)
+                if not crow:
+                    continue
+                items = qgen.generate_deterministic(
+                    title=draft.title,
+                    description=draft.description,
+                    why_learn=draft.why_learn,
+                    source_references=[r.model_dump() for r in draft.source_references],
+                    valid_paths=valid_paths,
+                    commit_sha=commit_sha,
+                )
+                for item in items.items:
+                    self.session.add(
+                        LearningItem(
+                            concept_id=crow.id,
+                            item_type=item.item_type,
+                            prompt=item.prompt,
+                            rubric=item.rubric.model_dump(),
+                            expected_answer_outline=item.expected_answer_outline,
+                            source_references=[r.model_dump() for r in item.source_references],
+                            difficulty=item.difficulty,
+                            content_hash=qgen.item_content_hash(item),
+                            stale=False,
+                        )
+                    )
+
+            # store file hashes on version via content_hash already; keep side map in error_message? no.
+            # Use a lightweight sidecar table alternative: encode in version by separate file not needed for MVP;
+            # recompute from concepts is enough for stale next time if we persist hashes in JSON file under data/.
+            self._save_version_file_hashes(version, file_hashes)
+
+            version.status = "ready"
+            version.completed_at = utcnow()
+            version.error_message = None
+            repo.updated_at = utcnow()
+            self.session.commit()
+            self.session.refresh(version)
+            return version
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("analyze failed")
+            version.status = "failed"
+            version.error_message = str(exc)[:2000]
+            version.completed_at = utcnow()
+            self.session.commit()
+            raise
+
+    def _set_status(self, version: RepositoryVersion, status: str) -> None:
+        version.status = status
+        self.session.commit()
+
+    def _ingest(self, repo: Repository):
+        from repowiki.ingest.local import ingest_local
+
+        max_file = self.config.max_file_size_kb * 1024
+        if repo.source_type == "local":
+            root = validate_local_path(repo.source_location)
+            project = ingest_local(root, max_file_size=max_file, max_files=1000)
+            return project, root
+
+        # github
+        url = validate_git_url(repo.source_location)
+        from repowiki.ingest.github import ingest_github
+
+        project = ingest_github(url, max_file_size=max_file, max_files=1000)
+        root = Path(project.root)
+        return project, root
+
+
+    def _clear_version_learning_data(self, version_id: str) -> None:
+        from sqlalchemy import select
+
+        from recallstack.db.models import Attempt, Mastery, ReviewLog
+
+        # delete path nodes/paths, edges, items, concepts for version
+        concepts = list(
+            self.session.scalars(select(Concept).where(Concept.repository_version_id == version_id))
+        )
+        concept_ids = [c.id for c in concepts]
+        if concept_ids:
+            items = list(
+                self.session.scalars(
+                    select(LearningItem).where(LearningItem.concept_id.in_(concept_ids))
+                )
+            )
+            item_ids = [i.id for i in items]
+            # attempts / review_logs / mastery reference items+concepts — clear first
+            if item_ids:
+                for log in self.session.scalars(
+                    select(ReviewLog).where(ReviewLog.learning_item_id.in_(item_ids))
+                ):
+                    self.session.delete(log)
+                for att in self.session.scalars(
+                    select(Attempt).where(Attempt.learning_item_id.in_(item_ids))
+                ):
+                    self.session.delete(att)
+            for log in self.session.scalars(
+                select(ReviewLog).where(ReviewLog.concept_id.in_(concept_ids))
+            ):
+                self.session.delete(log)
+            for m in self.session.scalars(
+                select(Mastery).where(Mastery.concept_id.in_(concept_ids))
+            ):
+                self.session.delete(m)
+            self.session.flush()
+            for item in items:
+                self.session.delete(item)
+            edges = list(
+                self.session.scalars(
+                    select(ConceptEdge).where(
+                        ConceptEdge.source_concept_id.in_(concept_ids)
+                        | ConceptEdge.target_concept_id.in_(concept_ids)
+                    )
+                )
+            )
+            for e in edges:
+                self.session.delete(e)
+            paths = list(
+                self.session.scalars(
+                    select(LearningPath).where(LearningPath.repository_version_id == version_id)
+                )
+            )
+            for path in paths:
+                nodes = list(
+                    self.session.scalars(
+                        select(LearningPathNode).where(
+                            LearningPathNode.learning_path_id == path.id
+                        )
+                    )
+                )
+                for n in nodes:
+                    self.session.delete(n)
+                self.session.delete(path)
+            for c in concepts:
+                self.session.delete(c)
+            self.session.flush()
+
+    def _hash_path(self, version: RepositoryVersion) -> Path:
+        base = Path("data") / "version_hashes"
+        base.mkdir(parents=True, exist_ok=True)
+        return base / f"{version.id}.json"
+
+    def _save_version_file_hashes(
+        self, version: RepositoryVersion, file_hashes: dict[str, str]
+    ) -> None:
+        import json
+
+        path = self._hash_path(version)
+        path.write_text(json.dumps(file_hashes), encoding="utf-8")
+
+    def _load_version_file_hashes(self, version: RepositoryVersion) -> dict[str, str]:
+        import json
+
+        path = self._hash_path(version)
+        if not path.exists():
+            return {}
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}

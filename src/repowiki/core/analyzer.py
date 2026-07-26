@@ -124,7 +124,8 @@ class Analyzer:
             overview = ProjectOverview(**filtered)
         except Exception:
             overview = ProjectOverview(name=project.name)
-        await self.cache.put(cache_key, overview.model_dump())
+        if overview.one_liner or overview.description:
+            await self.cache.put(cache_key, overview.model_dump())
         return overview
 
     def _group_into_modules(self, files: list[FileInfo]) -> dict[str, list[FileInfo]]:
@@ -210,7 +211,8 @@ class Analyzer:
                 doc = ModuleDoc(**filtered)
             except Exception:
                 doc = ModuleDoc(name=name, purpose=data.get("purpose", ""))
-            await self.cache.put(cache_key, doc.model_dump())
+            if doc.description or (doc.files and any(f.key_symbols for f in doc.files)):
+                await self.cache.put(cache_key, doc.model_dump())
             return doc
 
     async def _generate_architecture(
@@ -236,7 +238,8 @@ class Analyzer:
             arch = ArchitectureDiagram(**filtered)
         except Exception:
             arch = ArchitectureDiagram()
-        await self.cache.put(cache_key, arch.model_dump())
+        if arch.architecture_type or arch.description or arch.mermaid_component:
+            await self.cache.put(cache_key, arch.model_dump())
         return arch
 
     async def _generate_reading_guide(
@@ -296,5 +299,6 @@ class Analyzer:
             guide = ReadingGuide(**filtered)
         except Exception:
             guide = ReadingGuide()
-        await self.cache.put(cache_key, guide.model_dump())
+        if guide.introduction or guide.steps:
+            await self.cache.put(cache_key, guide.model_dump())
         return guide

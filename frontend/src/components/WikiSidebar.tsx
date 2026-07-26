@@ -55,13 +55,16 @@ export default function WikiSidebar({ sidebar, currentPageId, projectName, onNav
         ))}
       </nav>
 
-      <div className="border-t border-slate-200 p-3">
+      <div className="border-t border-slate-200 p-3 space-y-2">
         <button
           onClick={onChat}
-          className="w-full px-3 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 transition-colors"
+          className="w-full px-3 py-2 bg-indigo-600 text-white rounded-md text-sm font-medium hover:bg-indigo-700 transition-colors"
         >
-          Ask a Question
+          阅读助教
         </button>
+        <p className="text-[11px] text-slate-400 leading-snug px-0.5">
+          划选术语解释，或对本页提问
+        </p>
       </div>
     </aside>
   );

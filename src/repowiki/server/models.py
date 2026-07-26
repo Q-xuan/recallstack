@@ -23,8 +23,14 @@ class ProjectInfo(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    question: str
+    question: str = ""
     history: list[dict] = Field(default_factory=list)
+    # inline reading assistant (explain selection while staying on wiki page)
+    mode: str = "chat"  # chat | inline_explain
+    selection: str = ""
+    wiki_page_id: str = ""
+    wiki_page_title: str = ""
+    surrounding_text: str = ""
 
 
 class FileReference(BaseModel):

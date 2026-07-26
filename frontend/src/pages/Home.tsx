@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { scanProject, streamScanProgress, getWiki } from "../lib/api";
 import { useWikiStore } from "../stores/wiki";
 import SettingsModal from "../components/SettingsModal";
@@ -53,17 +53,22 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex flex-col">
-      {/* header */}
       <header className="flex items-center justify-between px-8 py-4">
         <h1 className="text-2xl font-bold text-slate-800">
           <span className="text-blue-600">Repo</span>Wiki
+          <span className="ml-2 text-xs font-normal text-slate-400">纯文档工具</span>
         </h1>
-        <button
-          onClick={() => setShowSettings(true)}
-          className="text-slate-500 hover:text-slate-700 text-sm"
-        >
-          Settings
-        </button>
+        <div className="flex items-center gap-4">
+          <Link to="/" className="text-indigo-600 hover:text-indigo-800 text-sm font-medium">
+            回到 RecallStack
+          </Link>
+          <button
+            onClick={() => setShowSettings(true)}
+            className="text-slate-500 hover:text-slate-700 text-sm"
+          >
+            Settings
+          </button>
+        </div>
       </header>
 
       {/* main content */}

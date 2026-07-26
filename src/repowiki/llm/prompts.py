@@ -196,6 +196,74 @@ def build_chat_prompt(
     ]
 
 
+def build_inline_explain_prompt(
+    *,
+    selection: str,
+    question: str,
+    context_chunks: str,
+    wiki_page_title: str = "",
+    surrounding_text: str = "",
+    language: str = "en",
+) -> list[dict]:
+    """Prompt for in-wiki term/symbol explanation (reading assistant)."""
+    page_line = f"Wiki page: {wiki_page_title}\n" if wiki_page_title else ""
+    surround = ""
+    if surrounding_text.strip():
+        # keep prompt bounded
+        clipped = surrounding_text.strip()
+        if len(clipped) > 1200:
+            clipped = clipped[:1200] + "…"
+        surround = f"\n## Surrounding wiki text\n{clipped}\n"
+
+    user_q = question.strip() or (
+        f"在本仓库中，「{selection}」是什么意思？它负责什么？"
+        if language.startswith("zh")
+        else f"In this codebase, what does “{selection}” mean and what is it responsible for?"
+    )
+
+    structure = (
+        "用下面结构简短回答（结合本仓库，不要空讲百科）：\n"
+        "1. 一句话定义（贴合本项目）\n"
+        "2. 在本项目中的职责/位置\n"
+        "3. 1-3 个源码证据（文件路径，如有符号一并写出）\n"
+        "4. 它不是什么（若容易混淆）\n"
+        "5. 一个可选的加深思考问题\n"
+        if language.startswith("zh")
+        else (
+            "Answer briefly using this structure (grounded in THIS repo, not generic encyclopedia):\n"
+            "1. One-sentence definition (project-specific)\n"
+            "2. Role / where it lives in this project\n"
+            "3. 1-3 code evidence items (file paths; symbols if known)\n"
+            "4. What it is NOT (if easy to confuse)\n"
+            "5. One optional deeper question for the reader\n"
+        )
+    )
+
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are a reading assistant embedded in a codebase wiki. "
+                "The user highlighted a term or symbol while reading documentation. "
+                "Explain it in the context of THIS repository using the code evidence provided. "
+                "Be concise and concrete. Prefer project meaning over general definitions. "
+                f"{_lang_instruction(language)}"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"{page_line}"
+                f"## Selected term\n{selection}\n"
+                f"{surround}"
+                f"## Relevant Code\n{context_chunks}\n\n"
+                f"## Question\n{user_q}\n\n"
+                f"{structure}"
+            ),
+        },
+    ]
+
+
 def extract_json(text: str) -> dict | list | None:
     """extract JSON from LLM output, handling markdown fences and extra text."""
     # strip markdown code fences

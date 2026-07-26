@@ -33,3 +33,19 @@ src/repowiki/server/static/
 
 .DS_Store
 Thumbs.db
+
+data/
+.pip-*.log
+.pip-*.exit
+.pytest*.log
+.pytest*.exit
+.ruff*.log
+.ruff*.exit
+.npm-*.log
+.npm-*.exit
+.e2e*
+
+# transient build/run artifacts
+*.log
+*.pid
+*.exit

@@ -1,166 +1,166 @@
-<div align="center">
+# RecallStack（回栈）
 
-<img src="docs/banner.png" alt="RepoWiki — generate wiki docs for any codebase" width="100%">
+**把代码仓库转化为可学习、可练习、可复习的知识系统。**
 
-[![PyPI](https://img.shields.io/pypi/v/repowiki.svg)](https://pypi.org/project/repowiki/)
-[![Python](https://img.shields.io/pypi/pyversions/repowiki.svg)](https://pypi.org/project/repowiki/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![CI](https://github.com/he-yufeng/RepoWiki/actions/workflows/ci.yml/badge.svg)](https://github.com/he-yufeng/RepoWiki/actions/workflows/ci.yml)
+- 中文宣传语：从调用栈，到知识栈。
+- 英文宣传语：Turn codebases into lasting knowledge.
 
-[**Quick Start**](#quick-start) · [**How It Works**](#how-it-works) · [**Why RepoWiki?**](#why-repowiki) · [中文](README_CN.md)
+> RecallStack is built on top of [RepoWiki](https://github.com/he-yufeng/RepoWiki).
 
-</div>
+## 与普通代码 Wiki 的区别
 
-**Open-source DeepWiki alternative** — generate comprehensive wiki documentation for any codebase from your terminal or browser.
+| | 普通代码 Wiki | RecallStack |
+|---|---|---|
+| 目标 | 生成可读文档 | 形成可迁移的理解能力 |
+| 交互 | 浏览 | 主动回忆、追踪、Teach Back |
+| 反馈 | 无 / 弱 | 基于 rubric 的结构化评价 |
+| 记忆 | 无 | FSRS 间隔复习 |
+| 证据 | 可选 | 每个概念/题目必须有源码引用 |
 
-## Why RepoWiki?
+## 与 RepoWiki 的关系
 
-| | DeepWiki | deepwiki-open | **RepoWiki** |
-|---|---------|--------------|-------------|
-| Deploy | SaaS only | Docker Compose | **`pip install repowiki`** |
-| Local repos | No | No | **Yes** |
-| CLI | No | No | **Yes** |
-| Web UI | Yes | Yes | **Yes** |
-| Export | Web only | Web only | **Markdown / JSON / HTML** |
-| Reading guide | No | No | **PageRank + guided path** |
-| Terminal Q&A | No | No | **`repowiki chat`** |
-| Dependencies | N/A | Docker + PostgreSQL | **Python + SQLite** |
+- `src/repowiki`：仓库知识引擎（扫描、依赖图、PageRank、Wiki、RAG、LiteLLM、缓存）
+- `src/recallstack`：学习系统（概念图谱、学习路径、题目、提示、评价、掌握度、FSRS）
+- 保留 RepoWiki 的 `repowiki scan` / `repowiki serve` 能力
 
-## Quick Start
+## 当前功能（v0.1.0）
+
+- 导入本地仓库或 HTTPS GitHub 仓库
+- 扫描并生成概念图谱与“核心理解路径”
+- 主动回忆 / 源码追踪 / Teach Back 题目
+- 分级提示（1–5）与作答评价
+- 掌握度 + FSRS 复习调度
+- Dashboard 今日到期复习
+- 版本变化时标记 stale 内容
+
+## 架构
+
+详见 [docs/architecture.md](docs/architecture.md)。
+
+```
+frontend (React/Vite)
+   └─ /api/recallstack/*  →  recallstack application services
+                              ├─ repowiki.core (scan/graph)
+                              └─ learning DB (SQLite/Postgres)
+```
+
+## 安装
 
 ```bash
-pip install repowiki
+python -m venv .venv
+# Windows
+.venv\Scripts\activate
+# macOS/Linux
+source .venv/bin/activate
 
-# set your API key (DeepSeek, OpenAI, Anthropic, etc.)
-export DEEPSEEK_API_KEY=<your-api-key>
-# or
-repowiki config set api_key <your-api-key>
-
-# scan a local project
-repowiki scan ./my-project
-
-# scan a GitHub repo
-repowiki scan https://github.com/pallets/flask
-
-# generate self-contained HTML
-repowiki scan ./my-project --format html --open
-
-# start the web interface
-pip install repowiki[web]
-repowiki serve
+pip install -e ".[web,dev]"
+cd frontend && npm install && cd ..
 ```
 
-RepoWiki respects `.gitignore` and `.repowikiignore` during scans. It also skips common local secret files such as `.env`, `.env.local`, `.npmrc`, `.pypirc`, and SSH private keys by default.
-
-## Features
-
-- **Structured wiki** — project overview, per-module docs, auto-detected architecture with Mermaid diagrams, and a PageRank "start here" reading path.
-- **Import-aware ranking** — resolves Python and JS/TS imports before ranking files, and skips minified/generated bundles so they don't burn LLM context.
-- **Three output formats** — a Markdown directory to commit, structured JSON, or a self-contained HTML file to share (diagrams included).
-- **Web viewer + terminal chat** — a three-column browser UI, or `repowiki chat .` for grounded Q&A in the terminal (built-in TF-IDF retrieval, no embeddings service).
-- **CLI-first** — no Docker, no database server, no browser required.
+或：
 
 ```bash
-repowiki scan .                    # generate wiki
-repowiki scan . -f html --open     # open in browser
-repowiki scan . -l zh              # Chinese output
-repowiki chat .                    # interactive Q&A about the code
+make install
 ```
 
-## Languages & Models
+## 环境变量
 
-Detects Python, JavaScript, TypeScript, Go, Rust, Java, Kotlin, C/C++, C#, Ruby, PHP, Swift, and 30+ more. Any of litellm's 100+ providers works — pick one with an alias or pass it directly:
+复制 `.env.example`：
 
 ```bash
-repowiki config set model deepseek   # deepseek / claude / gpt / gemini / qwen / kimi / glm ...
-repowiki scan . -m gpt               # or pass a model directly
+RECALLSTACK_DATABASE_URL=sqlite:///./data/recallstack.db
+RECALLSTACK_DEFAULT_USER_ID=00000000-0000-4000-8000-000000000001
+RECALLSTACK_FSRS_DESIRED_RETENTION=0.9
+RECALLSTACK_MAX_REPOSITORY_SIZE_MB=200
+RECALLSTACK_MAX_FILE_SIZE_KB=200
+REPOWIKI_MODEL=
+REPOWIKI_API_KEY=
+REPOWIKI_API_BASE=
+REPOWIKI_LLM_TIMEOUT_SECONDS=60
+REPOWIKI_LLM_MAX_RETRIES=3
+REPOWIKI_LANG=en
+# optional override of REPOWIKI_LANG for learning/wiki templates:
+# RECALLSTACK_CONTENT_LANG=zh
 ```
 
-## Configuration
+LLM key 可选：无 key 时仍可确定性生成概念/路径/题目。
 
-RepoWiki looks for config in this order:
-1. CLI flags (`-m`, `-l`, `-o`)
-2. Environment variables (`REPOWIKI_MODEL`, `REPOWIKI_API_KEY`)
-3. Config file (`~/.repowiki/config.json`)
-4. Provider-specific env vars (`DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`)
+内容语言与 RepoWiki 一致（`en` / `zh` / `ja` / `ko`），默认英文。改语言后需重新扫描仓库。
 
-## Project Structure
+## 启动
 
-```
-RepoWiki/
-├── src/repowiki/
-│   ├── cli.py              # Click CLI with scan/serve/chat/config commands
-│   ├── config.py           # Configuration management
-│   ├── core/
-│   │   ├── scanner.py      # File scanning with language detection
-│   │   ├── analyzer.py     # Multi-step LLM analysis pipeline
-│   │   ├── graph.py        # Dependency graph + PageRank
-│   │   ├── wiki_builder.py # Wiki page assembly
-│   │   ├── rag.py          # TF-IDF retrieval for Q&A
-│   │   └── cache.py        # SQLite caching
-│   ├── llm/
-│   │   ├── client.py       # litellm async wrapper
-│   │   └── prompts.py      # Structured prompt templates
-│   ├── ingest/
-│   │   ├── local.py        # Local directory ingestion
-│   │   └── github.py       # Git clone with caching
-│   ├── export/
-│   │   ├── markdown.py     # Markdown directory export
-│   │   ├── json_export.py  # JSON export
-│   │   └── html.py         # Self-contained HTML export
-│   └── server/             # FastAPI web backend
-├── frontend/               # React + Vite + TailwindCSS
-├── pyproject.toml
-└── LICENSE
-```
-
-## How It Works
-
-![RepoWiki pipeline](docs/architecture.png)
-
-1. **Scan** — Walk the directory tree, filter out binaries, generated bundles, and oversized files, detect languages and entry points
-2. **Graph** — Resolve imports across 6 languages, including Python package-relative and
-   JavaScript/TypeScript relative modules, then run PageRank to rank file importance
-3. **Analyze** — Send file tree + key files to LLM in 4 structured passes (overview, modules, architecture, reading guide)
-4. **Cache** — Store results in SQLite keyed by content hash, skip unchanged files on re-scan
-5. **Export** — Assemble wiki pages with Mermaid diagrams and source links, output in chosen format
-
-## Development
+后端：
 
 ```bash
-git clone https://github.com/he-yufeng/RepoWiki.git
-cd RepoWiki
-
-# backend
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev,web]"
-
-# frontend
-cd frontend && npm install && npm run dev
-
-# run backend
+python -m recallstack.cli serve --port 8000
+# 或
 repowiki serve --port 8000
 ```
 
-## Roadmap
+前端：
 
-Generation, the web interface, and the diagrams work. The next steps are about keeping a wiki fresh and better connected:
+```bash
+cd frontend
+npm run dev
+```
 
-- **Incremental re-generation** — regenerate only the pages whose source changed since the last run, so updating a wiki on a large repo isn't a full rebuild every time.
-- **Cross-reference links** — link a symbol mentioned on one module page to the page where it's defined, so the wiki reads like connected docs instead of isolated pages.
-- **More diagram types** — a call graph and a data-flow view alongside the dependency graph, since the analysis already walks imports and could surface more.
-- **Publish to a static site** — a one-command export to a GitHub Pages-ready site, so a generated wiki can live as a project's docs, not just a local file.
+- RepoWiki 首页：http://127.0.0.1:5173/
+- RecallStack 学习：http://127.0.0.1:5173/learn
 
-## Related Projects
+## 扫描本地仓库（学习流）
 
-If RepoWiki helped you find your way around a codebase, a few other things I've built:
+1. 打开 `/learn/repositories`
+2. 选择「本地目录」，填入路径（可用 `fixtures/mini_repo`）
+3. 创建 → 扫描/重新分析
+4. 打开概念 → 开始练习 → 申请提示 → 提交
 
-- [**CoreCoder**](https://github.com/he-yufeng/CoreCoder) — want to understand how a coding agent really works? Read the whole ~1k-line engine end to end, not a black box.
-- [**FindJobs-Agent**](https://github.com/he-yufeng/FindJobs-Agent) — stop sifting job boards by hand: it ranks postings against your resume and runs mock interviews.
-- [**ContractGuard**](https://github.com/he-yufeng/ContractGuard) — catch the risky clauses before you sign: it reads contracts and flags the dangerous bits.
-- [**GitSense**](https://github.com/he-yufeng/GitSense) — want to contribute to open source? It finds issues worth your time and gauges whether your PR will get merged.
-- [**CodeABC**](https://github.com/he-yufeng/CodeABC) — understand any codebase even if you don't code, built for non-programmers.
+API：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/recallstack/repositories \
+  -H "content-type: application/json" \
+  -d "{\"source_type\":\"local\",\"source_location\":\"fixtures/mini_repo\"}"
+```
+
+## 数据库迁移
+
+```bash
+alembic upgrade head
+# 开发态也会在服务启动时 bootstrap create_all
+```
+
+## 测试
+
+```bash
+make test
+# 或
+python -m pytest -q
+```
+
+## Lint / 构建
+
+```bash
+make lint
+make frontend-build
+```
+
+## 已知限制
+
+- 单用户模式（预留 `user_id`）
+- 无 LLM 时题目文案为确定性模板
+- 练习页源码片段预览目前主要支持本地仓库
+- 评价默认确定性 rubric；LLM 评价脚手架已有但未接入主路径
+- 符号级失效留待后续版本
+
+## 路线图（按第一性原理排序）
+
+1. **证据闭环**（已落地）：提示读码、练习页证据窗、路径/符号评分
+2. **会话连贯性**（已落地）：概念练习队列 + 复习队列 + 下一题
+3. **LLM 增强评价**（已落地，可选）：结构化评分 + 确定性回退；生成侧仍待接入
+4. **LLM 增强概念/题目生成**（结构化缓存）
+5. **符号级 stale 检测** + 版本 diff 学习
+6. 多用户与进度同步；概念图可视化
 
 ## License
 
-MIT
+MIT（继承 RepoWiki）
