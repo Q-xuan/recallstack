@@ -17,7 +17,9 @@ export interface ParsedRef {
 
 /** Parse the `path/to/file.py:12-40` citation format emitted by the wiki. */
 export function parseRef(raw: string): ParsedRef | null {
-  const match = /^(.+?)(?::(\d+)(?:-(\d+))?)?$/.exec(raw.trim());
+  // Strip a trailing TypeName so `path:line Symbol` / `path Symbol` still resolve.
+  const loc = (raw || "").trim().replace(/\s+\S.*$/, "");
+  const match = /^(.+?)(?::(\d+)(?:-(\d+))?)?$/.exec(loc);
   if (!match) return null;
   const path = match[1];
   if (!path.includes(".")) return null;

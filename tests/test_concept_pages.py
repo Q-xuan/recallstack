@@ -280,8 +280,33 @@ def test_source_ref_re_matches_readme_span():
     assert regex.fullmatch("crates/foo/src/lib.rs:1")
     assert regex.fullmatch("bin/grok.rs:1 Agent")
     assert regex.fullmatch("crates/agent/src/app.rs:40 AppServer")
+    assert regex.fullmatch("crates/codegen/xai-grok-pager/src/lib.rs")
+    assert regex.fullmatch("crates/codegen/xai-grok-pager/src/lib.rs Pager")
+    assert regex.fullmatch("crates/xai-chat/src/lib.rs:10 mod channel")
     assert not regex.fullmatch("README")
     assert not regex.fullmatch("just a sentence")
+
+    def source_ref_value(raw: str) -> str:
+        found = regex.fullmatch((raw or "").strip())
+        if not found:
+            return (raw or "").strip()
+        path, start, end = found.group(1), found.group(2), found.group(3)
+        if start and end:
+            return f"{path}:{start}-{end}"
+        if start:
+            return f"{path}:{start}"
+        return f"{path}:1"
+
+    assert source_ref_value("README.md") == "README.md:1"
+    assert source_ref_value("crates/codegen/xai-grok-pager/src/lib.rs") == (
+        "crates/codegen/xai-grok-pager/src/lib.rs:1"
+    )
+    assert source_ref_value("bin/grok.rs:1 Agent") == "bin/grok.rs:1"
+    assert source_ref_value("app/main.py:12-40") == "app/main.py:12-40"
+    assert source_ref_value("crates/xai-chat/src/lib.rs:10 mod channel") == (
+        "crates/xai-chat/src/lib.rs:10"
+    )
+
     assert "export function sourceRefValue" in src
     fn = re.search(
         r"export function sourceRefValue\(raw: string\): string \{[\s\S]*?\n\}",
@@ -289,10 +314,12 @@ def test_source_ref_re_matches_readme_span():
     )
     assert fn, "sourceRefValue must be exported"
     assert "SOURCE_REF_RE.exec" in fn.group(0)
-    assert "match?.[1]" in fn.group(0)
+    assert "${path}:1" in fn.group(0)
     assert "rs-related-source" in src
     assert "data-md-block=\"related-source\"" in src
+    assert 'data-md-block="list-item"' in src
     assert "export function isPathLikeChip" in src
+    assert "rs-ref-sym" in src
 
 
 def test_markdown_ts_normalizes_bare_mermaid():
@@ -324,11 +351,20 @@ def test_wiki_content_peek_hitbox_is_chip_only():
 
     wiki = Path("frontend/src/components/WikiContent.tsx").read_text(encoding="utf-8")
     css = Path("frontend/src/index.css").read_text(encoding="utf-8")
+    md = Path("frontend/src/lib/markdown.ts").read_text(encoding="utf-8")
+    peek = Path("frontend/src/components/SourcePeek.tsx").read_text(encoding="utf-8")
     assert "chipFromEvent" in wiki
-    assert ".rs-ref[data-ref]" in wiki
+    assert 'closest(".rs-ref")' in wiki
+    assert ".rs-ref[data-ref]" not in wiki
     assert "p:has(.rs-ref)" not in css
+    sym = re.search(r"\.rs-ref-sym \{[^}]+\}", css)
+    assert sym and "pointer-events: none" in sym.group(0)
+    assert 'data-md-block="list-item"' in md
+    assert "closest(\"[data-md-block], .rs-related-source\")" in wiki.replace("'", '"')
     assert ".rs-related-source" in css
     assert "flex: 0 0 auto" in css
     assert "display: flex" in css
     assert "flex-wrap: wrap" in css
+    assert "path:line Symbol" in peek
+    assert "normalizeMermaidSource" in md
 

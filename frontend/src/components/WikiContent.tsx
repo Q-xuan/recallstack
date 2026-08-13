@@ -85,9 +85,16 @@ export default function WikiContent({
     if (!root) return;
 
     function chipFromEvent(target: EventTarget | null): HTMLElement | null {
-      if (!(target instanceof Element)) return null;
-      const refEl = target.closest(".rs-ref[data-ref]") as HTMLElement | null;
-      if (!refEl || !root.contains(refEl)) return null;
+      const el =
+        target instanceof Element
+          ? target
+          : target instanceof Text
+            ? target.parentElement
+            : null;
+      if (!el) return null;
+      // Symbol half (.rs-ref-sym) is inside the pill — closest the chip, not [data-ref].
+      const refEl = el.closest(".rs-ref") as HTMLElement | null;
+      if (!refEl || !root.contains(refEl) || !refEl.getAttribute("data-ref")) return null;
       // Hitbox is the pill only — never the wrapping p / li / related-source row.
       if (refEl.matches("p, li, ul, ol, td, blockquote, [data-md-block], .rs-related-source")) {
         return null;
@@ -96,10 +103,12 @@ export default function WikiContent({
     }
 
     function openPeek(refEl: HTMLElement, value: string) {
+      // Prefer the inner list-item / related-source wrapper so the slot is a
+      // valid sibling (inside <li>, not a <div> child of <ul>).
       const host =
-        (refEl.closest(
-          "[data-md-block], .rs-related-source, li, p, td, blockquote",
-        ) as HTMLElement | null) ?? refEl;
+        (refEl.closest("[data-md-block], .rs-related-source") as HTMLElement | null) ??
+        (refEl.closest("li, p, td, blockquote") as HTMLElement | null) ??
+        refEl;
       const slot = document.createElement("div");
       slot.dataset.peekSlot = "";
       host.after(slot);

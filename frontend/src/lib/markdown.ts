@@ -27,15 +27,21 @@ export interface RenderedMarkdown {
   toc: TocEntry[];
 }
 
-/** Matches `src/foo/bar.py` or `README.md`, optionally `:12` / `:12-40` and a trailing TypeName. */
+/** Matches `src/foo/bar.py` / `README.md`, optional `:12` / `:12-40`, optional trailing TypeName (may include spaces). */
 export const SOURCE_REF_RE =
-  /^((?:[A-Za-z0-9_.@-]+\/)*[A-Za-z0-9_.@-]+\.[A-Za-z0-9]+(?::\d+(?:-\d+)?)?)(?:\s+([A-Za-z_][A-Za-z0-9_]*))?$/;
+  /^((?:[A-Za-z0-9_.@-]+\/)*[A-Za-z0-9_.@-]+\.[A-Za-z0-9]+)(?::(\d+)(?:-(\d+))?)?(?:\s+(.+))?$/;
 
-/** Path:line for SourcePeek `parseRef` — strips a trailing type name. */
+/** Path[:line] for SourcePeek — strips a trailing type name. Path-only becomes `path:1`. */
 export function sourceRefValue(raw: string): string {
   const trimmed = (raw || "").trim();
   const match = SOURCE_REF_RE.exec(trimmed);
-  return match?.[1] || trimmed;
+  if (!match) return trimmed;
+  const path = match[1];
+  const start = match[2];
+  const end = match[3];
+  if (start && end) return `${path}:${start}-${end}`;
+  if (start) return `${path}:${start}`;
+  return `${path}:1`;
 }
 
 const MERMAID_TYPE_RE =
@@ -95,9 +101,18 @@ export function isPathLikeChip(content: string): boolean {
   const trimmed = (content || "").trim();
   if (!trimmed) return false;
   if (SOURCE_REF_RE.test(trimmed)) return true;
-  return /^(?:\.[A-Za-z0-9_.@-]+\/)*[A-Za-z0-9_.@-]+\.[A-Za-z0-9]+(?::\d+(?:-\d+)?)?(?:\s+\S+)?$/.test(
+  return /^(?:[A-Za-z0-9_.@-]+\/)*[A-Za-z0-9_.@-]+\.[A-Za-z0-9]+(?::\d+(?:-\d+)?)?(?:\s+\S.*)?$/.test(
     trimmed,
   );
+}
+
+function chipVisibleLocation(match: RegExpExecArray): string {
+  const path = match[1];
+  const start = match[2];
+  const end = match[3];
+  if (start && end) return `${path}:${start}-${end}`;
+  if (start) return `${path}:${start}`;
+  return path;
 }
 
 function renderCodeChip(content: string): string {
@@ -108,10 +123,14 @@ function renderCodeChip(content: string): string {
   const attrs = isRef
     ? ` class="rs-ref" data-ref="${escapeHtml(dataRef)}" role="button" tabindex="0"`
     : "";
-  const inner =
-    isRef && refMatch?.[2]
-      ? `${escapeHtml(refMatch[1])}<span class="rs-ref-sym">${escapeHtml(refMatch[2])}</span>`
-      : escapeHtml(trimmed);
+  let inner = escapeHtml(trimmed);
+  if (isRef && refMatch) {
+    const loc = chipVisibleLocation(refMatch);
+    const sym = (refMatch[4] || "").trim();
+    inner = sym
+      ? `${escapeHtml(loc)}<span class="rs-ref-sym">${escapeHtml(sym)}</span>`
+      : escapeHtml(loc);
+  }
   return `<code${attrs}>${inner}</code>`;
 }
 
@@ -250,7 +269,9 @@ function renderListLevel(
       continue;
     }
     if (items[i].ordered !== ordered) break;
-    parts.push(`<li>${renderInline(items[i].lines.join(" "))}</li>`);
+    parts.push(
+      `<li><div data-md-block="list-item">${renderInline(items[i].lines.join(" "))}</div></li>`,
+    );
     i += 1;
   }
 

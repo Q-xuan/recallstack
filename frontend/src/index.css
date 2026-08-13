@@ -1063,6 +1063,16 @@ html[lang="zh-CN"] .rs-wiki-nav-group {
   border-left: 1px solid color-mix(in srgb, currentColor 32%, transparent);
   color: var(--rs-muted, color-mix(in srgb, currentColor 62%, transparent));
   font-weight: 500;
+  pointer-events: none;
+}
+
+.rs-prose li > [data-md-block="list-item"] {
+  display: block;
+}
+
+.rs-prose li > [data-peek-slot] {
+  display: block;
+  margin: 0.45rem 0 0.65rem;
 }
 
 .rs-ref:hover {
