@@ -15,17 +15,25 @@ _LANG_NAMES = {
 
 def _lang_instruction(language: str) -> str:
     lang_map = {
-        "en": "Respond in English.",
+        "en": (
+            "Write a professional handbook page, not an API catalog or file tree. "
+            "Open with what the reader should be able to explain afterwards "
+            "(startup / one request / one session / failure), then walk one real flow. "
+            "Never list every method on a type. Never say 'the entry point is lib.rs' "
+            "or 'submodules are …'. Never write 'Heaviest modules by PageRank'."
+        ),
         "zh": (
-            "请用专业简体中文撰写，口吻像资深工程师写给同事的内部手册（接近 zread）："
-            "先讲职责与边界，再讲实现怎么串起来，少堆文件列表。"
-            "路径、crate/包名、符号、协议名保持英文原文（如 PageRank、ACP、`xai-grok-pager`），不要音译。"
-            "禁止翻译腔，禁止写成目录清单或 “Heaviest modules by PageRank: …” 这种英文库存句。"
+            "请用专业简体中文撰写手册正文（接近 DeepWiki / zread）："
+            "先讲这篇文档要让读者能讲清什么（启动 / 一次请求 / 一次会话 / 失败），"
+            "再顺着一条真实调用把类型当角色写进去。"
+            "路径、crate/包名、符号、协议名保持英文原文（如 PageRank、ACP、`PtyHandle`），不要音译。"
+            "禁止翻译腔，禁止目录腔，禁止 “Heaviest modules”，禁止接口清单"
+            "（入口是 lib.rs、子模块是 keys/pty/server、给 struct 列 spawn/resize/is_alive）。"
         ),
         "ja": "日本語で回答してください。",
         "ko": "한국어로 답변해주세요.",
     }
-    return lang_map.get(language, "Respond in English.")
+    return lang_map.get(language, lang_map["en"])
 
 
 def _term_tips_field() -> str:
@@ -115,6 +123,7 @@ def build_outline_prompt(
                 "depth is one of deep, standard, brief. "
                 "Mark at most a third of modules as deep. "
                 "key_files MUST be real paths from the tree. "
+                "key_symbols are 1-3 types/functions that appear in the walkthrough, never a method dump. "
                 "overview_focus and architecture_focus must be narrative (responsibilities and wiring), "
                 "never a PageRank file dump.\n\n"
                 f"{_json_instruction(language)}"
@@ -199,43 +208,61 @@ def build_module_prompt(
         focus = (
             f"Writing plan: depth={depth}; sections={planned}.\n"
             f"Notes: {outline_notes or '(none)'}\n"
-            f"Cover these files: {keys}\n"
-            f"Cover these symbols: {symbols}\n\n"
+            f"Load-bearing files (roles in the flow, not a tree): {keys}\n"
+            f"Candidate types/functions for the walkthrough (NOT a method list): {symbols}\n\n"
         )
 
-    if depth == "deep":
-        term_tips_required = True
-        extra_rules = (
-            "This is a HIGH-IMPORTANCE module. Write longform, not a bullet inventory. "
-            "Start with responsibility and boundaries, then how the implementation is wired. "
-            "implementation_details must explain how the code actually works (control flow, "
-            "state, important branches) with backtick path:line cites like `app/main.py:7`. "
-            "call_chains must name real functions and the files they live in. "
-            "edge_cases must be concrete failure modes from the code, not generic advice. "
-        )
-        length_hint = "description: 2-4 paragraphs. implementation_details: 2-5 paragraphs."
-    elif depth == "brief":
+    forbidden = (
+        "FORBIDDEN (these are the JavaDoc / rustdoc smell — never produce them):\n"
+        "- 'The entry point is lib.rs. Submodules are keys, pty, server, session…'\n"
+        "- Listing every method on a struct (spawn, resize, is_alive, …)\n"
+        "- Turning the page into a file tree or crate inventory\n"
+        "- Repeating the same sentence in purpose, description, and implementation_details\n"
+        "- 'Heaviest modules by PageRank'\n"
+    )
+
+    if depth == "brief":
         term_tips_required = False
         extra_rules = (
             "This is a low-priority module. Keep purpose to one sentence and description short. "
-            "Leave implementation_details, call_chains, and edge_cases empty unless something "
-            "is genuinely surprising. "
+            "Leave implementation_details, call_chains, and edge_cases empty unless one real "
+            "flow is obvious from the source. "
         )
         length_hint = "Keep the JSON compact."
     else:
-        term_tips_required = False
+        term_tips_required = depth == "deep"
         extra_rules = (
-            "Explain what this module is responsible for, then how its files connect. "
-            "Fill implementation_details and call_chains when the code makes them obvious. "
-            "Do not turn the page into a file listing. "
+            "Write a DeepWiki handbook page, not an interface catalog. "
+            "purpose: what this document is for, and what the reader can explain afterwards "
+            "(startup / one request / one session / failure). "
+            "description: role in the system — who calls this module, what it calls, what "
+            "breaks if it disappeared. Do not repeat purpose. "
+            "implementation_details: ONE happy-path walkthrough in prose paragraphs, with "
+            "`path:line` cites and types in backticks. Control flow and state, not a file list. "
+            "call_chains: REQUIRED, 1-3 named flows. Each step is "
+            "'who calls whom, with what, then what happens', citing real functions from the "
+            "provided source. Not 'see pty.rs'. "
+            "edge_cases: concrete failures from THIS code (child dies, resize, lock, missing PTY). "
+            "files: at most 4-6 load-bearing files, each with a one-clause purpose. "
+            "Do not nest method lists under files. "
+            "key_symbols (if any) only for 1-3 types/functions that already appear in the "
+            "walkthrough — never a method dump. "
         )
-        length_hint = "description: 1-2 paragraphs."
+        if depth == "deep":
+            extra_rules += (
+                "This is a HIGH-IMPORTANCE module: longform walkthrough, at least one call_chain "
+                "with 3+ steps, concrete edge_cases. "
+            )
+            length_hint = "description: 2-4 paragraphs. implementation_details: 2-5 paragraphs."
+        else:
+            extra_rules += "Walkthrough + at least one call_chain are required at this depth. "
+            length_hint = "description: 1-3 paragraphs. implementation_details: 2-4 paragraphs."
 
     return [
         {
             "role": "system",
             "content": (
-                "You are a senior engineer documenting your own code. "
+                "You are a senior engineer writing a DeepWiki handbook page for one module. "
                 "Be direct and specific. No filler. "
                 "Only cite file paths that appear in the provided source. "
                 "Never invent paths, line numbers, or symbols. "
@@ -249,30 +276,33 @@ def build_module_prompt(
                 f"Document the '{module_name}' module. Here are its files:\n\n"
                 f"{files_context}\n\n"
                 f"{focus}"
+                f"{forbidden}"
                 f"{extra_rules}{length_hint}\n\n"
                 "Output JSON:\n"
                 "{\n"
                 f'  "name": "{module_name}",\n'
-                '  "purpose": "one sentence",\n'
-                '  "description": "detailed explanation",\n'
-                '  "implementation_details": "how it works, with `path:line` cites",\n'
+                '  "purpose": "what this page is for, and what the reader can explain afterwards",\n'
+                '  "description": "who calls this, what it calls, what breaks if it disappears",\n'
+                '  "implementation_details": "ONE happy-path walkthrough with `path:line` cites",\n'
                 '  "call_chains": [\n'
-                '    {"name": "boot", "description": "what this chain does", '
-                '"steps": ["main() in app/main.py calls boot()", "boot() returns status"], '
-                '"files": ["app/main.py", "app/core.py"]}\n'
+                '    {"name": "one session", "description": "request to PTY bytes", '
+                '"steps": ["handler in `server.rs:40` receives the session", '
+                '"`PtyHandle` in `pty.rs:12` opens the child", '
+                '"read loop copies bytes back to the socket"], '
+                '"files": ["server.rs", "pty.rs"]}\n'
                 "  ],\n"
-                '  "edge_cases": ["what happens if X is missing"],\n'
+                '  "edge_cases": ["child dies: read returns EIO and the session ends"],\n'
                 '  "files": [\n'
-                '    {"path": "file.py", "purpose": "what it does", '
-                '"key_symbols": [{"name": "func_name", "kind": "function", "line": 12, "description": "..."}]}\n'
+                '    {"path": "pty.rs", "purpose": "owns PtyHandle on the happy path"}\n'
                 "  ],\n"
-                '  "relationships": [{"source": "a.py", "target": "b.py", "description": "a imports b for..."}],\n'
-                '  "key_concepts": [{"name": "concept", "explanation": "..."}],\n'
+                '  "relationships": [{"source": "a.py", "target": "b.py", "description": "a new fact not already in the walkthrough"}],\n'
+                '  "key_concepts": [{"name": "concept", "explanation": "only if it adds a fact the walkthrough does not say"}],\n'
                 '  "citations": [{"path": "file.py", "start_line": 12, "symbol": "func_name", "note": "why"}],\n'
                 f"{_term_tips_field()}"
                 "}\n\n"
                 "files[].path, relationships, call_chains.files, and citations.path MUST be "
                 "paths shown above. Use 0 for unknown line numbers rather than guessing. "
+                "Omit files[].key_symbols; names belong in the walkthrough as `path:line` cites. "
                 f"{_term_tips_rules(required=term_tips_required)}\n\n"
                 f"{_json_instruction(language)}"
             ),

@@ -273,10 +273,14 @@ def test_write_path_with_scripted_llm_and_cite_check(tmp_path):
 
     graph = DependencyGraph.build_from_project(project)
     page = WikiBuilder().build(project, wiki, graph).get_page("modules/app")
-    assert "## Implementation" in page.content
-    assert "## Key Call Chains" in page.content
-    assert "## Edge Cases" in page.content
+    assert "## How a call runs" in page.content
+    assert "## How it actually runs" in page.content
+    assert "## Failures and edges" in page.content
     assert "## Source Evidence" in page.content
+    assert "## Implementation" not in page.content
+    assert "## Key Call Chains" not in page.content
+    assert page.content.index("## How a call runs") < page.content.index("## Related source")
+    assert "`spawn` (function)" not in page.content
     assert "does/not/exist.py" not in page.content
     assert "totally/fake.py" not in page.content
 

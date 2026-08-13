@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from repowiki.core.cite_check import format_citation
@@ -27,10 +28,14 @@ _STRUCTURAL_TITLES: dict[str, dict[str, str]] = {
     "key-features": {"en": "Key Features", "zh": "主要能力", "ja": "主な機能", "ko": "주요 기능"},
     "getting-started": {"en": "Getting Started", "zh": "上手", "ja": "はじめに", "ko": "시작하기"},
     "files": {"en": "Files", "zh": "文件", "ja": "ファイル", "ko": "파일"},
+    "related-source": {"en": "Related source", "zh": "相关源码", "ja": "関連ソース", "ko": "관련 소스"},
     "key-concepts": {"en": "Key Concepts", "zh": "关键概念", "ja": "重要概念", "ko": "핵심 개념"},
     "implementation": {"en": "Implementation", "zh": "实现细节", "ja": "実装", "ko": "구현"},
+    "how-it-runs": {"en": "How it actually runs", "zh": "这条链路怎么转", "ja": "実際の動き", "ko": "실제 동작"},
     "call-chains": {"en": "Key Call Chains", "zh": "关键调用链", "ja": "主要な呼び出し", "ko": "주요 호출 체인"},
+    "how-a-call-runs": {"en": "How a call runs", "zh": "一次调用怎么走", "ja": "呼び出しの流れ", "ko": "호출이 흐르는 방식"},
     "edge-cases": {"en": "Edge Cases", "zh": "边界条件", "ja": "エッジケース", "ko": "예외 상황"},
+    "failures": {"en": "Failures and edges", "zh": "失败与边界", "ja": "失敗と境界", "ko": "실패와 경계"},
     "source-evidence": {"en": "Source Evidence", "zh": "源码证据", "ja": "ソース根拠", "ko": "소스 근거"},
     "relationships": {"en": "Internal Relationships", "zh": "内部关系", "ja": "内部関係", "ko": "내부 관계"},
     "term-tips": {"en": "Term tips", "zh": "术语小贴士", "ja": "用語メモ", "ko": "용어 팁"},
@@ -277,14 +282,12 @@ class WikiBuilder:
 
         _append_term_tips(lines, getattr(mod, "term_tips", None), language)
 
-        implementation = getattr(mod, "implementation_details", "") or ""
-        if implementation:
-            lines.append(f"## {structural_title('implementation', language)}\n")
-            lines.append(f"{implementation}\n")
+        chains = list(getattr(mod, "call_chains", None) or [])
+        implementation = (getattr(mod, "implementation_details", "") or "").strip()
+        walkthrough = _walkthrough_blob(mod)
 
-        chains = getattr(mod, "call_chains", None) or []
         if chains:
-            lines.append(f"## {structural_title('call-chains', language)}\n")
+            lines.append(f"## {structural_title('how-a-call-runs', language)}\n")
             for chain in chains:
                 lines.append(f"### {chain.name}\n")
                 if chain.description:
@@ -293,13 +296,19 @@ class WikiBuilder:
                     lines.append(f"{i}. {step}")
                 if chain.steps:
                     lines.append("")
-                if chain.files:
-                    files = ", ".join(f"`{p}`" for p in chain.files)
-                    lines.append(f"**{structural_title('files', language)}:** {files}\n")
+                diagram = mermaid_from_call_chain(chain)
+                if diagram:
+                    lines.append("```mermaid")
+                    lines.append(diagram)
+                    lines.append("```\n")
+
+        if implementation and not _duplicates_chain_prose(implementation, chains):
+            lines.append(f"## {structural_title('how-it-runs', language)}\n")
+            lines.append(f"{implementation}\n")
 
         edge_cases = getattr(mod, "edge_cases", None) or []
         if edge_cases:
-            lines.append(f"## {structural_title('edge-cases', language)}\n")
+            lines.append(f"## {structural_title('failures', language)}\n")
             for case in edge_cases:
                 lines.append(f"- {case}")
             lines.append("")
@@ -310,26 +319,33 @@ class WikiBuilder:
                 lines.append(f"## {structural_title('dependencies', language)}\n")
                 lines.append("```mermaid\n" + neighbourhood + "\n```\n")
 
-        if mod.files:
-            lines.append(f"## {structural_title('files', language)}\n")
-            for f in mod.files:
+        load_bearing = list(mod.files or [])[:6]
+        if load_bearing:
+            lines.append(f"## {structural_title('related-source', language)}\n")
+            for f in load_bearing:
                 purpose = f" — {f.purpose}" if f.purpose else ""
                 lines.append(f"- `{f.path}`{purpose}")
-                if f.key_symbols:
-                    for s in f.key_symbols[:8]:
-                        desc = f" - {s.description}" if s.description else ""
-                        lines.append(f"  - `{s.name}` ({s.kind}){desc}")
             lines.append("")
 
-        if mod.key_concepts:
+        extra_concepts = [
+            c
+            for c in (mod.key_concepts or [])
+            if _adds_new_fact(f"{c.name} {c.explanation}", walkthrough)
+        ]
+        if extra_concepts:
             lines.append(f"## {structural_title('key-concepts', language)}\n")
-            for c in mod.key_concepts:
+            for c in extra_concepts:
                 lines.append(f"- **{c.name}**: {c.explanation}")
             lines.append("")
 
-        if mod.relationships:
+        extra_rels = [
+            r
+            for r in (mod.relationships or [])
+            if _adds_new_fact(f"{r.source} {r.target} {r.description}", walkthrough)
+        ]
+        if extra_rels:
             lines.append(f"## {structural_title('relationships', language)}\n")
-            for r in mod.relationships:
+            for r in extra_rels:
                 lines.append(f"- `{r.source}` → `{r.target}`: {r.description}")
             lines.append("")
 
@@ -441,3 +457,209 @@ def _append_citations(lines: list[str], citations, language: str = "en") -> None
             extra += f" — {cite.note}"
         lines.append(f"- `{loc}`{extra}")
     lines.append("")
+
+
+_TICK_OR_PATH = re.compile(r"`([^`]+)`|([A-Za-z0-9_./-]+\.[A-Za-z0-9]+)")
+_INVENTORY_PROSE_RE = re.compile(
+    r"(?i)(the entry point is\b|submodules are\b|heaviest modules|"
+    r"入口是\s*`?lib\.rs|子模块是)"
+)
+_SYMBOL_DUMP_RE = re.compile(
+    r"(?m)^[ \t]+- `[A-Za-z_][A-Za-z0-9_]*` \((function|class|method|struct|enum|trait|type)\)[^\n]*\n"
+)
+_MERMAID_LABEL_RE = re.compile(r'[\[\]{}"#\n]')
+_MODULE_SECTION_ALIASES: dict[str, tuple[str, ...]] = {
+    "term-tips": ("术语小贴士", "Term tips"),
+    "how-a-call-runs": ("一次调用怎么走", "How a call runs", "关键调用链", "Key Call Chains"),
+    "how-it-runs": ("这条链路怎么转", "How it actually runs", "实现细节", "Implementation"),
+    "failures": ("失败与边界", "Failures and edges", "边界条件", "Edge Cases"),
+    "dependencies": ("依赖", "Dependencies"),
+    "related-source": ("相关源码", "Related source", "文件", "Files"),
+    "key-concepts": ("关键概念", "Key Concepts"),
+    "relationships": ("内部关系", "Internal Relationships"),
+    "source-evidence": ("源码证据", "Source Evidence"),
+}
+_MODULE_SECTION_CANON = {
+    "how-a-call-runs": {"zh": "一次调用怎么走", "en": "How a call runs"},
+    "how-it-runs": {"zh": "这条链路怎么转", "en": "How it actually runs"},
+    "failures": {"zh": "失败与边界", "en": "Failures and edges"},
+    "related-source": {"zh": "相关源码", "en": "Related source"},
+}
+_MODULE_SECTION_ORDER = (
+    "term-tips",
+    "how-a-call-runs",
+    "how-it-runs",
+    "failures",
+    "dependencies",
+    "related-source",
+    "key-concepts",
+    "relationships",
+    "source-evidence",
+)
+
+
+def mermaid_from_call_chain(chain) -> str:
+    """Flowchart from ≥3 call-chain steps. Empty if labels would be garbage."""
+    steps = [str(s).strip() for s in (getattr(chain, "steps", None) or []) if str(s).strip()]
+    if len(steps) < 3:
+        return ""
+    labels: list[str] = []
+    for step in steps[:8]:
+        label = _safe_mermaid_label(step)
+        if not label:
+            return ""
+        labels.append(label)
+    if len(labels) < 3:
+        return ""
+    lines = ["flowchart TD"]
+    ids = [f"s{i}" for i in range(1, len(labels) + 1)]
+    for nid, lab in zip(ids, labels, strict=True):
+        lines.append(f'  {nid}["{lab}"]')
+    for src, dst in zip(ids, ids[1:], strict=False):
+        lines.append(f"  {src} --> {dst}")
+    return "\n".join(lines)
+
+
+def _safe_mermaid_label(text: str) -> str:
+    cleaned = _MERMAID_LABEL_RE.sub(" ", text)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()[:48]
+    if len(cleaned) < 8:
+        return ""
+    return cleaned
+
+
+def _walkthrough_blob(mod) -> str:
+    parts = [
+        getattr(mod, "purpose", "") or "",
+        getattr(mod, "description", "") or "",
+        getattr(mod, "implementation_details", "") or "",
+    ]
+    for chain in getattr(mod, "call_chains", None) or []:
+        parts.append(getattr(chain, "name", "") or "")
+        parts.append(getattr(chain, "description", "") or "")
+        parts.extend(getattr(chain, "steps", None) or [])
+    return "\n".join(parts)
+
+
+def _cited_tokens(text: str) -> set[str]:
+    out: set[str] = set()
+    for match in _TICK_OR_PATH.finditer(text or ""):
+        token = (match.group(1) or match.group(2) or "").strip()
+        if token:
+            out.add(token.split(":")[0])
+    return out
+
+
+def _adds_new_fact(text: str, walkthrough: str) -> bool:
+    extra = _cited_tokens(text) - _cited_tokens(walkthrough)
+    return bool(extra)
+
+
+def _strip_inventory_prose(text: str) -> str:
+    kept: list[str] = []
+    for line in text.splitlines():
+        if _INVENTORY_PROSE_RE.search(line):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
+def _norm_prose(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip().lower())
+
+
+def _duplicates_chain_prose(implementation: str, chains) -> bool:
+    impl = _norm_prose(implementation)
+    if not impl or not chains:
+        return False
+    blob = _norm_prose(
+        " ".join(
+            " ".join(
+                [
+                    getattr(c, "description", "") or "",
+                    *list(getattr(c, "steps", None) or []),
+                ]
+            )
+            for c in chains
+        )
+    )
+    if not blob:
+        return False
+    if impl in blob or blob in impl:
+        return True
+    impl_tokens = set(impl.split())
+    if not impl_tokens:
+        return True
+    return len(impl_tokens & set(blob.split())) / len(impl_tokens) >= 0.75
+
+
+def upgrade_legacy_module_markdown(content: str, language: str = "zh") -> str:
+    """Rewrite persisted module pages: strip JavaDoc dumps, put the flow first."""
+    if not content or "## " not in content:
+        return content
+    text = _SYMBOL_DUMP_RE.sub("", content)
+    lead, sections = _split_markdown_sections(text)
+    lead = _strip_inventory_prose(lead)
+    if not sections:
+        return (lead.rstrip() + "\n") if lead.strip() else content
+
+    lang = "zh" if normalize_wiki_lang(language) == "zh" else "en"
+    grouped: dict[str, list[tuple[str, str]]] = {key: [] for key in _MODULE_SECTION_ORDER}
+    other: list[tuple[str, str]] = []
+    for title, body in sections:
+        key = _module_section_key(title)
+        if key:
+            grouped[key].append((title, body))
+        else:
+            other.append((title, body))
+
+    chain_blob = " ".join(body for _, body in grouped["how-a-call-runs"])
+    kept_impl: list[tuple[str, str]] = []
+    for title, body in grouped["how-it-runs"]:
+        cleaned = _strip_inventory_prose(body)
+        if not cleaned.strip():
+            continue
+        if _duplicates_chain_prose(cleaned, [_SimpleChain(chain_blob)]):
+            continue
+        kept_impl.append((title, cleaned))
+    grouped["how-it-runs"] = kept_impl
+
+    out = [lead.rstrip()]
+    for key in _MODULE_SECTION_ORDER:
+        canon = _MODULE_SECTION_CANON.get(key, {}).get(lang)
+        for title, body in grouped[key]:
+            heading = canon or title
+            chunk = f"## {heading}"
+            if body.strip():
+                chunk += "\n" + body.strip("\n")
+            out.append(chunk)
+    for title, body in other:
+        chunk = f"## {title}"
+        if body.strip():
+            chunk += "\n" + body.strip("\n")
+        out.append(chunk)
+    return "\n\n".join(part for part in out if part.strip()).rstrip() + "\n"
+
+
+class _SimpleChain:
+    def __init__(self, blob: str):
+        self.description = blob
+        self.steps: list[str] = []
+
+
+def _module_section_key(title: str) -> str | None:
+    stripped = title.strip()
+    for key, aliases in _MODULE_SECTION_ALIASES.items():
+        if stripped in aliases:
+            return key
+    return None
+
+
+def _split_markdown_sections(content: str) -> tuple[str, list[tuple[str, str]]]:
+    parts = re.split(r"(?m)^## ", content)
+    lead = parts[0]
+    sections: list[tuple[str, str]] = []
+    for part in parts[1:]:
+        title, _, rest = part.partition("\n")
+        sections.append((title.strip(), rest))
+    return lead, sections

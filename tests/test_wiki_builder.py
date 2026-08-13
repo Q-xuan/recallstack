@@ -3,17 +3,19 @@ from repowiki.core.models import (
     ArchitectureDiagram,
     CallChain,
     Citation,
+    FileDoc,
     FileInfo,
     ModuleDoc,
     ProjectContext,
     ProjectOverview,
     ReadingGuide,
     ReadingStep,
+    Symbol,
     TermTip,
     WikiData,
 )
 from repowiki.core.modules import ROOT_NAME, group_into_modules
-from repowiki.core.wiki_builder import WikiBuilder
+from repowiki.core.wiki_builder import WikiBuilder, upgrade_legacy_module_markdown
 
 _FILLER = "x = 1\n" * 200
 
@@ -101,19 +103,31 @@ def test_module_page_renders_deep_sections_when_present():
                     )
                 ],
                 edge_cases=["main has no arguments"],
+                files=[
+                    FileDoc(
+                        path="app/main.py",
+                        purpose="happy path enters here",
+                        key_symbols=[Symbol(name="spawn", kind="function")],
+                    )
+                ],
                 citations=[Citation(path="app/main.py", start_line=1, symbol="main")],
             )
         ]
     )
     wiki = WikiBuilder().build(project, data, graph)
     content = wiki.get_page("modules/app").content
-    assert "## Implementation" in content
+    assert "## How it actually runs" in content
     assert "main() returns 1." in content
-    assert "## Key Call Chains" in content
+    assert "## How a call runs" in content
     assert "### boot" in content
-    assert "## Edge Cases" in content
+    assert "## Failures and edges" in content
     assert "## Source Evidence" in content
     assert "`app/main.py:1`" in content
+    assert content.index("## How a call runs") < content.index("## Related source")
+    assert content.index("## How a call runs") < content.index("## How it actually runs")
+    assert "## Implementation" not in content
+    assert "## Key Call Chains" not in content
+    assert "`spawn` (function)" not in content
 
 
 def test_module_page_omits_empty_deep_sections():
@@ -121,8 +135,11 @@ def test_module_page_omits_empty_deep_sections():
     assert names == ["solo"]
     content = wiki.get_page("modules/solo").content
     assert "## Implementation" not in content
+    assert "## How it actually runs" not in content
     assert "## Key Call Chains" not in content
+    assert "## How a call runs" not in content
     assert "## Edge Cases" not in content
+    assert "## Failures and edges" not in content
     assert "## Source Evidence" not in content
 
 
@@ -254,6 +271,7 @@ def test_zh_headings_term_tips_and_unchanged_paths():
                     CallChain(name="boot", description="启动", steps=["run()"], files=["crates/lib.py"])
                 ],
                 edge_cases=["缺配置时失败"],
+                files=[FileDoc(path="crates/lib.py", purpose="快乐路径上的 lib")],
                 citations=[Citation(path="crates/lib.py", start_line=1)],
                 term_tips=[TermTip(term="ACP", tip="本仓库的 agent 协议")],
             )
@@ -279,14 +297,19 @@ def test_zh_headings_term_tips_and_unchanged_paths():
     assert page.title == "crates"
     content = page.content
     assert content.startswith("# crates")
-    assert "## 实现细节" in content
-    assert "## 关键调用链" in content
-    assert "## 边界条件" in content
+    assert "## 一次调用怎么走" in content
+    assert "## 这条链路怎么转" in content
+    assert "## 失败与边界" in content
+    assert "## 相关源码" in content
     assert "## 源码证据" in content
     assert "## 术语小贴士" in content
     assert "**ACP**" in content
+    assert "## 实现细节" not in content
+    assert "## 关键调用链" not in content
     assert "## Implementation" not in content
     assert "## Key Call Chains" not in content
+    assert content.index("## 一次调用怎么走") < content.index("## 相关源码")
+    assert content.index("## 一次调用怎么走") < content.index("## 这条链路怎么转")
 
     crates = next(
         c
@@ -320,3 +343,125 @@ def test_concept_section_title_follows_content_lang(monkeypatch):
     monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "en")
     en = append_concept_pages(wiki_en, [draft])
     assert en.sidebar[-1].title == "Concepts"
+
+
+def test_module_page_skips_javadoc_symbol_dump_and_puts_flow_first():
+    project = _project(
+        {
+            "crates/codegen/ptyctl/src/lib.rs": "pub fn spawn() {}\n",
+            "crates/codegen/ptyctl/src/pty.rs": "pub struct PtyHandle;\n",
+        }
+    )
+    graph = DependencyGraph.build_from_project(project)
+    data = WikiData(
+        modules=[
+            ModuleDoc(
+                name="crates/codegen/ptyctl",
+                purpose="无头 PTY 控制器",
+                description="一次 WebSocket 会话从 axum 进到 PtyHandle 再读屏。",
+                implementation_details=(
+                    "`crates/codegen/ptyctl/src/pty.rs:1` 的 `PtyHandle` 接住会话，"
+                    "把 PTY 字节拷回 socket。"
+                ),
+                call_chains=[
+                    CallChain(
+                        name="one session",
+                        description="request to PTY bytes",
+                        steps=[
+                            "axum handler receives the websocket session",
+                            "PtyHandle opens the child PTY and returns a handle",
+                            "read loop copies screen bytes back to the client",
+                        ],
+                    )
+                ],
+                files=[
+                    FileDoc(
+                        path="crates/codegen/ptyctl/src/lib.rs",
+                        purpose="crate root",
+                        key_symbols=[
+                            Symbol(name="spawn", kind="function"),
+                            Symbol(name="resize", kind="function"),
+                            Symbol(name="is_alive", kind="function"),
+                        ],
+                    )
+                ],
+            )
+        ]
+    )
+    content = WikiBuilder().build(project, data, graph).get_page("modules/crates/codegen/ptyctl").content
+    assert "`spawn` (function)" not in content
+    assert "`resize` (function)" not in content
+    assert "`is_alive` (function)" not in content
+    assert "## How a call runs" in content
+    assert "## Related source" in content
+    assert content.index("## How a call runs") < content.index("## Related source")
+    assert "flowchart TD" in content
+    assert "```mermaid" in content
+
+
+def test_upgrade_legacy_module_markdown_strips_methods_and_reorders():
+    old = """# crates/codegen/ptyctl
+
+> 无头 PTY 控制器
+
+intro
+
+## 实现细节
+
+The entry point is lib.rs. Submodules are keys, pty, server.
+
+## 文件
+
+- `lib.rs` — crate root
+  - `spawn` (function)
+  - `resize` (function)
+  - `is_alive` (function)
+
+## 关键调用链
+
+### session
+
+1. axum handler receives the websocket session
+2. PtyHandle opens the child PTY
+3. read loop copies screen bytes back
+"""
+    upgraded = upgrade_legacy_module_markdown(old, language="zh")
+    assert "`spawn` (function)" not in upgraded
+    assert "`resize` (function)" not in upgraded
+    assert "## 一次调用怎么走" in upgraded
+    assert "## 相关源码" in upgraded
+    assert "## 关键调用链" not in upgraded
+    assert upgraded.index("## 一次调用怎么走") < upgraded.index("## 相关源码")
+    assert "The entry point is lib.rs" not in upgraded
+    assert "Submodules are" not in upgraded
+
+
+def test_fallback_module_markdown_is_handbook_not_inventory(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    from recallstack.learning.wiki_generator import build_deterministic_wiki_data
+
+    project = _project(
+        {
+            "app/main.py": "def main():\n    from app.core import boot\n    boot()\n",
+            "app/core.py": "def boot():\n    return 1\n",
+        }
+    )
+    graph = DependencyGraph.build_from_project(project)
+    data = build_deterministic_wiki_data(project, graph, [])
+    wiki = WikiBuilder().build(project, data, graph, language="zh")
+    page = wiki.get_page("modules/app")
+    assert page is not None
+    content = page.content
+    assert "## 一次调用怎么走" in content
+    assert "## 相关源码" in content
+    assert content.index("## 一次调用怎么走") < content.index("## 相关源码")
+    assert "`spawn` (function)" not in content
+    assert "入口文件" not in content
+    assert "源码文件" not in content
+    assert "Submodules are" not in content
+    assert "The entry point is lib.rs" not in content
+    assert any(f.key_symbols == [] for f in data.modules[0].files) or not data.modules[0].files
+    for mod in data.modules:
+        for f in mod.files:
+            assert f.key_symbols == []
+

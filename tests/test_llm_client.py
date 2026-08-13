@@ -81,11 +81,21 @@ def test_complete_omits_thinking_when_enabled(monkeypatch):
 
 def test_zh_prompts_ask_for_handbook_prose_and_term_tips():
     overview = build_overview_prompt("tree", "files", "zh")
-    assert "内部手册" in overview[0]["content"]
+    assert "手册正文" in overview[0]["content"]
     assert "term_tips" in overview[-1]["content"]
     arch = build_architecture_prompt("tree", "files", "zh")
     assert "PageRank file dump" in arch[-1]["content"]
     assert "term_tips" in arch[-1]["content"]
     deep = build_module_prompt("app", "src", "demo", "zh", depth="deep")
     assert "term_tips is REQUIRED" in deep[-1]["content"]
-    assert "`xai-grok-pager`" in deep[0]["content"]
+    assert "`PtyHandle`" in deep[0]["content"]
+    assert "接口清单" in deep[0]["content"]
+    user = deep[-1]["content"]
+    assert "The entry point is lib.rs" in user
+    assert "is_alive" in user
+    assert "Heaviest modules" in user
+    assert "call_chains: REQUIRED" in user
+    assert "Omit files[].key_symbols" in user
+    standard = build_module_prompt("app", "src", "demo", "zh", depth="standard")
+    assert "Walkthrough + at least one call_chain" in standard[-1]["content"]
+    assert "key_symbols\": [{\"name\": \"func_name\"" not in standard[-1]["content"]

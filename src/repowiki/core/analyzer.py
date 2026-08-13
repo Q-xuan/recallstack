@@ -14,13 +14,12 @@ from repowiki.core.cite_check import (
     verify_module,
     verify_wiki_data,
 )
-from repowiki.core.context_pack import harvest_symbols, pack_key_files, pack_module_context
+from repowiki.core.context_pack import pack_key_files, pack_module_context
 from repowiki.core.graph import DependencyGraph
 from repowiki.core.models import (
     ArchitectureDiagram,
     Citation,
     Component,
-    FileDoc,
     FileInfo,
     ModuleDoc,
     ModuleOutline,
@@ -32,6 +31,7 @@ from repowiki.core.models import (
     WikiData,
     WikiOutline,
 )
+from repowiki.core.module_handbook import fallback_module_doc
 from repowiki.core.modules import group_into_modules
 from repowiki.core.outline import build_deterministic_outline, merge_outline
 from repowiki.llm.client import LLMClient
@@ -312,7 +312,7 @@ class Analyzer:
                 except Exception:
                     pass
 
-            fallback = self._fallback_module_doc(name, files, plan)
+            fallback = self._fallback_module_doc(name, files, plan, graph)
             if not self._llm_enabled():
                 return fallback
 
@@ -643,40 +643,14 @@ class Analyzer:
         name: str,
         files: list[FileInfo],
         plan: ModuleOutline | None,
+        graph: DependencyGraph | None = None,
     ) -> ModuleDoc:
-        file_docs = []
-        for f in files[:16]:
-            content = f.content or f.preview or ""
-            file_docs.append(
-                FileDoc(
-                    path=f.path,
-                    purpose=("入口文件" if self._lang() == "zh" else "Entrypoint")
-                    if f.is_entrypoint
-                    else "",
-                    key_symbols=harvest_symbols(content),
-                )
-            )
-        notes = (plan.notes if plan else "") or ""
-        if self._lang() == "zh":
-            purpose = notes or f"负责 `{name}` 这一层的职责边界"
-            description = (
-                f"`{name}` 是仓库里的一块职责边界。先看它对外承诺什么、和谁协作；"
-                "下面的文件列表只是扫描证据，不是正文。"
-            )
-        else:
-            purpose = notes or f"Owns the `{name}` package boundary"
-            description = (
-                f"`{name}` is a directory boundary. This page states what the "
-                "package is for and how it connects; the file list is evidence, "
-                "not the article."
-            )
-        return ModuleDoc(
-            name=name,
-            purpose=purpose,
-            description=description,
-            files=file_docs,
-            citations=[Citation(path=f.path) for f in files[:8]],
-            term_tips=_generic_term_tips(self._lang()),
+        return fallback_module_doc(
+            name,
+            files,
+            language=self._lang(),
+            graph=graph,
+            notes=(plan.notes if plan else "") or "",
         )
 
 

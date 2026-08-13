@@ -25,6 +25,7 @@ from recallstack.domain.schemas import (
     WikiPageOut,
     WikiSidebarItemOut,
 )
+from recallstack.learning.i18n import content_lang
 from recallstack.learning.learning_contract import (
     CORE_PATH_CAP,
     is_filler_slug_title,
@@ -32,6 +33,7 @@ from recallstack.learning.learning_contract import (
     step_task_for_slug,
     upgrade_legacy_concept_markdown,
 )
+from repowiki.core.wiki_builder import upgrade_legacy_module_markdown
 
 
 def repo_out(repo: Repository) -> RepositoryOut:
@@ -116,6 +118,8 @@ def wiki_out(
                 slug=slug,
                 title=(concept.title if concept else p.get("title")) or "",
             )
+        elif page_id.startswith("modules/"):
+            content = upgrade_legacy_module_markdown(content, language=content_lang())
         pages.append(
             WikiPageOut(
                 id=page_id,

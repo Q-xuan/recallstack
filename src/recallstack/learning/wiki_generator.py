@@ -24,8 +24,6 @@ from repowiki.core.graph import DependencyGraph
 from repowiki.core.models import (
     ArchitectureDiagram,
     Component,
-    FileDoc,
-    ModuleDoc,
     ProjectContext,
     ProjectOverview,
     ReadingGuide,
@@ -33,7 +31,8 @@ from repowiki.core.models import (
     TermTip,
     WikiData,
 )
-from repowiki.core.modules import ROOT_NAME, group_into_modules
+from repowiki.core.module_handbook import fallback_module_doc
+from repowiki.core.modules import group_into_modules
 from repowiki.core.wiki_builder import Wiki, WikiBuilder, WikiPage
 
 logger = logging.getLogger(__name__)
@@ -124,38 +123,15 @@ def build_deterministic_wiki_data(
     # one name across all three and its page can find its own edges.
     modules_map = group_into_modules(project.files)
 
-    module_docs: list[ModuleDoc] = []
-    for name, files in sorted(modules_map.items(), key=lambda x: (-len(x[1]), x[0])):
-        is_root = name == ROOT_NAME
-        file_docs = [
-            FileDoc(
-                path=f.path,
-                purpose=t("Entrypoint", "入口文件") if getattr(f, "is_entrypoint", False) else t("Source file", "源码文件"),
-                key_symbols=[],
-            )
-            for f in files[:12]
-        ]
-        module_docs.append(
-            ModuleDoc(
-                name=name,
-                purpose=t(
-                    f"Owns the `{name}` package boundary",
-                    f"负责 `{name}` 这一层的职责边界",
-                ),
-                description=(
-                    t(
-                        "Loose root files (README, config, etc.). Read them for how the repo is started and configured, not as a file dump.",
-                        "仓库根目录下的散落文件（README、配置等）。用来看仓库怎么启动、怎么配置，不要当成文件清单。",
-                    )
-                    if is_root
-                    else t(
-                        f"`{name}/` is a directory boundary. This page states what the package is for and how it connects; the file list is evidence, not the article.",
-                        f"`{name}/` 是一层目录边界。本页先讲这包负责什么、和谁协作；文件列表只是证据，不是正文。",
-                    )
-                ),
-                files=file_docs,
-            )
+    module_docs = [
+        fallback_module_doc(
+            name,
+            files,
+            language=content_lang(),
+            graph=graph,
         )
+        for name, files in sorted(modules_map.items(), key=lambda x: (-len(x[1]), x[0]))
+    ]
 
     components = [
         Component(
