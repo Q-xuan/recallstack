@@ -548,6 +548,8 @@ def _jake_grok_store() -> dict[str, str]:
         "crates/codegen/xai-grok-pager/src/main.rs": (
             "fn main() {\n    xai_grok_pager::boot();\n}\n"
         ),
+        "crates/codegen/ptyctl-cli/src/main.rs": _rs_with_def_at(12, "fn main() {"),
+        "crates/codegen/protoc-gen-xai/src/main.rs": "fn main() {}\n",
         "crates/codegen/xai-grok-agent/src/agent.rs": (
             "//! Agent types for the grok crate.\n\n"
             "pub struct Agent;\n\n"
@@ -572,6 +574,7 @@ def _jake_grok_store() -> dict[str, str]:
         "crates/codegen/xai-agent-lifecycle/src/runtime.rs": _rs_with_def_at(
             22, "pub struct AgentRuntime {"
         ),
+        "crates/agent/src/runtime.rs": "pub struct AgentRuntime;\n",
         "crates/codegen/xai-grok-agent/src/prompt/agents_md.rs": (
             "//! prompt\n\npub fn load_agents_md() {}\n"
         ),
@@ -684,6 +687,8 @@ def test_junk_and_trampoline_never_used_when_store_has_rust_def():
     assert "Cargo.toml" not in boot
     assert boot.endswith(" main")
     assert boot.startswith("crates/codegen/xai-grok-pager/src/main.rs:")
+    assert "ptyctl" not in boot
+    assert "protoc" not in boot
 
 
 def test_path_out_get_upgrade_uses_pager_start_turn_from_store(monkeypatch):
@@ -772,3 +777,116 @@ def test_load_version_file_texts_from_data_dir_when_cwd_has_none(tmp_path, monke
         file_texts=texts,
     )
     assert chip == "crates/codegen/xai-grok-pager/src/app/agent.rs:791 start_turn"
+
+
+def test_entry_and_boot_skips_ptyctl_when_grok_pager_exists():
+    store = _jake_grok_store()
+    chip = path_evidence_chip(
+        ConceptDraft(
+            slug="entry-and-boot",
+            title="入口与启动",
+            wiki_page_id="topics/entry-and-boot",
+            source_references=[
+                SourceReference(
+                    path="crates/codegen/ptyctl-cli/src/main.rs",
+                    start_line=12,
+                    symbol="main",
+                )
+            ],
+        ),
+        file_texts=store,
+    )
+    assert chip == "crates/codegen/xai-grok-pager/src/main.rs:1 main"
+    assert "ptyctl" not in chip
+    assert "protoc" not in chip
+
+
+def test_entry_and_boot_uses_grok_trampoline_not_ptyctl_without_pager_rs():
+    store = {
+        "crates/codegen/xai-grok-pager/npm/grok/bin/grok": (
+            "#!/usr/bin/env node\nrequire('../src');\n"
+        ),
+        "crates/codegen/ptyctl-cli/src/main.rs": _rs_with_def_at(12, "fn main() {"),
+        "crates/codegen/protoc-gen-xai/src/main.rs": "fn main() {}\n",
+    }
+    chip = path_evidence_chip(
+        ConceptDraft(
+            slug="entry-and-boot",
+            title="入口与启动",
+            wiki_page_id="topics/entry-and-boot",
+            source_references=[
+                SourceReference(
+                    path="crates/codegen/xai-grok-pager/npm/grok/bin/grok",
+                    start_line=1,
+                )
+            ],
+        ),
+        file_texts=store,
+    )
+    assert chip is not None
+    assert "ptyctl" not in chip
+    assert "protoc" not in chip
+    assert "npm/grok/bin/grok" in chip
+
+
+def test_agent_runtime_prefers_lifecycle_crate_over_crates_agent():
+    store = _jake_grok_store()
+    chip = path_evidence_chip(
+        ConceptDraft(
+            slug="agent-runtime",
+            title="Agent Runtime",
+            wiki_page_id="topics/agent-runtime",
+            source_references=[
+                SourceReference(path="crates/agent/src/runtime.rs", start_line=1)
+            ],
+        ),
+        file_texts=store,
+    )
+    assert chip == "crates/codegen/xai-agent-lifecycle/src/runtime.rs:22 AgentRuntime"
+    assert "crates/agent/" not in chip
+
+
+def test_toolbridge_impl_line_not_one():
+    store = {
+        "crates/codegen/xai-grok-agent/src/tool_bridge.rs": _rs_with_def_at(
+            55, "impl ToolBridge {"
+        )
+    }
+    chip = path_evidence_chip(
+        ConceptDraft(
+            slug="tool-system",
+            title="工具层",
+            wiki_page_id="topics/tool-system",
+            source_references=[
+                SourceReference(
+                    path="crates/codegen/xai-grok-agent/src/tool_bridge.rs",
+                    start_line=1,
+                )
+            ],
+        ),
+        file_texts=store,
+    )
+    assert chip == "crates/codegen/xai-grok-agent/src/tool_bridge.rs:55 ToolBridge"
+
+
+def test_pager_struct_line_not_one():
+    store = {
+        "crates/codegen/xai-grok-pager/src/pager.rs": _rs_with_def_at(
+            88, "pub struct Pager {"
+        )
+    }
+    chip = path_evidence_chip(
+        ConceptDraft(
+            slug="terminal-ui",
+            title="Terminal UI",
+            wiki_page_id="topics/terminal-ui",
+            source_references=[
+                SourceReference(
+                    path="crates/codegen/xai-grok-pager/src/pager.rs",
+                    start_line=1,
+                )
+            ],
+        ),
+        file_texts=store,
+    )
+    assert chip == "crates/codegen/xai-grok-pager/src/pager.rs:88 Pager"

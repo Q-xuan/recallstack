@@ -8,6 +8,7 @@ from typing import Any
 
 from recallstack.domain.schemas import ConceptDraft, SourceReference
 from recallstack.learning.i18n import t
+from repowiki.core.topics import is_entry_boot_file, is_toolchain_boot_file
 
 logger = logging.getLogger(__name__)
 
@@ -89,8 +90,14 @@ _EVIDENCE_HINTS: dict[str, tuple[tuple[str, ...], str]] = {
     ),
     "call-flow": (("app/agent.rs", "turn.rs", "app.rs", "loop.rs"), "start_turn"),
     "runtime-loop": (("app/agent.rs", "turn.rs", "app.rs", "loop.rs"), "start_turn"),
-    "entry-and-boot": (("main.rs", "lib.rs", "app.rs", "boot.rs", "bin/grok.rs", "grok.rs"), "main"),
-    "application-entry": (("main.rs", "lib.rs", "app.rs", "boot.rs", "main.py"), "main"),
+    "entry-and-boot": (
+        ("bin/grok.rs", "grok.rs", "main.rs", "lib.rs", "boot.rs", "connect.rs", "app.rs"),
+        "main",
+    ),
+    "application-entry": (
+        ("bin/grok.rs", "grok.rs", "main.rs", "lib.rs", "boot.rs", "connect.rs", "main.py"),
+        "main",
+    ),
     "tool-system": (("tool_bridge.rs", "bridge.rs"), "ToolBridge"),
     "terminal-ui": (("pager.rs",), "Pager"),
     "tui-pager": (("pager.rs",), "Pager"),
@@ -149,8 +156,52 @@ _JUNK_BASENAMES = frozenset(
 )
 _JUNK_EXTS = (".toml", ".json", ".sh", ".bash", ".zsh")
 _WEAK_SYMBOLS = frozenset({"main", "new", "run", "init", "start"})
+_ENTRY_SYMBOLS = ("main", "connect", "boot")
+_PTY_SLUGS = frozenset({"pty-control", "pty"})
 _SRC_EXT = (".rs", ".py", ".go")
-_DEFN_KW = r"(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|struct|enum|trait|type|class|def)\s+"
+_DEFN_KW = (
+    r"(?:pub(?:\([^)]*\))?\s+)?"
+    r"(?:async\s+)?"
+    r"(?:fn|struct|enum|trait|type|class|def|impl(?:\s*<[^>]*>)?)\s+"
+)
+
+# entry-and-boot is grok/pager boot — never ptyctl-cli or protoc.
+_SLUG_DENY_NEEDLES: dict[str, tuple[str, ...]] = {
+    "entry-and-boot": ("ptyctl", "protoc", "protobuf", "dotslash", "/proto/"),
+    "application-entry": ("ptyctl", "protoc", "protobuf", "dotslash", "/proto/"),
+    "agent-loop": ("ptyctl", "protoc"),
+    "tool-system": ("ptyctl", "protoc"),
+    "terminal-ui": ("ptyctl", "protoc"),
+    "tui-pager": ("ptyctl", "protoc"),
+    "context-assembly": ("ptyctl", "protoc"),
+    "agent-runtime": ("ptyctl", "protoc"),
+    "system-prompt": ("ptyctl", "protoc"),
+}
+
+# When any matching path exists in the store, drop the rest.
+_SLUG_PREFER_NEEDLES: dict[str, tuple[str, ...]] = {
+    "entry-and-boot": (
+        "xai-grok-pager",
+        "xai-grok-agent",
+        "/npm/grok/",
+        "/bin/grok",
+        "crates/tui",
+    ),
+    "application-entry": (
+        "xai-grok-pager",
+        "xai-grok-agent",
+        "/npm/grok/",
+        "/bin/grok",
+        "crates/tui",
+    ),
+    "agent-loop": ("xai-grok-pager", "xai-grok-agent", "crates/tui"),
+    "tool-system": ("tool_bridge", "xai-grok-agent", "xai-grok-tools"),
+    "terminal-ui": ("xai-grok-pager", "/pager.rs", "crates/tui"),
+    "tui-pager": ("xai-grok-pager", "/pager.rs", "crates/tui"),
+    "context-assembly": ("xai-chat-state", "conversation_util"),
+    "agent-runtime": ("xai-agent-lifecycle",),
+    "system-prompt": ("xai-grok-agent", "agents_md", "/prompt/"),
+}
 
 _SOURCE_CHIP_RE = re.compile(
     r"(?i)^[\w./\-]+(?:\.[A-Za-z0-9]+)+(?::\d+(?:-\d+)?)?$"
@@ -735,6 +786,58 @@ def _is_js_trampoline(path: str) -> bool:
     return False
 
 
+def _is_grok_trampoline(path: str) -> bool:
+    if not _is_js_trampoline(path):
+        return False
+    low = path.replace("\\", "/").lower()
+    return any(tok in low for tok in ("xai-grok-pager", "/npm/grok/", "/bin/grok"))
+
+
+def _blocked_for_slug(path: str, slug: str) -> bool:
+    """Slug allow/deny: entry-and-boot is grok/pager, never ptyctl-cli/protoc."""
+    raw = (path or "").replace("\\", "/")
+    if not raw:
+        return True
+    low = raw.lower()
+    if slug not in _PTY_SLUGS:
+        if "ptyctl" in low:
+            return True
+        for needle in _SLUG_DENY_NEEDLES.get(slug, ()):
+            if needle in low:
+                return True
+    if slug in {"entry-and-boot", "application-entry"}:
+        if _is_grok_trampoline(raw):
+            return False
+        if is_toolchain_boot_file(raw):
+            return True
+        return not is_entry_boot_file(raw)
+    return False
+
+
+def _prefer_score(path: str, slug: str) -> int:
+    low = path.replace("\\", "/").lower()
+    for i, tok in enumerate(_SLUG_PREFER_NEEDLES.get(slug, ())):
+        if tok in low:
+            return 80 - min(i, 12) * 3
+    return 0
+
+
+def _narrow_preferred_paths(
+    paths: list[str],
+    slug: str,
+    store: dict[str, str] | None = None,
+) -> list[str]:
+    needles = _SLUG_PREFER_NEEDLES.get(slug, ())
+    if not needles or not paths:
+        return paths
+    if not store:
+        return paths
+    if not any(any(tok in k.replace("\\", "/").lower() for tok in needles) for k in store):
+        return paths
+    matching = [p for p in paths if any(tok in p.replace("\\", "/").lower() for tok in needles)]
+    return matching if matching else paths
+
+
 def _crate_dir(path: str) -> str:
     parts = [p for p in path.replace("\\", "/").split("/") if p]
     for root in ("crates", "packages", "apps"):
@@ -786,7 +889,11 @@ def _line_defines_symbol(src_line: str, symbol: str) -> bool:
     stripped = src_line.strip()
     if stripped.startswith(("//", "/*", "*", "#", "//!", "///")):
         return False
-    return bool(re.search(_DEFN_KW + re.escape(symbol) + r"\b", src_line))
+    if re.match(r"(?:pub\s+)?use\b", stripped):
+        return False
+    if re.search(_DEFN_KW + re.escape(symbol) + r"\b", src_line):
+        return True
+    return bool(re.search(r"\bimpl\b.+\bfor\s+" + re.escape(symbol) + r"\b", src_line))
 
 
 def _definition_line_in_text(text: str, symbol: str) -> int:
@@ -796,6 +903,30 @@ def _definition_line_in_text(text: str, symbol: str) -> int:
         if _line_defines_symbol(line, symbol):
             return i
     return 0
+
+
+def _occurrence_line_in_text(text: str, symbol: str) -> int:
+    """First non-comment source line that names ``symbol``, else 0."""
+    name = (symbol or "").strip()
+    if not text or len(name) < 2:
+        return 0
+    pat = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(name) + r"(?![A-Za-z0-9_])")
+    for i, line in enumerate(text.splitlines(), 1):
+        stripped = line.strip()
+        if stripped.startswith(("//", "/*", "*", "#")):
+            continue
+        if pat.search(line):
+            return i
+    return 0
+
+
+def _best_symbol_line(text: str, symbol: str) -> tuple[int, bool]:
+    """Return (line, is_definition). Line 0 means not found."""
+    defn = _definition_line_in_text(text, symbol)
+    if defn:
+        return defn, True
+    occ = _occurrence_line_in_text(text, symbol)
+    return occ, False
 
 
 def _is_production_src(path: str, *, slug: str = "") -> bool:
@@ -830,23 +961,35 @@ def _pick_definition_in_store(
     hits: list[tuple[int, str, int]] = []
     for path, text in file_texts.items():
         norm = path.replace("\\", "/")
-        if not _is_production_src(norm, slug=slug):
+        if not _is_production_src(norm, slug=slug) or _blocked_for_slug(norm, slug):
             continue
-        found = _definition_line_in_text(text, name)
-        if not found:
+        defn, is_defn = _best_symbol_line(text, name)
+        if not defn:
             continue
+        if not is_defn:
+            hinted = any(suffix and norm.endswith(suffix) for suffix in suffixes)
+            if not hinted and _prefer_score(norm, slug) <= 0:
+                continue
         score = 50 if norm.lower().endswith(".rs") else 20
+        score += 120 if is_defn else 30
         if "/src/" in f"/{norm.lower()}/":
             score += 10
+        score += _prefer_score(norm, slug)
         for i, suffix in enumerate(suffixes):
             if suffix and norm.endswith(suffix):
                 score += 40 - min(i, 12)
                 break
-        hits.append((score, norm, found))
+        hits.append((score, norm, defn))
     if not hits:
         return None
-    hits.sort(key=lambda item: (-item[0], item[1]))
-    _score, path, line = hits[0]
+    preferred = [
+        item
+        for item in hits
+        if any(tok in item[1].lower() for tok in _SLUG_PREFER_NEEDLES.get(slug, ()))
+    ]
+    ranked = preferred or hits
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    _score, path, line = ranked[0]
     return path, line
 
 
@@ -862,6 +1005,8 @@ def _candidate_paths(
         if not path or path in seen:
             return
         if is_junk_evidence_path(path, slug=slug):
+            return
+        if _blocked_for_slug(path, slug):
             return
         seen.append(path)
 
@@ -898,9 +1043,11 @@ def _score_path(
     score = 0
     line = 1
     use_sym = symbol
+    in_refs = False
     for ref in refs:
         if ref.path.replace("\\", "/") != path:
             continue
+        in_refs = True
         if ref.start_line and ref.start_line > 1:
             line = ref.start_line
             score += 8
@@ -908,23 +1055,28 @@ def _score_path(
         score += 50
     elif path.endswith((".py", ".go")):
         score += 25
-    if _is_js_trampoline(path):
+    if _is_js_trampoline(path) and not _is_grok_trampoline(path):
         score -= 50
+    elif _is_grok_trampoline(path):
+        score -= 10
     low = f"/{path.lower()}/"
     if "/tests/" in low or "/test/" in low:
         score -= 25
+    score += _prefer_score(path, slug)
     for i, suffix in enumerate(suffixes):
         if path.endswith(suffix):
             score += 40 - min(i, 12)
             break
     text = _file_text_for(file_texts, path)
+    if not text and not in_refs:
+        score -= 80
     if text and symbol:
-        found = _definition_line_in_text(text, symbol)
-        if found:
-            line = found
-            score += 120
+        line_no, is_defn = _best_symbol_line(text, symbol)
+        if line_no:
+            line = line_no
+            score += 120 if is_defn else 40
         else:
-            # File is in the store and does not define the hint — never stamp it.
+            # File is in the store and does not name the hint — never stamp it.
             use_sym = ""
             score -= 50
     elif text and not symbol:
@@ -934,6 +1086,74 @@ def _score_path(
             use_sym = found_sym
             score += 15
     return score, line, use_sym
+
+
+def _pick_entry_or_weak(
+    store: dict[str, str],
+    refs: list[SourceReference],
+    slug: str,
+    suffixes: tuple[str, ...],
+    symbol: str,
+) -> tuple[str, int, str] | None:
+    """Grok/pager boot for entry-and-boot; never the first random ``fn main``."""
+    candidates = _candidate_paths(refs, slug, store)
+    if slug in {"entry-and-boot", "application-entry"}:
+        for path in store:
+            norm = path.replace("\\", "/")
+            if _blocked_for_slug(norm, slug) or is_junk_evidence_path(norm, slug=slug):
+                continue
+            if norm in candidates:
+                continue
+            if is_entry_boot_file(norm) or _is_grok_trampoline(norm):
+                candidates.append(norm)
+        names = _ENTRY_SYMBOLS
+    else:
+        names = (symbol,) if symbol else ()
+
+    scored: list[tuple[int, str, int, str]] = []
+    for path in candidates:
+        if _blocked_for_slug(path, slug) or is_junk_evidence_path(path, slug=slug):
+            continue
+        if _is_js_trampoline(path) and not _is_grok_trampoline(path):
+            continue
+        text = _file_text_for(store, path)
+        if _is_grok_trampoline(path):
+            scored.append((15 + _prefer_score(path, slug), path, 1, ""))
+            continue
+        if not text:
+            continue
+        use_sym = ""
+        line = 0
+        for fn in names:
+            found = _definition_line_in_text(text, fn)
+            if found:
+                line = found
+                use_sym = fn
+                break
+        if not line:
+            continue
+        score = 50 if path.endswith(".rs") else 10
+        score += _prefer_score(path, slug)
+        if use_sym == "main":
+            score += 20
+        if path.endswith("main.rs") or path.endswith("bin/grok.rs"):
+            score += 15
+        for i, suffix in enumerate(suffixes):
+            if suffix and path.endswith(suffix):
+                score += 12 - min(i, 8)
+                break
+        scored.append((score, path, line, use_sym))
+
+    if not scored:
+        return None
+    rust = [item for item in scored if item[1].endswith(_SRC_EXT)]
+    pool = rust if rust else scored
+    preferred_paths = _narrow_preferred_paths([item[1] for item in pool], slug, store)
+    preferred = [item for item in pool if item[1] in set(preferred_paths)]
+    pool = preferred or pool
+    pool.sort(key=lambda item: (-item[0], item[1]))
+    _score, path, line, use_sym = pool[0]
+    return path, line, use_sym
 
 
 def path_evidence_chip(
@@ -959,7 +1179,8 @@ def path_evidence_chip(
         logger.debug("learning-path evidence: empty scan store for slug=%s", slug)
 
     # Definition-first: if the hint is not in the topic ref, search every
-    # production *.rs in version_files. Weak names like ``main`` stay local.
+    # production *.rs in version_files. Weak names like ``main`` stay on
+    # slug-allowed files (grok/pager boot, never ptyctl-cli).
     if symbol and store and symbol.lower() not in _WEAK_SYMBOLS:
         hit = _pick_definition_in_store(store, symbol, slug, suffixes)
         if hit:
@@ -971,17 +1192,14 @@ def path_evidence_chip(
             len(store),
         )
     elif symbol and store and symbol.lower() in _WEAK_SYMBOLS:
-        for path in _candidate_paths(refs, slug, store):
-            if _is_js_trampoline(path) or is_junk_evidence_path(path, slug=slug):
-                continue
-            found = _definition_line_in_text(_file_text_for(store, path), symbol)
-            if found:
-                return _format_path_chip(path, found, symbol)
+        hit = _pick_entry_or_weak(store, refs, slug, suffixes, symbol)
+        if hit:
+            return _format_path_chip(hit[0], hit[1], hit[2])
 
     candidates = _candidate_paths(refs, slug, file_texts)
     scored: list[tuple[int, str, int, str]] = []
     for path in candidates:
-        if is_junk_evidence_path(path, slug=slug):
+        if is_junk_evidence_path(path, slug=slug) or _blocked_for_slug(path, slug):
             continue
         score, line, use_sym = _score_path(
             path,
@@ -995,16 +1213,30 @@ def path_evidence_chip(
 
     if not scored:
         return None
-    scored.sort(key=lambda item: (-item[0], item[1]))
-    _score, path, line, use_sym = scored[0]
-    if is_junk_evidence_path(path, slug=slug) or _is_js_trampoline(path):
-        rust = next((item for item in scored if item[1].endswith(_SRC_EXT)), None)
-        if rust is None:
+    preferred_paths = _narrow_preferred_paths([item[1] for item in scored], slug, file_texts)
+    preferred = [item for item in scored if item[1] in set(preferred_paths)]
+    pool = preferred or scored
+    rust = [item for item in pool if item[1].endswith(_SRC_EXT)]
+    if rust:
+        pool = rust
+    pool.sort(key=lambda item: (-item[0], item[1]))
+    _score, path, line, use_sym = pool[0]
+    if _is_js_trampoline(path) and not _is_grok_trampoline(path):
+        rust_hit = next((item for item in pool if item[1].endswith(_SRC_EXT)), None)
+        if rust_hit is None:
             return None
-        _score, path, line, use_sym = rust
-    if _is_js_trampoline(path) and any(item[1].endswith(".rs") for item in scored):
-        rust = next(item for item in scored if item[1].endswith(".rs"))
-        _score, path, line, use_sym = rust
+        _score, path, line, use_sym = rust_hit
+    elif _is_grok_trampoline(path):
+        rust_hit = next(
+            (
+                item
+                for item in pool
+                if item[1].endswith(_SRC_EXT) and not _blocked_for_slug(item[1], slug)
+            ),
+            None,
+        )
+        if rust_hit is not None:
+            _score, path, line, use_sym = rust_hit
     return _format_path_chip(path, line, use_sym)
 
 
