@@ -136,7 +136,9 @@ def build_outline_prompt(
                 "Context assembly (System head, PromptContext, xai-chat-state) is a SEPARATE "
                 "topic id context-assembly, not a subtitle of agent-loop. "
                 "entry-and-boot key_files MUST be the grok binary / pager boot "
-                "(bin/grok.rs, pager app/boot), NEVER code-graph or fast-worktree CLIs. "
+                "(bin/grok.rs, xai-grok-pager, pager app/boot, CLI main.rs the user runs). "
+                "NEVER bin/protoc, protobuf codegen, dotslash toolchain scripts, "
+                "code-graph, or fast-worktree CLIs. "
                 "tool-system key_files MUST include ToolBridge when that type exists. "
                 "depth is one of deep, standard, brief. Mark at most a third as deep. "
                 "Do NOT emit modules[], reading_order, or emphasized_pages — those are planned locally. "
@@ -363,8 +365,10 @@ def build_module_prompt(
         )
     if "entry-and-boot" in tid or "入口与启动" in tid or "entry and boot" in tid:
         extra_rules += (
-            "THIS PAGE IS PROCESS BOOT: grok main / pager boot handing off the first turn. "
-            "Do NOT narrate code-graph or fast-worktree CLIs as the entry. "
+            "THIS PAGE IS HOW THE USER STARTS GROK: the product binary, pager boot, "
+            "or ACP server start — not the build toolchain. "
+            "Do NOT lead with bin/protoc, a dotslash script, protobuf codegen, "
+            "code-graph, or fast-worktree CLIs. Those are at most a one-line aside. "
         )
     if "context-assembly" in tid or "上下文装配" in tid:
         extra_rules += (

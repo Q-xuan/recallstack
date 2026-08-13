@@ -257,9 +257,9 @@ def build_deterministic_topics(
                 title="入口与启动" if zh else "Entry and boot",
                 section="deep-dive",
                 purpose=(
-                    "进程从哪启动、pager / 二进制怎么把第一轮交出去。"
+                    "用户怎么把 grok 跑起来：二进制、pager、ACP server start。"
                     if zh
-                    else "Where the process starts and how pager/binary hands off the first turn."
+                    else "How the user starts grok: binary, pager, ACP server start."
                 ),
                 key_files=boot,
                 depth="deep",
@@ -546,7 +546,22 @@ _BOOT_SKIP_NEEDLES = (
     "code_graph",
     "codegraph",
     "codebase-graph",
+    "protoc",
+    "protobuf",
+    "dotslash",
+    "/proto/",
+    "protoc-gen",
 )
+_BOOT_TOOLCHAIN_STEMS = {
+    "protoc",
+    "protobuf",
+    "buf",
+    "flatc",
+    "thrift",
+    "capnpc",
+    "grpc_cpp_plugin",
+    "grpc_python_plugin",
+}
 _BOOT_NAME = {
     "main.rs",
     "main.py",
@@ -598,19 +613,43 @@ def is_tool_system_file(path: str) -> bool:
     return _path_has_system(path, ("tool", "tools"))
 
 
-def is_entry_boot_file(path: str) -> bool:
-    """grok / pager binary boot, not code-graph or fast-worktree CLIs."""
+def is_toolchain_boot_file(path: str) -> bool:
+    """protoc / protobuf / dotslash / codegen CLIs — not the product process."""
     low = _norm_topic_path(path)
     if any(n in low for n in _BOOT_SKIP_NEEDLES):
+        return True
+    name = low.rsplit("/", 1)[-1]
+    stem = name.rsplit(".", 1)[0]
+    if stem in _BOOT_TOOLCHAIN_STEMS or name in _BOOT_TOOLCHAIN_STEMS:
+        return True
+    if stem.startswith("protoc-gen") or "protoc" in stem:
+        return True
+    return False
+
+
+def is_entry_boot_file(path: str) -> bool:
+    """grok / pager binary boot, not toolchain scripts or aux CLIs."""
+    if is_toolchain_boot_file(path):
         return False
+    low = _norm_topic_path(path)
     parts = [p for p in low.split("/") if p]
     name = parts[-1] if parts else ""
+    stem = name.rsplit(".", 1)[0]
+    product = any(
+        tok in low for tok in ("grok", "pager", "xai-grok", "/tui/", "crates/tui")
+    )
     if parts and parts[0] in {"bin", "cmd"}:
+        return product or "grok" in stem or "pager" in stem
+    if product and (
+        name in _BOOT_NAME
+        or name in {"lib.rs", "mod.rs"}
+        or stem in {"grok", "pager"}
+        or "pager" in stem
+        or stem.startswith("grok")
+    ):
         return True
-    if "/pager/" in f"/{low}/" or low.startswith("pager/"):
-        return name in _BOOT_NAME or name in {"lib.rs", "mod.rs"}
     if name in {"main.rs", "main.py", "main.go", "main.ts", "main.js"}:
-        if any(tok in low for tok in ("grok", "pager", "tui", "/agent/")):
+        if product or "/agent/" in f"/{low}/":
             return True
         if low.startswith("src/main.") or low.startswith("src/bin/"):
             return True
@@ -730,10 +769,13 @@ def _rebind_entry_and_boot(
     known: set[str],
     base: list[TopicOutline],
 ) -> None:
-    """Keep entry-and-boot on grok/pager, not worktree or code-graph CLIs."""
+    """Keep entry-and-boot on grok/pager, not toolchain/worktree/code-graph CLIs."""
     zh = _topics_look_zh(list(by_id.values()) + list(base))
     known_list = sorted(p.replace("\\", "/") for p in known)
-    boot_pool = [p for p in known_list if is_entry_boot_file(p)]
+    boot_pool = _prefer_boot([p for p in known_list if is_entry_boot_file(p)])
+    purpose = _purpose_for(
+        "入口与启动" if zh else "Entry and boot", zh, topic_id=ENTRY_ID
+    )
     entry = by_id.get(ENTRY_ID)
     if not entry:
         if not boot_pool:
@@ -743,12 +785,8 @@ def _rebind_entry_and_boot(
             id=ENTRY_ID,
             title=title,
             section="deep-dive",
-            purpose=(
-                "进程从哪启动、pager / 二进制怎么把第一轮交出去。"
-                if zh
-                else "Where the process starts and how pager/binary hands off the first turn."
-            ),
-            key_files=_prefer_production(boot_pool)[:6],
+            purpose=purpose,
+            key_files=boot_pool[:6],
             depth="deep",
         )
         return
@@ -761,7 +799,36 @@ def _rebind_entry_and_boot(
                 kept.append(path)
             if len(kept) >= 8:
                 break
-    entry.key_files = _prefer_production(kept)[:8]
+    entry.key_files = _prefer_boot(kept)[:8]
+    blob = f"{entry.purpose or ''} {entry.title or ''}".lower()
+    if (
+        not entry.purpose
+        or any(n in blob for n in ("protoc", "dotslash", "protobuf", "toolchain"))
+    ):
+        entry.purpose = purpose
+
+
+def _boot_rank(path: str) -> int:
+    """Lower is better: grok/pager/main ahead of leftover bin scripts."""
+    if is_toolchain_boot_file(path):
+        return 100
+    low = _norm_topic_path(path)
+    leaf = low.rsplit("/", 1)[-1]
+    score = 0
+    if "grok" in low:
+        score -= 10
+    if "pager" in low:
+        score -= 8
+    if leaf.startswith("main.") or leaf in {"main.rs", "app.rs", "boot.rs"}:
+        score -= 5
+    if low.startswith("bin/") or "/bin/" in f"/{low}/":
+        score -= 2
+    score += _production_rank(path) * 20
+    return score
+
+
+def _prefer_boot(paths: list[str]) -> list[str]:
+    return sorted(paths, key=lambda p: (_boot_rank(p), p))
 
 
 def _prefer_production(paths: list[str]) -> list[str]:
@@ -781,12 +848,14 @@ def _pick_entry_boot_files(
         candidates = [
             p
             for p in entry_paths
-            if not any(n in p.replace("\\", "/").lower() for n in _BOOT_SKIP_NEEDLES)
+            if not is_toolchain_boot_file(p)
+            and not any(n in p.replace("\\", "/").lower() for n in _BOOT_SKIP_NEEDLES)
         ]
+    candidates = _prefer_boot(candidates)
     key = _pick_keys(candidates, rank_index, claimed, limit=6)
     if not key:
         key = _pick_keys(candidates, rank_index, set(), limit=6)
-    return key
+    return _prefer_boot(key)
 
 
 def _pick_keys(
@@ -840,6 +909,10 @@ def _purpose_for(title: str, zh: bool, topic_id: str = "") -> str:
         return (
             "How System head / PromptContext is assembled — not the agent loop."
         )
+    if topic_id == ENTRY_ID:
+        if zh:
+            return "用户怎么把 grok 跑起来：二进制、pager、ACP server start。"
+        return "How the user starts grok: binary, pager, ACP server start."
     if zh:
         return f"「{title}」在一次真实调用里做什么、缺了它哪条能力会断。"
     return f"What `{title}` does on one real call, and what breaks if it disappears."

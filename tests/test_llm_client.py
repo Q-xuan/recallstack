@@ -146,6 +146,13 @@ def test_zh_prompts_ask_for_handbook_prose_and_term_tips():
     assert "replace_or_insert_system_head" in loop_user
     assert "FORBIDDEN as the spine/lede" in loop_user
     assert "topics/context-assembly" in loop_user
+    boot = build_module_prompt(
+        "入口与启动", "src", "demo", "zh", depth="deep", topic_id="entry-and-boot"
+    )
+    boot_user = boot[-1]["content"]
+    assert "bin/protoc" in boot_user
+    assert "dotslash" in boot_user
+    assert "ACP server start" in boot_user
 
 
 def test_outline_prompt_splits_agent_loop_from_context_assembly():
@@ -156,6 +163,8 @@ def test_outline_prompt_splits_agent_loop_from_context_assembly():
     assert "topic id context-assembly" in user
     assert "replace_or_insert_system_head" in user
     assert "entry-and-boot key_files MUST be the grok binary" in user
+    assert "NEVER bin/protoc" in user
+    assert "dotslash" in user
     assert "tool-system key_files MUST include ToolBridge" in user
 
 

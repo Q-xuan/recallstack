@@ -43,6 +43,12 @@ def _grok_project() -> ProjectContext:
             language="toml",
         ),
         _file("bin/grok.rs", "fn main() {\n    grok::run();\n}\n" + filler, entry=True),
+        _file(
+            "bin/protoc",
+            "#!/usr/bin/env dotslash\n{\n  \"name\": \"protoc\"\n}\n",
+            entry=True,
+            language="text",
+        ),
         _file("crates/agent/src/runtime.rs", "pub struct AgentRuntime;\n" + filler),
         _file("crates/agent/src/loop.rs", "pub fn agent_loop() {}\n" + filler),
         _file("crates/agent/src/prompt.rs", "pub fn system_prompt() {}\n" + filler),
@@ -51,6 +57,10 @@ def _grok_project() -> ProjectContext:
             "pub struct ToolBridge;\n" + filler,
         ),
         _file("crates/pager/src/app.rs", "pub fn boot_pager() {}\n" + filler),
+        _file(
+            "crates/xai-grok-pager/src/lib.rs",
+            "pub fn start_pager() {}\n" + filler,
+        ),
         _file(
             "crates/code-graph/src/main.rs",
             "fn main() { code_graph::run(); }\n" + filler,
@@ -219,9 +229,13 @@ def test_entry_and_boot_file_pack_is_grok_pager_not_worktree_cli():
     assert ENTRY_ID in by_id
     joined = " ".join(by_id[ENTRY_ID].key_files)
     assert "bin/grok.rs" in joined or "pager" in joined
+    assert "protoc" not in joined
     assert "worktree" not in joined
     assert "code-graph" not in joined
     assert "fast-worktree" not in joined
+    primary = by_id[ENTRY_ID].key_files[0]
+    assert "protoc" not in primary
+    assert "grok" in primary or "pager" in primary
     tools = by_id.get("tool-system")
     assert tools is not None
     assert any("tool_bridge" in p or "tools" in p for p in tools.key_files)
@@ -231,7 +245,9 @@ def test_entry_and_boot_file_pack_is_grok_pager_not_worktree_cli():
             id=ENTRY_ID,
             title="入口与启动",
             section="deep-dive",
+            purpose="进程入口是 bin/protoc，一个 dotslash 脚本。",
             key_files=[
+                "bin/protoc",
                 "crates/code-graph/src/main.rs",
                 "crates/fast-worktree/src/main.rs",
             ],
@@ -240,9 +256,26 @@ def test_entry_and_boot_file_pack_is_grok_pager_not_worktree_cli():
     merged = merge_topics(topics, llm, {f.path for f in project.files})
     rebound = next(t for t in merged if t.id == ENTRY_ID)
     rebound_joined = " ".join(rebound.key_files)
+    assert "protoc" not in rebound_joined
     assert "worktree" not in rebound_joined
     assert "code-graph" not in rebound_joined
     assert "bin/grok.rs" in rebound_joined or "pager" in rebound_joined
+    assert "protoc" not in rebound.key_files[0]
+    assert "grok" in rebound.key_files[0] or "pager" in rebound.key_files[0]
+    assert "protoc" not in (rebound.purpose or "").lower()
+    assert "dotslash" not in (rebound.purpose or "").lower()
+    assert "grok" in (rebound.purpose or "").lower() or "pager" in (
+        rebound.purpose or ""
+    ).lower()
+
+
+def test_entry_and_boot_excludes_protoc_dotslash_as_primary():
+    from repowiki.core.topics import is_entry_boot_file, is_toolchain_boot_file
+
+    assert is_toolchain_boot_file("bin/protoc")
+    assert not is_entry_boot_file("bin/protoc")
+    assert is_entry_boot_file("bin/grok.rs")
+    assert is_entry_boot_file("crates/xai-grok-pager/src/lib.rs")
 
 
 def test_merge_topics_drops_generic_web_slugs_on_grok_tree():
