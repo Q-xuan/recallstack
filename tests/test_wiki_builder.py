@@ -6,8 +6,10 @@ from repowiki.core.models import (
     FileInfo,
     ModuleDoc,
     ProjectContext,
+    ProjectOverview,
     ReadingGuide,
     ReadingStep,
+    TermTip,
     WikiData,
 )
 from repowiki.core.modules import ROOT_NAME, group_into_modules
@@ -201,6 +203,99 @@ def test_zh_structural_sidebar_titles_and_headings():
     assert wiki.get_page("dependencies").content.startswith("# 依赖")
     assert wiki.get_page("modules/root").content.startswith("# 根目录")
     assert "# Architecture" not in wiki.get_page("architecture").content
+
+
+def test_old_json_parses_without_term_tips():
+    overview = ProjectOverview.model_validate({"name": "demo", "description": "x"})
+    arch = ArchitectureDiagram.model_validate({"architecture_type": "monolith"})
+    mod = ModuleDoc.model_validate({"name": "app", "purpose": "boot"})
+    assert overview.term_tips == []
+    assert arch.term_tips == []
+    assert mod.term_tips == []
+
+
+def test_term_tips_section_omitted_when_empty():
+    project = _project({"app/main.py": "def main():\n    return 1\n"})
+    graph = DependencyGraph.build_from_project(project)
+    data = WikiData(
+        overview=ProjectOverview(name="fixture", description="boot"),
+        architecture=ArchitectureDiagram(architecture_type="monolith", description="layers"),
+        modules=[ModuleDoc(name="app", purpose="entry", description="starts here")],
+    )
+    wiki = WikiBuilder().build(project, data, graph, language="zh")
+    assert "术语小贴士" not in wiki.get_page("index").content
+    assert "术语小贴士" not in wiki.get_page("architecture").content
+    assert "术语小贴士" not in wiki.get_page("modules/app").content
+    assert "Term tips" not in wiki.get_page("modules/app").content
+
+
+def test_zh_headings_term_tips_and_unchanged_paths():
+    project = _structural_project()
+    graph = DependencyGraph.build_from_project(project)
+    data = WikiData(
+        overview=ProjectOverview(
+            name="fixture",
+            description="手册正文",
+            term_tips=[TermTip(term="PageRank", tip="按 import 图给文件打分")],
+        ),
+        architecture=ArchitectureDiagram(
+            architecture_type="codebase-modules",
+            description="按目录划模块，而不是罗列文件。",
+            components=[{"name": "crates", "purpose": "lib", "files": ["crates/lib.py"]}],
+            term_tips=[TermTip(term="crate", tip="Cargo 包单位")],
+        ),
+        modules=[
+            ModuleDoc(
+                name="crates",
+                purpose="lib boundary",
+                description="职责边界",
+                implementation_details="`crates/lib.py:1` 提供实现。",
+                call_chains=[
+                    CallChain(name="boot", description="启动", steps=["run()"], files=["crates/lib.py"])
+                ],
+                edge_cases=["缺配置时失败"],
+                citations=[Citation(path="crates/lib.py", start_line=1)],
+                term_tips=[TermTip(term="ACP", tip="本仓库的 agent 协议")],
+            )
+        ],
+        reading_guide=ReadingGuide(steps=[ReadingStep(order=1, title="start", files=["app/main.py"])]),
+    )
+    wiki = WikiBuilder().build(project, data, graph, language="zh")
+    overview = wiki.get_page("index").content
+    assert "## 术语小贴士" in overview
+    assert "**PageRank**" in overview
+    assert "## Tech Stack" not in overview
+
+    arch = wiki.get_page("architecture").content
+    assert arch.startswith("# 架构概览")
+    assert "**类型:** codebase-modules" in arch
+    assert "## 组成" in arch
+    assert "crates/lib.py" in arch
+    assert "## 术语小贴士" in arch
+    assert "**Type:**" not in arch
+    assert "## Components" not in arch
+
+    page = wiki.get_page("modules/crates")
+    assert page.title == "crates"
+    content = page.content
+    assert content.startswith("# crates")
+    assert "## 实现细节" in content
+    assert "## 关键调用链" in content
+    assert "## 边界条件" in content
+    assert "## 源码证据" in content
+    assert "## 术语小贴士" in content
+    assert "**ACP**" in content
+    assert "## Implementation" not in content
+    assert "## Key Call Chains" not in content
+
+    crates = next(
+        c
+        for item in wiki.sidebar
+        if item.title == "模块"
+        for c in item.children
+        if c.page_id == "modules/crates"
+    )
+    assert crates.title == "crates"
 
 
 def test_concept_section_title_follows_content_lang(monkeypatch):

@@ -97,19 +97,33 @@ def build_deterministic_outline(
         )
 
     top_mods = names[: min(6, len(names))]
-    overview_bits = [f"Project {project.name} ({len(project.files)} files)."]
+    overview_bits = [
+        f"{project.name} is organized as directory modules ({len(project.files)} files)."
+    ]
     if entry_paths:
-        overview_bits.append("Entrypoints: " + ", ".join(entry_paths[:6]) + ".")
+        overview_bits.append(
+            "Start at the entrypoints to see how the process is wired: "
+            + ", ".join(f"`{p}`" for p in entry_paths[:6])
+            + "."
+        )
     if config_paths:
-        overview_bits.append("Config: " + ", ".join(config_paths[:6]) + ".")
+        overview_bits.append(
+            "Configuration lives in " + ", ".join(f"`{p}`" for p in config_paths[:6]) + "."
+        )
     if top_mods:
-        overview_bits.append("Core modules: " + ", ".join(top_mods) + ".")
+        overview_bits.append(
+            "Hub packages to explain first: " + ", ".join(f"`{n}`" for n in top_mods) + "."
+        )
 
-    arch_bits = []
-    if top_mods:
-        arch_bits.append("Heaviest modules by PageRank: " + ", ".join(top_mods) + ".")
+    arch_bits = [
+        "Directory modules form the architecture. Read from entrypoints into the "
+        "highest-centrality packages, then out to dependents. PageRank ranks which "
+        "modules to write deeply — it is not a file inventory."
+    ]
     if entry_modules:
-        arch_bits.append("Start from: " + ", ".join(entry_modules) + ".")
+        arch_bits.append("Start from: " + ", ".join(f"`{n}`" for n in entry_modules) + ".")
+    if top_mods:
+        arch_bits.append("Core packages: " + ", ".join(f"`{n}`" for n in top_mods) + ".")
 
     emphasized = ["overview", "architecture"]
     emphasized.extend(names[:n_deep])

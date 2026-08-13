@@ -16,11 +16,33 @@ _LANG_NAMES = {
 def _lang_instruction(language: str) -> str:
     lang_map = {
         "en": "Respond in English.",
-        "zh": "请用中文回答。",
+        "zh": (
+            "请用专业简体中文撰写，口吻像资深工程师写给同事的内部手册（接近 zread）："
+            "先讲职责与边界，再讲实现怎么串起来，少堆文件列表。"
+            "路径、crate/包名、符号、协议名保持英文原文（如 PageRank、ACP、`xai-grok-pager`），不要音译。"
+            "禁止翻译腔，禁止写成目录清单或 “Heaviest modules by PageRank: …” 这种英文库存句。"
+        ),
         "ja": "日本語で回答してください。",
         "ko": "한국어로 답변해주세요.",
     }
     return lang_map.get(language, "Respond in English.")
+
+
+def _term_tips_field() -> str:
+    return '  "term_tips": [{"term": "PageRank", "tip": "how this repo uses it"}],\n'
+
+
+def _term_tips_rules(*, required: bool) -> str:
+    count = (
+        "term_tips is REQUIRED: 3-8 items. "
+        if required
+        else "term_tips: 3-8 items when this page has jargon a mid-level engineer might not know here; otherwise []. "
+    )
+    return (
+        count
+        + "Each tip is how THIS repository uses the term, not a generic encyclopedia entry. "
+        "Keep `term` as the code identifier in English (PageRank, crate, ACP); write `tip` in the output language."
+    )
 
 
 def _json_instruction(language: str = "en") -> str:
@@ -92,7 +114,9 @@ def build_outline_prompt(
                 "Rules: module names MUST match the Modules list exactly. "
                 "depth is one of deep, standard, brief. "
                 "Mark at most a third of modules as deep. "
-                "key_files MUST be real paths from the tree.\n\n"
+                "key_files MUST be real paths from the tree. "
+                "overview_focus and architecture_focus must be narrative (responsibilities and wiring), "
+                "never a PageRank file dump.\n\n"
                 f"{_json_instruction(language)}"
             ),
         },
@@ -140,8 +164,13 @@ def build_overview_prompt(
                 '  "tech_stack": [{"name": "Python", "category": "language", "version": "3.10+"}],\n'
                 '  "setup_instructions": ["step 1", "step 2"],\n'
                 '  "key_features": ["feature 1", "feature 2"],\n'
-                '  "citations": [{"path": "real/file.py", "start_line": 1, "symbol": "", "note": "why this file matters"}]\n'
+                '  "citations": [{"path": "real/file.py", "start_line": 1, "symbol": "", "note": "why this file matters"}],\n'
+                f"{_term_tips_field()}"
                 "}\n\n"
+                "Write description as 2-4 professional paragraphs: what the project is for, "
+                "where responsibility sits, how the main pieces connect. "
+                "Do not dump a file inventory. "
+                f"{_term_tips_rules(required=True)} "
                 "citations.path MUST be a real path from the tree. Omit citations rather than invent paths.\n\n"
                 f"{_json_instruction(language)}"
             ),
@@ -175,8 +204,10 @@ def build_module_prompt(
         )
 
     if depth == "deep":
+        term_tips_required = True
         extra_rules = (
             "This is a HIGH-IMPORTANCE module. Write longform, not a bullet inventory. "
+            "Start with responsibility and boundaries, then how the implementation is wired. "
             "implementation_details must explain how the code actually works (control flow, "
             "state, important branches) with backtick path:line cites like `app/main.py:7`. "
             "call_chains must name real functions and the files they live in. "
@@ -184,6 +215,7 @@ def build_module_prompt(
         )
         length_hint = "description: 2-4 paragraphs. implementation_details: 2-5 paragraphs."
     elif depth == "brief":
+        term_tips_required = False
         extra_rules = (
             "This is a low-priority module. Keep purpose to one sentence and description short. "
             "Leave implementation_details, call_chains, and edge_cases empty unless something "
@@ -191,9 +223,11 @@ def build_module_prompt(
         )
         length_hint = "Keep the JSON compact."
     else:
+        term_tips_required = False
         extra_rules = (
-            "Explain what each file does and how they connect. "
+            "Explain what this module is responsible for, then how its files connect. "
             "Fill implementation_details and call_chains when the code makes them obvious. "
+            "Do not turn the page into a file listing. "
         )
         length_hint = "description: 1-2 paragraphs."
 
@@ -234,10 +268,12 @@ def build_module_prompt(
                 "  ],\n"
                 '  "relationships": [{"source": "a.py", "target": "b.py", "description": "a imports b for..."}],\n'
                 '  "key_concepts": [{"name": "concept", "explanation": "..."}],\n'
-                '  "citations": [{"path": "file.py", "start_line": 12, "symbol": "func_name", "note": "why"}]\n'
+                '  "citations": [{"path": "file.py", "start_line": 12, "symbol": "func_name", "note": "why"}],\n'
+                f"{_term_tips_field()}"
                 "}\n\n"
                 "files[].path, relationships, call_chains.files, and citations.path MUST be "
-                "paths shown above. Use 0 for unknown line numbers rather than guessing.\n\n"
+                "paths shown above. Use 0 for unknown line numbers rather than guessing. "
+                f"{_term_tips_rules(required=term_tips_required)}\n\n"
                 f"{_json_instruction(language)}"
             ),
         },
@@ -278,16 +314,19 @@ def build_architecture_prompt(
                 "Analyze the architecture. Output JSON:\n"
                 "{\n"
                 '  "architecture_type": "one of: monolith, client-server, microservices, library, cli-tool, framework, plugin-system, pipeline",\n'
-                '  "description": "explain the architecture in 2-3 sentences",\n'
+                '  "description": "2-4 professional paragraphs: responsibilities, how components wire together, data flow. NEVER a PageRank file dump.",\n'
                 '  "components": [{"name": "...", "purpose": "...", "files": ["real/path.py"]}],\n'
                 '  "mermaid_component": "graph TD\\n  A[Component] --> B[Component]\\n  ...",\n'
                 '  "mermaid_sequence": "sequenceDiagram\\n  participant A\\n  A->>B: request\\n  ...",\n'
                 '  "data_flow": "describe the main data flow in 2-3 sentences",\n'
-                '  "citations": [{"path": "real/path.py", "start_line": 1, "note": "why this file is architectural"}]\n'
+                '  "citations": [{"path": "real/path.py", "start_line": 1, "note": "why this file is architectural"}],\n'
+                f"{_term_tips_field()}"
                 "}\n\n"
                 "IMPORTANT: Mermaid code must be a single string with \\n for newlines. "
                 "Use simple alphanumeric node IDs. "
-                "components.files and citations.path MUST be real paths from the tree.\n\n"
+                "components.files and citations.path MUST be real paths from the tree. "
+                "description must explain the system, not list heaviest files. "
+                f"{_term_tips_rules(required=True)}\n\n"
                 f"{_json_instruction(language)}"
             ),
         },

@@ -22,7 +22,7 @@ class NullLLM:
 
     api_key = ""
 
-    async def complete(self, messages, max_tokens=4096):
+    async def complete(self, messages, max_tokens=4096, **kwargs):
         raise AssertionError("LLM should not be called without an API key")
 
 
@@ -33,10 +33,12 @@ class ScriptedLLM:
 
     def __init__(self):
         self.calls: list[str] = []
+        self.kwargs: list[dict] = []
 
-    async def complete(self, messages, max_tokens=4096):
+    async def complete(self, messages, max_tokens=4096, **kwargs):
         text = messages[-1]["content"]
         self.calls.append(text)
+        self.kwargs.append(kwargs)
         if "Output a wiki outline as JSON" in text:
             return json.dumps(
                 {
@@ -212,11 +214,11 @@ def _project() -> ProjectContext:
     )
 
 
-async def _analyze(tmp_path: Path, llm) -> tuple:
+async def _analyze(tmp_path: Path, llm, language: str = "en") -> tuple:
     cache = Cache(db_path=tmp_path / "c.db")
     await cache.init()
     try:
-        analyzer = Analyzer(llm=llm, cache=cache)
+        analyzer = Analyzer(llm=llm, cache=cache, language=language)
         progress: list[str] = []
         project = _project()
         wiki = await analyzer.analyze(project, on_progress=progress.append)
@@ -249,6 +251,7 @@ def test_write_path_with_scripted_llm_and_cite_check(tmp_path):
 
     assert any("Output a wiki outline as JSON" in c for c in llm.calls)
     assert any("Document the '" in c for c in llm.calls)
+    assert all(k.get("response_format") == {"type": "json_object"} for k in llm.kwargs)
     assert "Wiki outline focus" in next(c for c in llm.calls if "Generate a project overview" in c)
     assert "Outlining wiki..." in progress
     assert "Verifying citations..." in progress
@@ -276,3 +279,25 @@ def test_write_path_with_scripted_llm_and_cite_check(tmp_path):
     assert "## Source Evidence" in page.content
     assert "does/not/exist.py" not in page.content
     assert "totally/fake.py" not in page.content
+
+
+def test_zh_no_llm_fallback_is_handbook_not_inventory(tmp_path):
+    wiki, _, project = _run(_analyze(tmp_path, NullLLM(), language="zh"))
+
+    assert "Module containing" not in wiki.modules[0].purpose
+    assert "Heaviest modules by PageRank" not in wiki.architecture.description
+    assert "目录" in wiki.architecture.description
+    assert wiki.architecture.architecture_type == "codebase-modules"
+    assert any(tip.term == "PageRank" for tip in wiki.architecture.term_tips)
+    graph = DependencyGraph.build_from_project(project)
+    pages = WikiBuilder().build(project, wiki, graph, language="zh")
+    arch = pages.get_page("architecture").content
+    assert "**类型:**" in arch
+    assert "**Type:**" not in arch
+    assert "codebase-modules" in arch
+    assert "## 术语小贴士" in arch
+    assert "Heaviest modules by PageRank" not in arch
+    for page in pages.pages:
+        if page.id.startswith("modules/"):
+            assert "Module containing" not in page.content
+            assert "## 术语小贴士" in page.content

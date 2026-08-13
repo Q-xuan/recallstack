@@ -63,6 +63,8 @@ def test_deterministic_outline_without_llm():
     # entrypoint module leads the reading order
     assert outline.reading_order[0] == "app"
     assert "app/main.py" in outline.overview_focus
+    assert "Heaviest modules by PageRank" not in outline.architecture_focus
+    assert "file inventory" in outline.architecture_focus.lower() or "not a file" in outline.architecture_focus.lower()
 
 
 def test_deterministic_outline_on_mini_repo():

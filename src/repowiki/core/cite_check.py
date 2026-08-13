@@ -130,6 +130,7 @@ def verify_module(mod: ModuleDoc, index: CiteIndex) -> ModuleDoc:
     mod.edge_cases = [sanitize_text(s, index) for s in mod.edge_cases]
     for concept in mod.key_concepts:
         concept.explanation = sanitize_text(concept.explanation, index)
+    mod.term_tips = _sanitize_term_tips(getattr(mod, "term_tips", None), index)
     return mod
 
 
@@ -139,6 +140,7 @@ def verify_overview(overview: ProjectOverview, index: CiteIndex) -> ProjectOverv
     overview.citations = [c for c in (_clamp_citation(c, index) for c in overview.citations) if c]
     overview.key_features = [sanitize_text(s, index) for s in overview.key_features]
     overview.setup_instructions = [sanitize_text(s, index) for s in overview.setup_instructions]
+    overview.term_tips = _sanitize_term_tips(getattr(overview, "term_tips", None), index)
     return overview
 
 
@@ -149,6 +151,7 @@ def verify_architecture(arch: ArchitectureDiagram, index: CiteIndex) -> Architec
     for comp in arch.components:
         comp.files = [p for p in (index.resolve(x) for x in comp.files) if p]
         comp.purpose = sanitize_text(comp.purpose, index)
+    arch.term_tips = _sanitize_term_tips(getattr(arch, "term_tips", None), index)
     return arch
 
 
@@ -185,6 +188,14 @@ def sanitize_text(text: str, index: CiteIndex) -> str:
         return f"`{loc}`"
 
     return _BACKTICK_CITE.sub(repl, text)
+
+
+def _sanitize_term_tips(tips, index: CiteIndex):
+    if not tips:
+        return tips or []
+    for tip in tips:
+        tip.tip = sanitize_text(tip.tip, index)
+    return tips
 
 
 def collect_invalid_paths(mod: ModuleDoc, index: CiteIndex) -> list[str]:

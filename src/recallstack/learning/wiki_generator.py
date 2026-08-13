@@ -22,10 +22,37 @@ from repowiki.core.models import (
     ProjectOverview,
     ReadingGuide,
     ReadingStep,
+    TermTip,
     WikiData,
 )
 from repowiki.core.modules import ROOT_NAME, group_into_modules
 from repowiki.core.wiki_builder import Wiki, WikiBuilder, WikiPage
+
+
+def _generic_term_tips() -> list[TermTip]:
+    return [
+        TermTip(
+            term="PageRank",
+            tip=t(
+                "Here PageRank ranks files by import centrality so the wiki can write deeper pages for hubs, not dump a directory listing.",
+                "这里的 PageRank 按 import 图给文件打重要性分，用来决定哪些模块值得写深，而不是用来罗列文件。",
+            ),
+        ),
+        TermTip(
+            term="crate",
+            tip=t(
+                "A Rust/Cargo package. Keep the crate name as it appears in Cargo.toml.",
+                "Rust/Cargo 的包单位。crate 名保持 Cargo.toml 里的英文原文，不要音译。",
+            ),
+        ),
+        TermTip(
+            term="entrypoint",
+            tip=t(
+                "A process start file (main, bin, CLI). Read these first to see how the rest of the graph is wired.",
+                "进程入口（main / bin / CLI）。先读入口才能看清其余模块是怎么被串起来的。",
+            ),
+        ),
+    ]
 
 
 def build_deterministic_wiki_data(
@@ -49,19 +76,37 @@ def build_deterministic_wiki_data(
 
     overview = ProjectOverview(
         name=project.name,
-        one_liner=t(f"Learnable code wiki for {project.name} (scan + dependency graph)", f"{project.name} 的可学习代码 Wiki（由扫描 + 依赖图生成）"),
+        one_liner=t(
+            f"{project.name}: a learnable wiki of how this repo is wired",
+            f"{project.name}：讲清这个仓库怎么串起来的可学习 Wiki",
+        ),
         description=description
-        or t("Repository scanned. Concept graph and reading path generated from structure and dependency graph.", "该仓库已扫描并生成概念图谱与阅读路径。以下内容来自源码结构与依赖图。"),
+        or t(
+            "This wiki is a handbook, not a directory listing. Start at the entrypoints, "
+            "then follow import-graph hubs to see how responsibility is split. Concept pages "
+            "and the reading path come from the same scan.",
+            "本 Wiki 是内部手册，不是文件清单。先从入口看进程怎么启动，再顺着 import 图上的枢纽包"
+            "看职责怎么切。词条与阅读路径来自同一次扫描。",
+        ),
         key_features=[
-            t(f"Scanned {len(project.files)} files", f"扫描文件 {len(project.files)} 个"),
-            t(f"Core files: {', '.join(top_files[:5])}", f"核心文件示例：{', '.join(top_files[:5])}") if top_files else t("Dependency graph built", "依赖图已构建"),
-            t(f"{len(concepts)} learning concepts", f"学习概念 {len(concepts)} 个"),
+            t(
+                "Scan + import graph produce a reading path; start at entrypoints, then hubs.",
+                "扫描与 import 图搭出阅读路径：先从入口进，再读枢纽模块。",
+            ),
+            t(
+                f"{len(concepts)} practice concepts mapped onto source evidence",
+                f"{len(concepts)} 个可练习词条，对齐源码证据",
+            ) if concepts else t(
+                "Learning concepts will appear once the concept graph is built",
+                "概念图谱生成后会出现可练习词条",
+            ),
         ],
         setup_instructions=[
-            t("Read Overview and Architecture first", "先读 Overview 与 Architecture"),
-            t("Follow the Reading Guide / learning path page by page", "按 Reading Guide / 学习路径逐步打开词条"),
+            t("Read Overview and Architecture first", "先读概述与架构概览"),
+            t("Follow the Reading Guide / learning path page by page", "按导读 / 学习路径逐步打开词条"),
             t("Do the 30-second probe on a concept page, then go deeper", "在词条内完成 30 秒自测，再进入深入练习"),
         ],
+        term_tips=_generic_term_tips(),
     )
 
     # Same grouping the LLM path and the dependency graph use, so a module keeps
@@ -82,11 +127,20 @@ def build_deterministic_wiki_data(
         module_docs.append(
             ModuleDoc(
                 name=name,
-                purpose=t(f"{name} module · {len(files)} files", f"{name} 模块 · {len(files)} 个文件"),
+                purpose=t(
+                    f"Owns the `{name}` package boundary",
+                    f"负责 `{name}` 这一层的职责边界",
+                ),
                 description=(
-                    t("Loose root files (README, config, etc.).", "仓库根目录下的散落文件（如 README、配置）。")
+                    t(
+                        "Loose root files (README, config, etc.). Read them for how the repo is started and configured, not as a file dump.",
+                        "仓库根目录下的散落文件（README、配置等）。用来看仓库怎么启动、怎么配置，不要当成文件清单。",
+                    )
                     if is_root
-                    else t(f"`{name}/` directory boundary from scan + dependency graph.", f"`{name}/` 目录边界，来自扫描与依赖图。")
+                    else t(
+                        f"`{name}/` is a directory boundary. This page states what the package is for and how it connects; the file list is evidence, not the article.",
+                        f"`{name}/` 是一层目录边界。本页先讲这包负责什么、和谁协作；文件列表只是证据，不是正文。",
+                    )
                 ),
                 files=file_docs,
             )
@@ -102,10 +156,20 @@ def build_deterministic_wiki_data(
     ]
     architecture = ArchitectureDiagram(
         architecture_type="codebase-modules",
-        description=t("Architecture sketch from directory boundaries and dependency graph. LLM can enrich this later.", "基于目录边界与依赖图的架构草图。有 LLM 时可被更丰富的架构说明替换。"),
+        description=t(
+            "The repo is split by directory modules. Data enters at the entrypoints, "
+            "then moves through the highest-centrality packages. Use the diagram to see "
+            "coupling; PageRank only ranks which pages to write first, not a table of contents.",
+            "仓库按目录划成模块。请求从入口文件进来，经过图上最中心的包，再扩散到依赖方。"
+            "结构图用来看耦合；PageRank 只决定先写哪几页，不是目录清单。",
+        ),
         components=components,
         mermaid_component=graph.to_mermaid() or "",
-        data_flow=t("Entrypoints → core modules → dependents (see Dependencies + learning path).", "入口文件 → 核心模块 → 依赖模块（见 Dependencies 页与学习路径）。"),
+        data_flow=t(
+            "Entrypoints → core modules → dependents (see the dependency diagram and the learning path).",
+            "入口文件 → 核心模块 → 依赖模块（见结构图与学习路径）。",
+        ),
+        term_tips=_generic_term_tips(),
     )
 
     steps: list[ReadingStep] = []

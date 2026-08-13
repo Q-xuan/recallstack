@@ -1,0 +1,91 @@
+"""LLM completion text extraction and thinking defaults."""
+
+from __future__ import annotations
+
+import asyncio
+
+from repowiki.llm.client import (
+    LLMClient,
+    extract_completion_text,
+    thinking_option,
+)
+from repowiki.llm.prompts import (
+    build_architecture_prompt,
+    build_module_prompt,
+    build_overview_prompt,
+    extract_json,
+)
+
+
+def test_extract_completion_text_falls_back_to_reasoning_content():
+    message = {"content": "  ", "reasoning_content": '{"name": "app", "purpose": "boot"}'}
+    text = extract_completion_text(message)
+    assert extract_json(text) == {"name": "app", "purpose": "boot"}
+
+
+def test_extract_completion_text_flattens_list_parts():
+    message = {
+        "content": [{"type": "text", "text": '{"ok": true}'}],
+        "reasoning_content": "ignored",
+    }
+    assert extract_json(extract_completion_text(message)) == {"ok": True}
+
+
+def test_thinking_disabled_by_default(monkeypatch):
+    monkeypatch.delenv("REPOWIKI_LLM_THINKING", raising=False)
+    assert thinking_option() == {"type": "disabled"}
+    monkeypatch.setenv("REPOWIKI_LLM_THINKING", "enabled")
+    assert thinking_option() is None
+
+
+def test_complete_uses_reasoning_content_and_disables_thinking(monkeypatch):
+    monkeypatch.setenv("REPOWIKI_LLM_MIN_INTERVAL", "0")
+    monkeypatch.delenv("REPOWIKI_LLM_THINKING", raising=False)
+    client = LLMClient(model="flash", api_key="k", api_base="http://example.invalid")
+    bodies: list[dict] = []
+
+    async def fake_post(body, timeout):
+        bodies.append(body)
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": "",
+                        "reasoning_content": '{"name": "app"}',
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 2},
+        }
+
+    client._post = fake_post  # type: ignore[method-assign]
+    text = asyncio.run(client.complete([{"role": "user", "content": "hi"}]))
+    assert extract_json(text) == {"name": "app"}
+    assert bodies[0]["thinking"] == {"type": "disabled"}
+
+
+def test_complete_omits_thinking_when_enabled(monkeypatch):
+    monkeypatch.setenv("REPOWIKI_LLM_MIN_INTERVAL", "0")
+    monkeypatch.setenv("REPOWIKI_LLM_THINKING", "enabled")
+    client = LLMClient(model="flash", api_key="k", api_base="http://example.invalid")
+    bodies: list[dict] = []
+
+    async def fake_post(body, timeout):
+        bodies.append(body)
+        return {"choices": [{"message": {"content": "{}"}}], "usage": {}}
+
+    client._post = fake_post  # type: ignore[method-assign]
+    asyncio.run(client.complete([{"role": "user", "content": "hi"}]))
+    assert "thinking" not in bodies[0]
+
+
+def test_zh_prompts_ask_for_handbook_prose_and_term_tips():
+    overview = build_overview_prompt("tree", "files", "zh")
+    assert "内部手册" in overview[0]["content"]
+    assert "term_tips" in overview[-1]["content"]
+    arch = build_architecture_prompt("tree", "files", "zh")
+    assert "PageRank file dump" in arch[-1]["content"]
+    assert "term_tips" in arch[-1]["content"]
+    deep = build_module_prompt("app", "src", "demo", "zh", depth="deep")
+    assert "term_tips is REQUIRED" in deep[-1]["content"]
+    assert "`xai-grok-pager`" in deep[0]["content"]

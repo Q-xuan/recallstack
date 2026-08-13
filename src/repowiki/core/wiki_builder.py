@@ -19,6 +19,27 @@ _STRUCTURAL_TITLES: dict[str, dict[str, str]] = {
     "dependencies": {"en": "Dependencies", "zh": "依赖", "ja": "依存関係", "ko": "의존성"},
     "root": {"en": "Root", "zh": "根目录", "ja": "ルート", "ko": "루트"},
     "concepts": {"en": "Concepts", "zh": "词条", "ja": "用語", "ko": "개념"},
+    "type": {"en": "Type", "zh": "类型", "ja": "種類", "ko": "유형"},
+    "components": {"en": "Components", "zh": "组成", "ja": "コンポーネント", "ko": "구성"},
+    "diagram": {"en": "Diagram", "zh": "结构图", "ja": "図", "ko": "다이어그램"},
+    "data-flow": {"en": "Data Flow", "zh": "数据流", "ja": "データフロー", "ko": "데이터 흐름"},
+    "tech-stack": {"en": "Tech Stack", "zh": "技术栈", "ja": "技術スタック", "ko": "기술 스택"},
+    "key-features": {"en": "Key Features", "zh": "主要能力", "ja": "主な機能", "ko": "주요 기능"},
+    "getting-started": {"en": "Getting Started", "zh": "上手", "ja": "はじめに", "ko": "시작하기"},
+    "files": {"en": "Files", "zh": "文件", "ja": "ファイル", "ko": "파일"},
+    "key-concepts": {"en": "Key Concepts", "zh": "关键概念", "ja": "重要概念", "ko": "핵심 개념"},
+    "implementation": {"en": "Implementation", "zh": "实现细节", "ja": "実装", "ko": "구현"},
+    "call-chains": {"en": "Key Call Chains", "zh": "关键调用链", "ja": "主要な呼び出し", "ko": "주요 호출 체인"},
+    "edge-cases": {"en": "Edge Cases", "zh": "边界条件", "ja": "エッジケース", "ko": "예외 상황"},
+    "source-evidence": {"en": "Source Evidence", "zh": "源码证据", "ja": "ソース根拠", "ko": "소스 근거"},
+    "relationships": {"en": "Internal Relationships", "zh": "内部关系", "ja": "内部関係", "ko": "내부 관계"},
+    "term-tips": {"en": "Term tips", "zh": "术语小贴士", "ja": "用語メモ", "ko": "용어 팁"},
+    "tips": {"en": "Tips", "zh": "提示", "ja": "ヒント", "ko": "팁"},
+    "step": {"en": "Step", "zh": "步骤", "ja": "ステップ", "ko": "단계"},
+    "core-files": {"en": "Core Files (by PageRank)", "zh": "核心文件（按 PageRank）", "ja": "中核ファイル（PageRank）", "ko": "핵심 파일 (PageRank)"},
+    "entry-points": {"en": "Likely Entry Points", "zh": "可能的入口", "ja": "想定エントリポイント", "ko": "예상 진입점"},
+    "circular": {"en": "Circular Dependencies", "zh": "循环依赖", "ja": "循環依存", "ko": "순환 의존"},
+    "isolated": {"en": "Isolated Files", "zh": "孤立文件", "ja": "孤立ファイル", "ko": "고립 파일"},
 }
 
 
@@ -97,7 +118,7 @@ class WikiBuilder:
 
         # 1. index / overview page
         overview = wiki_data.overview
-        overview_md = self._build_overview_page(overview, project)
+        overview_md = self._build_overview_page(overview, project, lang)
         overview_title = structural_title("overview", lang)
         pages.append(WikiPage(id="index", title=overview_title, content=overview_md, order=0))
         sidebar.append(SidebarItem(title=overview_title, page_id="index"))
@@ -114,7 +135,7 @@ class WikiBuilder:
         for i, mod in enumerate(wiki_data.modules):
             mod_id = f"modules/{mod.name}"
             mod_title = module_display_title(mod.name, lang)
-            mod_md = self._build_module_page(mod, graph, display_title=mod_title)
+            mod_md = self._build_module_page(mod, graph, display_title=mod_title, language=lang)
             pages.append(WikiPage(
                 id=mod_id, title=mod_title, content=mod_md,
                 parent_id="modules", order=i,
@@ -143,15 +164,17 @@ class WikiBuilder:
 
         return Wiki(pages=pages, sidebar=sidebar, project_name=project.name)
 
-    def _build_overview_page(self, overview, project) -> str:
+    def _build_overview_page(self, overview, project, language: str = "en") -> str:
         lines = [f"# {overview.name or project.name}\n"]
         if overview.one_liner:
             lines.append(f"> {overview.one_liner}\n")
         if overview.description:
             lines.append(f"{overview.description}\n")
 
+        _append_term_tips(lines, getattr(overview, "term_tips", None), language)
+
         if overview.tech_stack:
-            lines.append("## Tech Stack\n")
+            lines.append(f"## {structural_title('tech-stack', language)}\n")
             for t in overview.tech_stack:
                 ver = f" {t.version}" if t.version else ""
                 cat = f" ({t.category})" if t.category else ""
@@ -159,49 +182,51 @@ class WikiBuilder:
             lines.append("")
 
         if overview.key_features:
-            lines.append("## Key Features\n")
+            lines.append(f"## {structural_title('key-features', language)}\n")
             for feat in overview.key_features:
                 lines.append(f"- {feat}")
             lines.append("")
 
         if overview.setup_instructions:
-            lines.append("## Getting Started\n")
+            lines.append(f"## {structural_title('getting-started', language)}\n")
             for i, step in enumerate(overview.setup_instructions, 1):
                 lines.append(f"{i}. {step}")
             lines.append("")
 
-        _append_citations(lines, getattr(overview, "citations", None))
+        _append_citations(lines, getattr(overview, "citations", None), language)
 
         return "\n".join(lines)
 
     def _build_architecture_page(self, arch, language: str = "en") -> str:
         lines = [f"# {structural_title('architecture', language)}\n"]
         if arch.architecture_type:
-            lines.append(f"**Type:** {arch.architecture_type}\n")
+            lines.append(f"**{structural_title('type', language)}:** {arch.architecture_type}\n")
         if arch.description:
             lines.append(f"{arch.description}\n")
 
+        _append_term_tips(lines, getattr(arch, "term_tips", None), language)
+
         if arch.components:
-            lines.append("## Components\n")
+            lines.append(f"## {structural_title('components', language)}\n")
             for c in arch.components:
                 purpose = f" — {c.purpose}" if c.purpose else ""
                 lines.append(f"- **{c.name}**{purpose}")
                 if c.files:
                     files = ", ".join(f"`{f}`" for f in c.files[:8])
-                    lines.append(f"  - Files: {files}")
+                    lines.append(f"  - {structural_title('files', language)}: {files}")
             lines.append("")
 
         if arch.mermaid_component:
-            lines.append("## Diagram\n")
+            lines.append(f"## {structural_title('diagram', language)}\n")
             lines.append("```mermaid")
             lines.append(arch.mermaid_component.strip())
             lines.append("```\n")
 
         if arch.data_flow:
-            lines.append("## Data Flow\n")
+            lines.append(f"## {structural_title('data-flow', language)}\n")
             lines.append(f"{arch.data_flow}\n")
 
-        _append_citations(lines, getattr(arch, "citations", None))
+        _append_citations(lines, getattr(arch, "citations", None), language)
 
         return "\n".join(lines)
 
@@ -236,7 +261,12 @@ class WikiBuilder:
         return root
 
     def _build_module_page(
-        self, mod, graph: DependencyGraph | None = None, *, display_title: str | None = None
+        self,
+        mod,
+        graph: DependencyGraph | None = None,
+        *,
+        display_title: str | None = None,
+        language: str = "en",
     ) -> str:
         heading = display_title or mod.name
         lines = [f"# {heading}\n"]
@@ -245,14 +275,16 @@ class WikiBuilder:
         if mod.description:
             lines.append(f"{mod.description}\n")
 
+        _append_term_tips(lines, getattr(mod, "term_tips", None), language)
+
         implementation = getattr(mod, "implementation_details", "") or ""
         if implementation:
-            lines.append("## Implementation\n")
+            lines.append(f"## {structural_title('implementation', language)}\n")
             lines.append(f"{implementation}\n")
 
         chains = getattr(mod, "call_chains", None) or []
         if chains:
-            lines.append("## Key Call Chains\n")
+            lines.append(f"## {structural_title('call-chains', language)}\n")
             for chain in chains:
                 lines.append(f"### {chain.name}\n")
                 if chain.description:
@@ -263,11 +295,11 @@ class WikiBuilder:
                     lines.append("")
                 if chain.files:
                     files = ", ".join(f"`{p}`" for p in chain.files)
-                    lines.append(f"**Files:** {files}\n")
+                    lines.append(f"**{structural_title('files', language)}:** {files}\n")
 
         edge_cases = getattr(mod, "edge_cases", None) or []
         if edge_cases:
-            lines.append("## Edge Cases\n")
+            lines.append(f"## {structural_title('edge-cases', language)}\n")
             for case in edge_cases:
                 lines.append(f"- {case}")
             lines.append("")
@@ -275,11 +307,11 @@ class WikiBuilder:
         if graph is not None:
             neighbourhood = graph.module_mermaid(mod.name)
             if neighbourhood:
-                lines.append("## Dependencies\n")
+                lines.append(f"## {structural_title('dependencies', language)}\n")
                 lines.append("```mermaid\n" + neighbourhood + "\n```\n")
 
         if mod.files:
-            lines.append("## Files\n")
+            lines.append(f"## {structural_title('files', language)}\n")
             for f in mod.files:
                 purpose = f" — {f.purpose}" if f.purpose else ""
                 lines.append(f"- `{f.path}`{purpose}")
@@ -290,18 +322,18 @@ class WikiBuilder:
             lines.append("")
 
         if mod.key_concepts:
-            lines.append("## Key Concepts\n")
+            lines.append(f"## {structural_title('key-concepts', language)}\n")
             for c in mod.key_concepts:
                 lines.append(f"- **{c.name}**: {c.explanation}")
             lines.append("")
 
         if mod.relationships:
-            lines.append("## Internal Relationships\n")
+            lines.append(f"## {structural_title('relationships', language)}\n")
             for r in mod.relationships:
                 lines.append(f"- `{r.source}` → `{r.target}`: {r.description}")
             lines.append("")
 
-        _append_citations(lines, getattr(mod, "citations", None))
+        _append_citations(lines, getattr(mod, "citations", None), language)
 
         return "\n".join(lines)
 
@@ -312,14 +344,17 @@ class WikiBuilder:
 
         for step in guide.steps:
             time_est = f" (~{step.time_estimate})" if step.time_estimate else ""
-            lines.append(f"## Step {step.order}: {step.title}{time_est}\n")
+            lines.append(
+                f"## {structural_title('step', language)} {step.order}: {step.title}{time_est}\n"
+            )
             if step.files:
-                lines.append("**Files:** " + ", ".join(f"`{f}`" for f in step.files) + "\n")
+                files_label = structural_title("files", language)
+                lines.append(f"**{files_label}:** " + ", ".join(f"`{f}`" for f in step.files) + "\n")
             if step.explanation:
                 lines.append(f"{step.explanation}\n")
 
         if guide.tips:
-            lines.append("## Tips\n")
+            lines.append(f"## {structural_title('tips', language)}\n")
             for tip in guide.tips:
                 lines.append(f"- {tip}")
             lines.append("")
@@ -335,7 +370,7 @@ class WikiBuilder:
         # core files
         core = graph.get_core_files(10)
         if core:
-            lines.append("## Core Files (by PageRank)\n")
+            lines.append(f"## {structural_title('core-files', language)}\n")
             for i, path in enumerate(core, 1):
                 lines.append(f"{i}. `{path}`")
             lines.append("")
@@ -343,7 +378,7 @@ class WikiBuilder:
         # entry points
         entries = graph.get_entry_points()
         if entries:
-            lines.append("## Likely Entry Points\n")
+            lines.append(f"## {structural_title('entry-points', language)}\n")
             for e in entries[:10]:
                 lines.append(f"- `{e}`")
             lines.append("")
@@ -351,7 +386,7 @@ class WikiBuilder:
         # circular dependencies (an architectural smell worth surfacing)
         cycles = graph.find_circular_dependencies()
         if cycles:
-            lines.append("## Circular Dependencies\n")
+            lines.append(f"## {structural_title('circular', language)}\n")
             lines.append(
                 "These groups of files import each other in a cycle, so you can't "
                 "fully understand one without the others; consider breaking the loop "
@@ -365,7 +400,7 @@ class WikiBuilder:
         # isolated files (likely dead code worth surfacing)
         isolated = graph.find_isolated_files()
         if isolated:
-            lines.append("## Isolated Files\n")
+            lines.append(f"## {structural_title('isolated', language)}\n")
             lines.append(
                 "These files import nothing in the project and are imported by "
                 "nothing -- likely dead code, stray scripts, or modules that were "
@@ -378,11 +413,25 @@ class WikiBuilder:
         return "\n".join(lines)
 
 
-def _append_citations(lines: list[str], citations) -> None:
+def _append_term_tips(lines: list[str], tips, language: str = "en") -> None:
+    items = [tip for tip in (tips or []) if getattr(tip, "term", "")]
+    if not items:
+        return
+    lines.append(f"## {structural_title('term-tips', language)}\n")
+    for tip in items:
+        text = getattr(tip, "tip", "") or ""
+        if text:
+            lines.append(f"> **{tip.term}** — {text}")
+        else:
+            lines.append(f"> **{tip.term}**")
+    lines.append("")
+
+
+def _append_citations(lines: list[str], citations, language: str = "en") -> None:
     if not citations:
         return
 
-    lines.append("## Source Evidence\n")
+    lines.append(f"## {structural_title('source-evidence', language)}\n")
     for cite in citations:
         loc = format_citation(cite)
         extra = ""

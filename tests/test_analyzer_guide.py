@@ -19,7 +19,7 @@ class StubLLM:
         self.payload = payload
         self.calls: list[list[dict]] = []
 
-    async def complete(self, messages, max_tokens=4096):
+    async def complete(self, messages, max_tokens=4096, **kwargs):
         self.calls.append(messages)
         return self.payload
 

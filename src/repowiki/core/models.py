@@ -57,6 +57,17 @@ class CallChain(BaseModel):
     files: list[str] = Field(default_factory=list)
 
 
+class TermTip(BaseModel):
+    """Repo-specific jargon note rendered as 术语小贴士 / Term tips.
+
+    ``term`` stays the identifier as it appears in code (PageRank, ACP, crate).
+    Older cached JSON without this field still parses as an empty list.
+    """
+
+    term: str
+    tip: str = ""
+
+
 class TechItem(BaseModel):
     name: str
     category: str = ""  # language, framework, database, etc.
@@ -71,6 +82,7 @@ class ProjectOverview(BaseModel):
     setup_instructions: list[str] = Field(default_factory=list)
     key_features: list[str] = Field(default_factory=list)
     citations: list[Citation] = Field(default_factory=list)
+    term_tips: list[TermTip] = Field(default_factory=list)
 
 
 class Symbol(BaseModel):
@@ -110,6 +122,7 @@ class ModuleDoc(BaseModel):
     call_chains: list[CallChain] = Field(default_factory=list)
     edge_cases: list[str] = Field(default_factory=list)
     citations: list[Citation] = Field(default_factory=list)
+    term_tips: list[TermTip] = Field(default_factory=list)
 
 
 class ModuleOutline(BaseModel):
@@ -158,6 +171,7 @@ class ArchitectureDiagram(BaseModel):
     mermaid_sequence: str = ""
     data_flow: str = ""
     citations: list[Citation] = Field(default_factory=list)
+    term_tips: list[TermTip] = Field(default_factory=list)
 
 
 class ReadingStep(BaseModel):

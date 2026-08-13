@@ -28,6 +28,7 @@ from repowiki.core.models import (
     ProjectOverview,
     ReadingGuide,
     ReadingStep,
+    TermTip,
     WikiData,
     WikiOutline,
 )
@@ -69,6 +70,21 @@ class Analyzer:
     def _llm_enabled(self) -> bool:
         """Skip network calls when the client has no key; test stubs without api_key still run."""
         return bool(getattr(self.llm, "api_key", "yes"))
+
+    def _lang(self) -> str:
+        code = (self.language or "en").strip().lower().replace("_", "-")
+        primary = code.split("-", 1)[0]
+        if primary in {"zh", "cn"}:
+            return "zh"
+        return "en"
+
+    async def _complete_json(self, messages: list[dict], *, max_tokens: int = 4096) -> str:
+        """Wiki JSON steps: ask the hub for a JSON object (DeepSeek / OpenAI compatible)."""
+        return await self.llm.complete(
+            messages,
+            max_tokens=max_tokens,
+            response_format={"type": "json_object"},
+        )
 
     async def analyze(
         self,
@@ -169,7 +185,7 @@ class Analyzer:
             "\n".join(entries) or "(none)",
             self.language,
         )
-        raw = await self.llm.complete(messages, max_tokens=2048)
+        raw = await self._complete_json(messages, max_tokens=2048)
         data = extract_json(raw)
         if not data or not isinstance(data, dict):
             logger.warning("Failed to parse outline JSON, using deterministic outline")
@@ -223,7 +239,7 @@ class Analyzer:
             outline_focus=focus,
             emphasized=emphasized,
         )
-        raw = await self.llm.complete(messages, max_tokens=4096)
+        raw = await self._complete_json(messages, max_tokens=4096)
         data = extract_json(raw)
         if not data or not isinstance(data, dict):
             logger.warning("Failed to parse overview JSON, using defaults")
@@ -311,7 +327,7 @@ class Analyzer:
                 key_symbols=plan.key_symbols if plan else None,
                 sections=plan.sections if plan else None,
             )
-            raw = await self.llm.complete(messages, max_tokens=4096)
+            raw = await self._complete_json(messages, max_tokens=4096)
             data = extract_json(raw)
             if not data or not isinstance(data, dict):
                 logger.warning("Failed to parse module '%s' JSON", name)
@@ -355,7 +371,7 @@ class Analyzer:
             outline_focus=focus,
             core_modules=core,
         )
-        raw = await self.llm.complete(messages, max_tokens=4096)
+        raw = await self._complete_json(messages, max_tokens=4096)
         data = extract_json(raw)
         if not data or not isinstance(data, dict):
             logger.warning("Failed to parse architecture JSON")
@@ -412,7 +428,7 @@ class Analyzer:
             self.language,
             reading_order=reading_order,
         )
-        raw = await self.llm.complete(messages, max_tokens=4096)
+        raw = await self._complete_json(messages, max_tokens=4096)
         data = extract_json(raw)
         if not data or not isinstance(data, dict):
             logger.warning("Failed to parse reading guide JSON")
@@ -480,7 +496,7 @@ class Analyzer:
                 valid_paths,
                 self.language,
             )
-            raw = await self.llm.complete(messages, max_tokens=2048)
+            raw = await self._complete_json(messages, max_tokens=2048)
             data = extract_json(raw)
             if not data or not isinstance(data, dict):
                 return None
@@ -528,8 +544,23 @@ class Analyzer:
         description = ""
         if readme and (readme.content or readme.preview):
             description = (readme.content or readme.preview or "").strip()[:1200]
+        elif self._lang() == "zh":
+            description = (
+                f"{project.name} 按目录划成模块。先从入口文件看进程怎么启动，"
+                "再顺着 import 图读枢纽包的职责与边界，而不是把 Wiki 写成文件清单。"
+            )
+            if outline and outline.overview_focus:
+                names = ", ".join(f"`{m.name}`" for m in outline.modules[:6])
+                if names:
+                    description += f" 枢纽包包括 {names}。"
         elif outline and outline.overview_focus:
             description = outline.overview_focus
+        else:
+            description = (
+                f"{project.name} is organized as directory modules. Start at the "
+                "entrypoints, then follow imports into the hub packages — this page "
+                "states purpose and boundaries, not a file inventory."
+            )
         cites: list[Citation] = []
         if readme:
             cites.append(Citation(path=readme.path, start_line=1, note="README"))
@@ -540,6 +571,7 @@ class Analyzer:
             name=project.name,
             description=description,
             citations=cites,
+            term_tips=_generic_term_tips(self._lang()),
         )
 
     def _fallback_architecture(
@@ -551,10 +583,33 @@ class Analyzer:
                 components.append(
                     Component(name=item.name, files=list(item.key_files[:6]))
                 )
+        focus = ""
+        if self._lang() == "zh":
+            focus = (
+                "仓库按目录模块分层。请求从入口进入，经过 import 图上最中心的包，"
+                "再扩散到依赖方。architecture_type 只是机器标签；正文讲职责怎么切、数据怎么走。"
+                "PageRank 只决定哪些模块值得先写深，不是目录清单。"
+            )
+            if outline:
+                names = ", ".join(f"`{m.name}`" for m in outline.modules[:6])
+                if names:
+                    focus += f" 优先读 {names}。"
+        else:
+            focus = (outline.architecture_focus if outline else "").strip()
+            if "Heaviest modules by PageRank" in focus:
+                focus = ""
+            if not focus:
+                focus = (
+                    "The repo is split by directory modules. Work enters at the "
+                    "entrypoints, moves through the highest-centrality packages, then "
+                    "out to dependents. PageRank only ranks which packages to explain "
+                    "first — it is not a table of contents."
+                )
         return ArchitectureDiagram(
             architecture_type="codebase-modules",
-            description=(outline.architecture_focus if outline else ""),
+            description=focus,
             components=components,
+            term_tips=_generic_term_tips(self._lang()),
         )
 
     def _fallback_reading_guide(
@@ -595,22 +650,74 @@ class Analyzer:
             file_docs.append(
                 FileDoc(
                     path=f.path,
-                    purpose="Entrypoint" if f.is_entrypoint else "",
+                    purpose=("入口文件" if self._lang() == "zh" else "Entrypoint")
+                    if f.is_entrypoint
+                    else "",
                     key_symbols=harvest_symbols(content),
                 )
             )
-        purpose = f"Module containing {len(files)} files"
-        notes = plan.notes if plan else ""
+        notes = (plan.notes if plan else "") or ""
+        if self._lang() == "zh":
+            purpose = notes or f"负责 `{name}` 这一层的职责边界"
+            description = (
+                f"`{name}` 是仓库里的一块职责边界。先看它对外承诺什么、和谁协作；"
+                "下面的文件列表只是扫描证据，不是正文。"
+            )
+        else:
+            purpose = notes or f"Owns the `{name}` package boundary"
+            description = (
+                f"`{name}` is a directory boundary. This page states what the "
+                "package is for and how it connects; the file list is evidence, "
+                "not the article."
+            )
         return ModuleDoc(
             name=name,
-            purpose=notes or purpose,
+            purpose=purpose,
+            description=description,
             files=file_docs,
             citations=[Citation(path=f.path) for f in files[:8]],
+            term_tips=_generic_term_tips(self._lang()),
         )
+
+
+def _generic_term_tips(language: str) -> list[TermTip]:
+    if language == "zh":
+        return [
+            TermTip(
+                term="PageRank",
+                tip="按 import 图给文件打重要性分，用来决定哪些模块值得写深，而不是用来罗列文件。",
+            ),
+            TermTip(
+                term="crate",
+                tip="Rust/Cargo 的包单位。crate 名保持 Cargo.toml 里的英文原文，不要音译。",
+            ),
+            TermTip(
+                term="entrypoint",
+                tip="进程入口（main / bin / CLI）。先读入口才能看清其余模块是怎么被串起来的。",
+            ),
+        ]
+    return [
+        TermTip(
+            term="PageRank",
+            tip="Ranks files by import centrality so the wiki can write deeper pages for hubs, not dump a directory listing.",
+        ),
+        TermTip(
+            term="crate",
+            tip="A Rust/Cargo package. Keep the crate name as it appears in Cargo.toml.",
+        ),
+        TermTip(
+            term="entrypoint",
+            tip="A process start file (main, bin, CLI). Read these first to see how the rest of the graph is wired.",
+        ),
+    ]
 
 
 def _coerce_model(data: dict, model_cls, **defaults):
     filtered = {k: v for k, v in data.items() if k in model_cls.model_fields}
+    if "term_tips" in model_cls.model_fields:
+        filtered["term_tips"] = _coerce_term_tips(filtered.get("term_tips"))
+    if "citations" in model_cls.model_fields and "citations" in data:
+        filtered["citations"] = _coerce_citations(filtered.get("citations"))
     for key, value in defaults.items():
         filtered.setdefault(key, value)
     try:
@@ -625,6 +732,7 @@ def _coerce_module(data: dict, name: str) -> ModuleDoc:
     payload["call_chains"] = _coerce_call_chains(payload.get("call_chains"))
     payload["edge_cases"] = _coerce_strings(payload.get("edge_cases"))
     payload["citations"] = _coerce_citations(payload.get("citations"))
+    payload["term_tips"] = _coerce_term_tips(payload.get("term_tips"))
     filtered = {k: v for k, v in payload.items() if k in ModuleDoc.model_fields}
     try:
         return ModuleDoc(**filtered)
@@ -677,4 +785,19 @@ def _coerce_citations(raw) -> list[dict]:
                 out.append(parsed.model_dump())
         elif isinstance(item, dict) and item.get("path"):
             out.append(item)
+    return out
+
+
+def _coerce_term_tips(raw) -> list[dict]:
+    if not raw:
+        return []
+    out: list[dict] = []
+    for item in raw:
+        if isinstance(item, str) and item.strip():
+            out.append({"term": item.strip(), "tip": ""})
+        elif isinstance(item, dict):
+            term = str(item.get("term") or item.get("name") or "").strip()
+            if not term:
+                continue
+            out.append({"term": term, "tip": str(item.get("tip") or item.get("explanation") or "")})
     return out
