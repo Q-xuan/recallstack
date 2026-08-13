@@ -34,14 +34,13 @@ from recallstack.learning.learning_contract import (
     upgrade_legacy_concept_markdown,
     wiki_prose_excerpt,
 )
-from repowiki.core.topics import is_generic_web_slug
+from repowiki.core.topics import is_generic_web_slug, omit_generic_web_wiki_page
 from repowiki.core.wiki_builder import (
-    filter_unknown_wiki_links,
     prune_generic_web_sidebar,
     rebuild_topic_sidebar,
     sidebar_has_topic_groups,
     upgrade_legacy_module_markdown,
-    upgrade_source_chip_markdown,
+    upgrade_wiki_page_content,
 )
 
 
@@ -115,15 +114,23 @@ def wiki_out(
     payload = version.wiki_pages or {}
     concept_by_slug = {c.slug: c for c in (concepts or [])}
     raw_pages = payload.get("pages") or []
-    page_ids = {item.get("id") for item in raw_pages}
+    kept_pages = [
+        item
+        for item in raw_pages
+        if not omit_generic_web_wiki_page(
+            str(item.get("id") or ""), str(item.get("content") or "")
+        )
+    ]
+    page_ids = {item.get("id") for item in kept_pages}
+    known_ids = {str(i) for i in page_ids if i}
     overview_excerpt = wiki_prose_excerpt(
         next(
-            (item.get("content") or "" for item in raw_pages if item.get("id") == "index"),
+            (item.get("content") or "" for item in kept_pages if item.get("id") == "index"),
             "",
         )
     )
     pages: list[WikiPageOut] = []
-    for p in raw_pages:
+    for p in kept_pages:
         page_id = p.get("id") or ""
         concept = None
         content = p.get("content") or ""
@@ -149,12 +156,9 @@ def wiki_out(
                 ),
                 None,
             )
-        content = upgrade_source_chip_markdown(content)
-        content = filter_unknown_wiki_links(
-            content, {str(i) for i in page_ids if i}
+        content = upgrade_wiki_page_content(
+            content, known_ids, language=content_lang()
         )
-        if content_lang() == "zh":
-            content = content.replace("您", "你")
         pages.append(
             WikiPageOut(
                 id=page_id,
@@ -180,14 +184,14 @@ def wiki_out(
         return out
 
     raw_sidebar = payload.get("sidebar") or []
-    content_by_id = {item.get("id") or "": item.get("content") or "" for item in raw_pages}
+    content_by_id = {item.get("id") or "": item.get("content") or "" for item in kept_pages}
     # Rebuild unless this payload already has 入门指南 / 深入探索. Do not wait
     # for sidebar_looks_like_module_tree: the old Overview/Architecture/Modules
     # tree is easy to miss, and the UI relabels 模块 → 按目录 so it looks done.
     if not sidebar_has_topic_groups(raw_sidebar):
         mapped_sidebar = map_sidebar(
             prune_generic_web_sidebar(
-                rebuild_topic_sidebar(raw_pages, language=content_lang()),
+                rebuild_topic_sidebar(kept_pages, language=content_lang()),
                 content_by_id,
             )
         )

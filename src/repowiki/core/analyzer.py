@@ -384,7 +384,7 @@ class Analyzer:
             )
             content_parts = [(f.content or f.preview or "") for f in files]
             cache_key = (
-                f"topic:v2:{self.language}:{plan.depth}:{topic.id}:"
+                f"topic:v3:{self.language}:{plan.depth}:{topic.id}:"
                 f"{content_hash(''.join(content_parts))}"
             )
             cached = await self.cache.get(cache_key)
@@ -404,6 +404,7 @@ class Analyzer:
                 outline_notes=topic.purpose,
                 key_files=topic.key_files,
                 key_symbols=topic.key_symbols,
+                topic_id=topic.id,
             )
             raw = await self._complete_json(messages, max_tokens=4096)
             data = extract_json(raw)

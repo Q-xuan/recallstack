@@ -215,9 +215,9 @@ class WikiBuilder:
         sidebar = self._topic_sidebar(pages, wiki_data, language=lang)
         known_ids = {p.id for p in pages}
         for page in pages:
-            page.content = filter_unknown_wiki_links(page.content, known_ids)
-            if lang == "zh":
-                page.content = page.content.replace("您", "你")
+            page.content = upgrade_wiki_page_content(
+                page.content, known_ids, language=lang
+            )
         return Wiki(pages=pages, sidebar=sidebar, project_name=project.name)
 
     def _build_overview_page(
@@ -790,23 +790,112 @@ def _keep_built_topic(topic, project_paths: list[str]) -> bool:
 
 
 _MD_WIKI_LINK = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+_DROP = "\0DROP\0"
+
+# Hallucinated topic ids from earlier scans → real grok-study / zread ids.
+_TOPIC_LINK_ALIASES: dict[str, tuple[str, ...]] = {
+    "context-assembly": ("agent-loop",),
+    "code-graph": ("codebase-graph", "codegen"),
+    "pty-control": ("tui-pager", "terminal-ui", "pty-control"),
+}
+
+
+def _normalize_wiki_href(href: str) -> str:
+    page_id = (href or "").split()[0].strip("<>").strip()
+    if page_id.startswith("./"):
+        page_id = page_id[2:]
+    return page_id.rstrip("/")
+
+
+def _rewrite_wiki_href(page_id: str, known_ids: set[str]) -> str | None:
+    if page_id in known_ids:
+        return page_id
+    slug = page_id.split("/", 1)[-1] if page_id.startswith("topics/") else page_id
+    for cand in _TOPIC_LINK_ALIASES.get(slug, ()):
+        href = cand if cand in known_ids else f"topics/{cand}"
+        if href in known_ids:
+            return href
+    return None
 
 
 def filter_unknown_wiki_links(text: str, known_ids: set[str]) -> str:
-    """Drop markdown hrefs that are not planned wiki page ids."""
+    """Rewrite or drop markdown hrefs that are not planned wiki page ids."""
     if not text or not known_ids:
         return text
 
     def repl(match: re.Match[str]) -> str:
         label, href = match.group(1), (match.group(2) or "").strip()
-        page_id = href.split()[0].strip("<>") if href else ""
+        page_id = _normalize_wiki_href(href)
         if not page_id or page_id.startswith(("#", "http://", "https://", "mailto:")):
             return match.group(0)
-        if page_id in known_ids:
-            return match.group(0)
-        return label
+        rewritten = _rewrite_wiki_href(page_id, known_ids)
+        if rewritten:
+            if rewritten == page_id:
+                return match.group(0)
+            return f"[{label}]({rewritten})"
+        return _DROP
 
-    return _MD_WIKI_LINK.sub(repl, text)
+    text = _MD_WIKI_LINK.sub(repl, text)
+    text = re.sub(r"(?m)^[ \t]*[-*][ \t]+\0DROP\0[ \t]*\n?", "", text)
+    return text.replace(_DROP, "")
+
+
+def upgrade_zh_handbook_voice(content: str) -> str:
+    """阅读后，您应能… → 读完应能; strip leftover 您."""
+    if not content:
+        return content
+    content = re.sub(r"阅读后[，,]?\s*[您你]应能", "读完应能", content)
+    content = re.sub(r"阅读之后[，,]?\s*[您你]应能", "读完应能", content)
+    return content.replace("您", "你")
+
+
+_PATHLESS_TYPE_BULLET_RE = re.compile(
+    r"(?m)^[ \t]*[-*][ \t]+`([A-Za-z_][A-Za-z0-9_]*)`"
+    r"(?:\s*[—–−-]\s+(?!`)[^\n`]*)?\s*$"
+)
+
+
+def strip_pathless_type_bullets(content: str) -> str:
+    """Drop 核心子系统 bullets that are a Type name with no `path`."""
+    if not content or "`" not in content:
+        return content
+    return _PATHLESS_TYPE_BULLET_RE.sub("", content)
+
+
+def upgrade_codegraph_heading(content: str) -> str:
+    """Overview 代码生成 that cites a code-graph crate → 代码图谱."""
+    if not content or "代码生成" not in content:
+        return content
+    if not re.search(r"code-graph|codebase-graph|codegraph", content, re.I):
+        return content
+    chunks = re.split(r"(?m)(?=^#{2,3} )", content)
+    out: list[str] = []
+    for chunk in chunks:
+        first, _, _rest = chunk.partition("\n")
+        if re.match(r"^#{2,3} 代码生成\s*$", first) and re.search(
+            r"code-graph|codebase-graph|codegraph", chunk, re.I
+        ):
+            chunk = re.sub(r"^#{2,3} 代码生成", lambda m: m.group(0).replace("代码生成", "代码图谱"), chunk, count=1)
+        out.append(chunk)
+    return "".join(out)
+
+
+def upgrade_wiki_page_content(
+    content: str,
+    known_ids: set[str],
+    *,
+    language: str = "zh",
+) -> str:
+    """GET/build pass: chips, dead links, 您, pathless types, 代码图谱."""
+    if not content:
+        return content
+    content = upgrade_source_chip_markdown(content)
+    content = filter_unknown_wiki_links(content, known_ids)
+    if language == "zh" or "您" in content or "阅读后" in content:
+        content = upgrade_zh_handbook_voice(content)
+    content = strip_pathless_type_bullets(content)
+    content = upgrade_codegraph_heading(content)
+    return content
 
 
 def _see_also_lines(
@@ -885,12 +974,13 @@ def _append_citations(lines: list[str], citations, language: str = "en") -> None
     lines.append(f"## {structural_title('source-evidence', language)}\n")
     for cite in citations:
         loc = format_citation(cite)
-        extra = ""
-        if cite.symbol:
-            extra += f" — `{cite.symbol}`"
-        if cite.note:
-            extra += f" — {cite.note}"
-        lines.append(f"- `{loc}`{extra}")
+        symbol = (getattr(cite, "symbol", "") or "").strip()
+        pill = f"{loc} {symbol}".strip() if symbol else loc
+        note = (getattr(cite, "note", "") or "").strip()
+        if note:
+            lines.append(f"- `{pill}` — {note}")
+        else:
+            lines.append(f"- `{pill}`")
     lines.append("")
 
 
@@ -914,18 +1004,23 @@ _CHIP_HEADING_RE = re.compile(
 _CHIP_ITEM_RE = re.compile(
     r"`([^`]+)`(?:\s*[—–−-]\s*`([A-Za-z_][A-Za-z0-9_]*)`)?"
 )
+_EVIDENCE_SPLIT_RE = re.compile(
+    r"(?m)^([ \t]*[-*][ \t]*)`([^`]+)`\s*[—–−-]\s*`([A-Za-z_][A-Za-z0-9_]*)`"
+    r"(\s*[—–−-]\s*.*)?\s*$"
+)
 
 
 def upgrade_source_chip_markdown(content: str) -> str:
-    """Rewrite persisted `` `path` — `Sym` · `` chips into `` `path Sym` `` pills.
+    """Rewrite persisted `` `path` — `Sym` `` chips into `` `path Sym` `` pills.
 
-    Colon stays inside the bold label (``**相关源码:**``). Applied on wiki GET
-    so a refresh fixes grok-study without a re-scan.
+    Covers ``**相关源码:**`` rows and 源码证据 list items
+    (`` `path:line` — `Symbol` — comment ``). Applied on wiki GET so a
+    refresh fixes grok-study without a re-scan.
     """
-    if not content or "**" not in content:
+    if not content:
         return content
 
-    def repl(match: re.Match[str]) -> str:
+    def heading_repl(match: re.Match[str]) -> str:
         prefix, rest = match.group(1), match.group(2)
         pills: list[str] = []
         for item in _CHIP_ITEM_RE.finditer(rest):
@@ -938,7 +1033,16 @@ def upgrade_source_chip_markdown(content: str) -> str:
             return match.group(0)
         return prefix + " ".join(pills)
 
-    return _CHIP_HEADING_RE.sub(repl, content)
+    def evidence_repl(match: re.Match[str]) -> str:
+        prefix, path, symbol, note = match.group(1), match.group(2), match.group(3), match.group(4)
+        path = (path or "").strip()
+        symbol = (symbol or "").strip()
+        pill = f"`{path} {symbol}`" if symbol else f"`{path}`"
+        tail = (note or "").rstrip()
+        return f"{prefix}{pill}{tail}"
+
+    content = _CHIP_HEADING_RE.sub(heading_repl, content)
+    return _EVIDENCE_SPLIT_RE.sub(evidence_repl, content)
 
 
 def _overview_lede(name: str, one_liner: str, language: str) -> str:

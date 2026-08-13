@@ -362,17 +362,34 @@ def test_wiki_out_drops_thin_generic_web_topics_and_dead_links(monkeypatch):
     )
     overview = (
         "# grok-study\n\n"
-        "> 这篇文档讲 grok-study。读完您应能讲清边界。\n\n"
-        "细节见 [context-assembly](topics/context-assembly) "
-        "和 [Agent Loop](topics/agent-loop)。\n"
+        "> 阅读后，您应能说明：一次调用怎么走。\n\n"
+        "## 继续读\n\n"
+        "- [context-assembly](topics/context-assembly)\n"
+        "- [pty-control](topics/pty-control)\n"
+        "- [code-graph](topics/code-graph)\n"
+        "- [Agent Loop](topics/agent-loop)\n"
+        "- [TUI](topics/tui-pager)\n"
+        "- [代码图谱](topics/codebase-graph)\n"
+    )
+    evidence = (
+        "# Agent Loop\n\n"
+        "## 源码证据\n\n"
+        "- `crates/agent/src/loop.rs:40` — `Session` — 持有本轮\n"
+        "- `Cli`\n"
+        "- `Terminal` — draw\n"
     )
     pages = [
         {"id": "index", "title": "概述", "content": overview},
         {"id": "architecture", "title": "架构概览", "content": "# 架构\n"},
-        {"id": "topics/agent-loop", "title": "Agent Loop", "content": "# loop\n`crates/agent/src/loop.rs`\n"},
+        {"id": "topics/agent-loop", "title": "Agent Loop", "content": evidence},
+        {"id": "topics/tui-pager", "title": "TUI", "content": "# tui\n"},
+        {"id": "topics/codebase-graph", "title": "代码图谱", "content": "# graph\n"},
         {"id": "topics/caching", "title": "缓存", "content": thin},
         {"id": "topics/request-routing", "title": "请求路由", "content": thin},
         {"id": "topics/data-persistence", "title": "持久化", "content": thin},
+        {"id": "concepts/caching", "title": "缓存", "content": thin},
+        {"id": "concepts/request-routing", "title": "请求路由", "content": thin},
+        {"id": "concepts/data-persistence", "title": "持久化", "content": thin},
     ]
     sidebar = [
         {"title": "入门指南", "page_id": "", "children": [
@@ -396,6 +413,11 @@ def test_wiki_out_drops_thin_generic_web_topics_and_dead_links(monkeypatch):
         }
 
     out = wiki_out("repo-1", _Version())
+    ids = {p.id for p in out.pages}
+    assert "concepts/caching" not in ids
+    assert "concepts/request-routing" not in ids
+    assert "concepts/data-persistence" not in ids
+    assert "topics/caching" not in ids
     deep = next(item for item in out.sidebar if item.title == "深入探索")
     child_ids = [c.page_id for c in deep.children]
     assert "topics/agent-loop" in child_ids
@@ -404,5 +426,17 @@ def test_wiki_out_drops_thin_generic_web_topics_and_dead_links(monkeypatch):
     assert "topics/data-persistence" not in child_ids
     index = next(p for p in out.pages if p.id == "index")
     assert "[Agent Loop](topics/agent-loop)" in index.content
+    assert "[TUI](topics/tui-pager)" in index.content
+    assert "[代码图谱](topics/codebase-graph)" in index.content
     assert "topics/context-assembly" not in index.content
+    assert "topics/pty-control" not in index.content
+    assert "topics/code-graph" not in index.content
+    assert "[pty-control](topics/tui-pager)" in index.content
+    assert "[code-graph](topics/codebase-graph)" in index.content
     assert "您" not in index.content
+    assert "读完应能" in index.content
+    loop = next(p for p in out.pages if p.id == "topics/agent-loop")
+    assert "`crates/agent/src/loop.rs:40 Session`" in loop.content
+    assert " — `Session`" not in loop.content
+    assert "`Cli`" not in loop.content
+    assert "`Terminal`" not in loop.content

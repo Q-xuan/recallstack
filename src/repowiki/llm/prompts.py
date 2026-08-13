@@ -229,7 +229,11 @@ def build_overview_prompt(
                 "subsystems: 3-8; each has role + 2-4 key_types. "
                 "Omit a key_type if `path` is missing; never invent Type names that are not in the source. "
                 "see_also: architecture plus planned topic ids only "
-                "(e.g. topics/agent-loop). Never invent topics/context-assembly or topics/code-graph. "
+                "(e.g. topics/agent-loop). Never invent topics/context-assembly, "
+                "topics/pty-control, or topics/code-graph — use the planned ids "
+                "(topics/agent-loop, topics/tui-pager, topics/codebase-graph). "
+                "If a crate is code-graph / codebase-graph, name that subsystem "
+                "代码图谱 / codebase graph, never 代码生成. "
                 "Leave key_features empty. Do not dump a file inventory, method list, or JavaDoc. "
                 "Never write homework headings (what this step asks, 本步要你干什么, pass check). "
                 "Never list Python/JavaScript with version 未指定 unless those languages "
@@ -253,6 +257,7 @@ def build_module_prompt(
     key_files: list[str] | None = None,
     key_symbols: list[str] | None = None,
     sections: list[str] | None = None,
+    topic_id: str = "",
 ) -> list[dict]:
     depth = depth if depth in {"deep", "standard", "brief"} else "standard"
     focus = ""
@@ -318,6 +323,16 @@ def build_module_prompt(
         else:
             extra_rules += "Walkthrough + at least one call_chain are required at this depth. "
             length_hint = "description: 1-3 paragraphs. implementation_details: 2-4 paragraphs."
+
+    tid = f"{topic_id} {module_name}".lower()
+    if "agent-loop" in tid or "agent loop" in tid:
+        extra_rules += (
+            "THIS PAGE IS THE AGENT LOOP, not prompt templating or system-head/trace. "
+            "Walk the runtime loop in order: session → model call → tool → observe → next turn. "
+            "Do NOT narrate replace_or_insert_system_head / system prompt assembly as the loop. "
+            "Do NOT invent types named AgentLoop or HooksSystem. "
+            "Mermaid node labels must be complete words (no truncated 'Cont' / 'Sess'). "
+        )
 
     return [
         {

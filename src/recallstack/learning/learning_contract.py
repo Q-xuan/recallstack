@@ -523,17 +523,15 @@ def related_source_chip_line(
         if not chip or chip in seen or not _SOURCE_CHIP_RE.match(chip):
             continue
         seen.add(chip)
-        bit = f"`{chip}`"
         symbol = extras[i].strip() if i < len(extras) and extras[i] else ""
-        if symbol:
-            bit += f" — `{symbol}`"
-        chips.append(bit)
+        pill = f"{chip} {symbol}".strip() if symbol else chip
+        chips.append(f"`{pill}`")
         if len(chips) >= 8:
             break
     if not chips:
         return ""
     heading = label or t("Related source", "相关源码")
-    return f"**{heading}:** " + " · ".join(chips)
+    return f"**{heading}:** " + " ".join(chips)
 
 
 def _parse_line_span(loc: str) -> tuple[int | None, int | None]:

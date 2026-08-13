@@ -39,6 +39,7 @@ from repowiki.core.modules import group_into_modules
 from repowiki.core.topics import (
     codebase_structure_for,
     fallback_topic_doc,
+    is_generic_web_slug,
     runtime_mermaid_for,
     subsystems_from_topics,
     topic_wiki_links,
@@ -507,6 +508,8 @@ def append_concept_pages(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
 
     concept_sidebar = SidebarItem(title=t("Concepts", "词条"), page_id="", children=[])
     for i, c in enumerate(concepts):
+        if is_generic_web_slug(c.slug):
+            continue
         page_id = f"concepts/{c.slug}"
         folded = _fold_overview_architecture(wiki, c)
         what = _what_body(c, folded)

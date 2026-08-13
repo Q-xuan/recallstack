@@ -40,6 +40,7 @@ class CiteIndex:
     lines: dict[str, int]
     tokens: set[str] = field(default_factory=set)
     blob: str = ""
+    contents: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_project(cls, project: ProjectContext) -> CiteIndex:
@@ -47,6 +48,7 @@ class CiteIndex:
         lines: dict[str, int] = {}
         tokens: set[str] = set()
         blobs: list[str] = []
+        contents: dict[str, str] = {}
         for f in project.files:
             path = _normalize_path(f.path)
             paths.add(path)
@@ -54,6 +56,7 @@ class CiteIndex:
             _add_path_tokens(tokens, path)
             text = f.content or f.preview or ""
             if text:
+                contents[path] = text
                 blobs.append(text)
                 _add_ident_tokens(tokens, text)
         return cls(
@@ -61,6 +64,7 @@ class CiteIndex:
             lines=lines,
             tokens=tokens,
             blob="\n".join(blobs).lower(),
+            contents=contents,
         )
 
     def resolve(self, path: str) -> str | None:
@@ -94,6 +98,18 @@ class CiteIndex:
         if " " in key and key in self.blob:
             return True
         return False
+
+    def line_of_symbol(self, path: str, symbol: str) -> int:
+        """First source line of ``symbol`` in ``path``, else 0."""
+        text = self.contents.get(path) or ""
+        name = (symbol or "").strip()
+        if not text or len(name) < 2:
+            return 0
+        pat = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(name) + r"(?![A-Za-z0-9_])")
+        for i, line in enumerate(text.splitlines(), 1):
+            if pat.search(line):
+                return i
+        return 0
 
 
 @dataclass
@@ -358,6 +374,11 @@ def _clamp_citation(cite: Citation, index: CiteIndex) -> Citation | None:
     cite.path = resolved
     cite.start_line = index.clamp_line(resolved, cite.start_line)
     cite.end_line = index.clamp_line(resolved, cite.end_line)
+    symbol = (getattr(cite, "symbol", "") or "").strip()
+    if symbol and cite.start_line in (0, 1):
+        found = index.line_of_symbol(resolved, symbol)
+        if found > 1:
+            cite.start_line = found
     if cite.end_line and cite.start_line and cite.end_line < cite.start_line:
         cite.end_line = 0
     cite.note = sanitize_text(cite.note, index)

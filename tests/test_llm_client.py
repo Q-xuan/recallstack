@@ -119,6 +119,13 @@ def test_zh_prompts_ask_for_handbook_prose_and_term_tips():
     assert "Agent Loop" in titled[-1]["content"]
     assert "Tool System" in titled[-1]["content"]
     assert "see_also" in titled[-1]["content"]
+    assert "代码图谱" in titled[-1]["content"]
+    loop = build_module_prompt(
+        "Agent Loop", "src", "demo", "zh", depth="deep", topic_id="agent-loop"
+    )
+    assert "session → model call → tool → observe → next turn" in loop[-1]["content"]
+    assert "AgentLoop" in loop[-1]["content"]
+    assert "replace_or_insert_system_head" in loop[-1]["content"]
 
 
 def test_extract_json_recovers_truncated_topics_payload():

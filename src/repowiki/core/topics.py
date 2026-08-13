@@ -67,6 +67,12 @@ _SYSTEMS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
     ("terminal-ui", "Terminal UI", "Terminal UI", ("tui", "ratatui", "crossterm")),
     ("pty-control", "PTY / Terminal Control", "PTY 控制", ("pty", "ptyctl")),
     ("headless-modes", "Headless & ACP Modes", "Headless 与 ACP 模式", ("headless",)),
+    (
+        "codebase-graph",
+        "Codebase graph",
+        "代码图谱",
+        ("code-graph", "codebase-graph", "codegraph"),
+    ),
     ("codegen", "Codegen", "代码生成", ("codegen",)),
 )
 
@@ -166,6 +172,13 @@ def keep_generic_web_topic_nav(page_id: str, content: str) -> bool:
     if not names:
         return False
     return content_cites_first_class_system(content, names)
+
+
+def omit_generic_web_wiki_page(page_id: str, content: str) -> bool:
+    """True when a stub caching/routing concept or topic must leave wiki GET."""
+    return not keep_generic_web_topic_nav(page_id, content) and (
+        (page_id or "").startswith("topics/") or (page_id or "").startswith("concepts/")
+    )
 
 
 def wiki_page_id_for_topic(topic_id: str) -> str:
@@ -503,6 +516,9 @@ def _human_system_title(leaf: str, zh: bool) -> str:
     cleaned = leaf.replace("_", " ").replace("-", " ").strip()
     if not cleaned:
         return "核心系统" if zh else "Core system"
+    low = leaf.lower().replace("_", "-")
+    if low in {"code-graph", "codebase-graph", "codegraph"}:
+        return "代码图谱" if zh else "Codebase graph"
     # Keep crate identifiers readable; do not prefix 模块.
     return cleaned
 

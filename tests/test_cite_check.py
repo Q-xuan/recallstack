@@ -189,3 +189,27 @@ def test_cite_check_drops_key_types_without_repo_path_and_foreign_term_tips():
     assert cleaned.architecture.components[0].key_types == []
     assert cleaned.architecture.term_tips == []
     assert all(t.name != "caching" for t in cleaned.topics)
+
+
+def test_cite_check_prefers_symbol_line_over_line_one():
+    core = "from app import x\n\ndef boot():\n    return 1\n"
+    project = ProjectContext(
+        name="demo",
+        root=".",
+        files=[
+            FileInfo(
+                path="app/core.py",
+                size=len(core),
+                language="python",
+                lines=4,
+                content=core,
+            )
+        ],
+    )
+    data = WikiData(
+        overview=ProjectOverview(
+            citations=[Citation(path="app/core.py", start_line=1, symbol="boot")]
+        )
+    )
+    cleaned = verify_wiki_data(data, project)
+    assert cleaned.overview.citations[0].start_line == 3

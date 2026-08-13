@@ -132,7 +132,8 @@ def test_module_page_renders_deep_sections_when_present():
     assert "### boot" in content
     assert "## Failures and edges" in content
     assert "## Source Evidence" in content
-    assert "`app/main.py:1`" in content
+    assert "`app/main.py:1 main`" in content
+    assert " — `main`" not in content
     assert content.index("## How a call runs") < content.index("## Related source")
     assert content.index("## How a call runs") < content.index("## How it actually runs")
     assert "## Implementation" not in content
@@ -745,6 +746,16 @@ def test_upgrade_source_chip_markdown_rewrites_grok_emdash_line():
     assert "`crates/acp/src/lib.rs:12`" in line
     # Already-upgraded pills stay stable.
     assert upgrade_source_chip_markdown(upgraded) == upgraded
+    evidence = (
+        "## 源码证据\n\n"
+        "- `crates/agent/src/loop.rs:12` — `Session` — holds the turn\n"
+        "- `bin/grok.rs:1` — `Agent`\n"
+    )
+    fixed = upgrade_source_chip_markdown(evidence)
+    assert "`crates/agent/src/loop.rs:12 Session`" in fixed
+    assert "`bin/grok.rs:1 Agent`" in fixed
+    assert " — `Session`" not in fixed
+    assert " — holds the turn" in fixed
 
 
 def test_builder_strips_unknown_topic_links_and_pathless_key_types():
@@ -801,7 +812,6 @@ def test_builder_strips_unknown_topic_links_and_pathless_key_types():
     assert "[架构概览](architecture)" in overview
     assert "topics/context-assembly" not in overview
     assert "topics/code-graph" not in overview
-    assert "context-assembly" in overview  # label kept, href dropped
     assert "`Cli`" not in overview
     assert "`Terminal`" not in overview
     assert "`Session`" in overview
@@ -820,6 +830,12 @@ def test_filter_unknown_wiki_links_keeps_planned_ids():
     )
     assert "[Agent Loop](topics/agent-loop)" in out
     assert "[arch](architecture)" in out
+    assert "[context-assembly](topics/agent-loop)" in out
     assert "topics/context-assembly" not in out
-    assert "context-assembly" in out
+    dropped = filter_unknown_wiki_links(
+        "- [code-graph](topics/code-graph)\n- [ok](architecture)\n",
+        {"architecture", "index"},
+    )
+    assert "topics/code-graph" not in dropped
+    assert "[ok](architecture)" in dropped
 
