@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from recallstack.api.serializers import wiki_out
 from recallstack.learning.concept_extractor import ConceptExtractor
 from recallstack.learning.path_builder import PathBuilder
 from recallstack.learning.wiki_generator import build_wiki_payload
 from repowiki.core.graph import DependencyGraph
 from repowiki.core.models import FileInfo, ProjectContext
-from repowiki.core.wiki_builder import rebuild_topic_sidebar, sidebar_looks_like_module_tree
+from repowiki.core.wiki_builder import (
+    rebuild_topic_sidebar,
+    sidebar_has_topic_groups,
+    sidebar_looks_like_module_tree,
+)
 
 
 def _file(path: str, content: str, *, entry: bool = False, language: str = "rust") -> FileInfo:
@@ -144,3 +149,74 @@ def test_rebuild_hides_legacy_module_tree():
     assert ".cargo" not in nav
     assert "ptyctl" not in nav
     assert "crates/codegen/ptyctl" not in nav
+
+
+def test_wiki_out_rebuilds_flat_overview_architecture_modules(monkeypatch):
+    """Refresh must regroup even when the detector misses the old Modules tree."""
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    pages = [
+        {"id": "index", "title": "概述", "content": "# 概述\n"},
+        {"id": "architecture", "title": "架构概览", "content": "# 架构\n"},
+        {"id": "modules/.cargo", "title": ".cargo", "content": "# .cargo\n"},
+        {
+            "id": "modules/crates/codegen/ptyctl",
+            "title": "crates/codegen/ptyctl",
+            "content": "# ptyctl\n",
+        },
+        {"id": "concepts/application-entry", "title": "应用入口", "content": "# 入口\n"},
+    ]
+    old_sidebar = [
+        {"title": "概述", "page_id": "index", "children": []},
+        {"title": "架构概览", "page_id": "architecture", "children": []},
+        {
+            "title": "模块",
+            "page_id": "",
+            "children": [
+                {
+                    "title": ".cargo",
+                    "page_id": "modules/.cargo",
+                    "children": [],
+                },
+                {
+                    "title": "crates",
+                    "page_id": "",
+                    "children": [
+                        {
+                            "title": "codegen",
+                            "page_id": "",
+                            "children": [
+                                {
+                                    "title": "ptyctl",
+                                    "page_id": "modules/crates/codegen/ptyctl",
+                                    "children": [],
+                                }
+                            ],
+                        }
+                    ],
+                },
+            ],
+        },
+    ]
+    assert not sidebar_has_topic_groups(old_sidebar)
+
+    class _Version:
+        id = "ver-1"
+        wiki_pages = {
+            "project_name": "grok-study",
+            "pages": pages,
+            "sidebar": old_sidebar,
+        }
+
+    out = wiki_out("repo-1", _Version())
+    titles = [item.title for item in out.sidebar]
+    assert "入门指南" in titles
+    assert "深入探索" in titles
+    top_children = _top_level_nav_titles(
+        [item.model_dump() for item in out.sidebar]
+    )
+    assert "概述" in top_children
+    assert ".cargo" not in top_children
+    assert ".cargo" not in titles
+    for item in out.sidebar:
+        if item.title in {"入门指南", "深入探索"}:
+            assert all(child.title != ".cargo" for child in item.children)

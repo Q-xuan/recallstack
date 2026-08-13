@@ -37,7 +37,7 @@ from recallstack.learning.learning_contract import (
 from repowiki.core.topics import is_generic_web_slug
 from repowiki.core.wiki_builder import (
     rebuild_topic_sidebar,
-    sidebar_looks_like_module_tree,
+    sidebar_has_topic_groups,
     upgrade_legacy_module_markdown,
 )
 
@@ -171,7 +171,10 @@ def wiki_out(
         return out
 
     raw_sidebar = payload.get("sidebar") or []
-    if sidebar_looks_like_module_tree(raw_sidebar) or not raw_sidebar:
+    # Rebuild unless this payload already has 入门指南 / 深入探索. Do not wait
+    # for sidebar_looks_like_module_tree: the old Overview/Architecture/Modules
+    # tree is easy to miss, and the UI relabels 模块 → 按目录 so it looks done.
+    if not sidebar_has_topic_groups(raw_sidebar):
         mapped_sidebar = map_sidebar(
             rebuild_topic_sidebar(raw_pages, language=content_lang())
         )

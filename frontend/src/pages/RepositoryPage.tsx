@@ -811,6 +811,18 @@ function matchesFilter(
   return (item.children || []).some((c) => matchesFilter(c, filter, t));
 }
 
+function isDirectoryGroup(item: WikiSidebarItem): boolean {
+  if (item.page_id) return false;
+  const raw = item.title.trim().toLowerCase();
+  return raw === "按目录" || raw === "by directory" || raw === "模块" || raw === "modules";
+}
+
+function containsPage(item: WikiSidebarItem, pageId: string): boolean {
+  if (!pageId) return false;
+  if (item.page_id === pageId) return true;
+  return (item.children || []).some((child) => containsPage(child, pageId));
+}
+
 function SidebarTree({
   items,
   currentId,
@@ -833,41 +845,84 @@ function SidebarTree({
   }
   return (
     <ul className="space-y-0.5">
-      {visible.map((item) => {
-        const active = item.page_id === currentId;
-        const label = localizeSidebarTitle(item, t);
-        return (
-          <li key={item.page_id || item.title}>
-            {item.page_id ? (
-              <button
-                type="button"
-                onClick={() => onOpen(item.page_id)}
-                className={`rs-wiki-nav-item ${active ? "is-active" : ""}`}
-                style={{ paddingLeft: 10 + depth * 12 }}
-                aria-current={active ? "page" : undefined}
-              >
-                <span className="truncate">{label}</span>
-              </button>
-            ) : (
-              <div
-                className="rs-wiki-nav-group"
-                style={{ paddingLeft: 10 + depth * 12 }}
-              >
-                {label}
-              </div>
-            )}
-            {item.children?.length > 0 && (
-              <SidebarTree
-                items={item.children}
-                currentId={currentId}
-                onOpen={onOpen}
-                filter={filter}
-                depth={depth + 1}
-              />
-            )}
-          </li>
-        );
-      })}
+      {visible.map((item) => (
+        <SidebarNode
+          key={item.page_id || item.title}
+          item={item}
+          currentId={currentId}
+          onOpen={onOpen}
+          filter={filter}
+          depth={depth}
+        />
+      ))}
     </ul>
+  );
+}
+
+function SidebarNode({
+  item,
+  currentId,
+  onOpen,
+  filter,
+  depth,
+}: {
+  item: WikiSidebarItem;
+  currentId: string;
+  onOpen: (id: string) => void;
+  filter: string;
+  depth: number;
+}) {
+  const t = useT();
+  const directoryGroup = isDirectoryGroup(item);
+  const [open, setOpen] = useState(
+    () => !directoryGroup || containsPage(item, currentId),
+  );
+  const active = item.page_id === currentId;
+  const label = localizeSidebarTitle(item, t);
+  const showChildren =
+    Boolean(item.children?.length) &&
+    (Boolean(filter) || !directoryGroup || open || containsPage(item, currentId));
+
+  return (
+    <li>
+      {item.page_id ? (
+        <button
+          type="button"
+          onClick={() => onOpen(item.page_id)}
+          className={`rs-wiki-nav-item ${active ? "is-active" : ""}`}
+          style={{ paddingLeft: 10 + depth * 12 }}
+          aria-current={active ? "page" : undefined}
+        >
+          <span className="truncate">{label}</span>
+        </button>
+      ) : directoryGroup ? (
+        <button
+          type="button"
+          className="rs-wiki-nav-group rs-wiki-nav-disclosure"
+          style={{ paddingLeft: 10 + depth * 12 }}
+          aria-expanded={showChildren}
+          onClick={() => setOpen((value) => !value)}
+        >
+          <span aria-hidden>{showChildren ? "▾" : "▸"}</span>
+          <span>{label}</span>
+        </button>
+      ) : (
+        <div
+          className="rs-wiki-nav-group"
+          style={{ paddingLeft: 10 + depth * 12 }}
+        >
+          {label}
+        </div>
+      )}
+      {showChildren && (
+        <SidebarTree
+          items={item.children}
+          currentId={currentId}
+          onOpen={onOpen}
+          filter={filter}
+          depth={depth + 1}
+        />
+      )}
+    </li>
   );
 }

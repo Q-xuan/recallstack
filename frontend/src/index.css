@@ -592,6 +592,23 @@ html[lang="zh-CN"] .rs-wiki-nav-group {
   text-transform: none;
 }
 
+.rs-wiki-nav-disclosure {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.rs-wiki-nav-disclosure:hover {
+  color: var(--rs-ink);
+}
+
 /* Mobile nav drawer. */
 .rs-drawer-backdrop {
   position: fixed;

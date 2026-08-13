@@ -969,6 +969,16 @@ def rebuild_topic_sidebar(
     return items
 
 
+def sidebar_has_topic_groups(sidebar: list) -> bool:
+    """True when the nav already uses 入门指南 / 深入探索 (skip GET rebuild)."""
+    titles = {
+        str(item.get("title") or "").strip().lower()
+        for item in sidebar or []
+        if isinstance(item, dict)
+    }
+    return bool(titles & {t.lower() for t in _TOPIC_GROUP_TITLES})
+
+
 def sidebar_looks_like_module_tree(sidebar: list) -> bool:
     """True when the persisted nav is still RepoWiki's directory clustering."""
     if not sidebar:
