@@ -283,8 +283,11 @@ def test_source_ref_re_matches_readme_span():
     assert regex.fullmatch("crates/codegen/xai-grok-pager/src/lib.rs")
     assert regex.fullmatch("crates/codegen/xai-grok-pager/src/lib.rs Pager")
     assert regex.fullmatch("crates/xai-chat/src/lib.rs:10 mod channel")
+    assert regex.fullmatch("crates/agent/src/acp/gateway.rs")
     assert not regex.fullmatch("README")
     assert not regex.fullmatch("just a sentence")
+    assert not regex.fullmatch("start_turn")
+    assert not regex.fullmatch("ToolBridge")
 
     def source_ref_value(raw: str) -> str:
         found = regex.fullmatch((raw or "").strip())
@@ -319,7 +322,10 @@ def test_source_ref_re_matches_readme_span():
     assert "data-md-block=\"related-source\"" in src
     assert 'data-md-block="list-item"' in src
     assert "export function isPathLikeChip" in src
-    assert "rs-ref-sym" in src
+    assert "splitListIntoItemHtml" in src
+    assert 'class="rs-md-item"' in src
+    assert "push(`<p>" in src or "push(`<p>${" in src
+    assert "for (const html of list.htmls) push(html)" in src
 
 
 def test_markdown_ts_normalizes_bare_mermaid():
@@ -359,8 +365,11 @@ def test_wiki_content_peek_is_react_sibling_not_portal():
     assert "data-md-block-index" in wiki
     assert "data-peek-slot" in wiki
     assert "peek?.blockIndex === i" in wiki
+    assert "splitListIntoItemHtml" in md
+    assert 'class="rs-md-item"' in md
     assert "p:has(.rs-ref)" not in css
     assert "[data-md-block-index] > [data-peek-slot]" in css
+    assert "ul.rs-md-item" in css
     assert "if (!parsed) return null" not in peek
     assert "normalizeMermaidSource" in md
     assert 'data-md-block="list-item"' in md

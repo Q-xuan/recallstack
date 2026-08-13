@@ -1070,6 +1070,11 @@ html[lang="zh-CN"] .rs-wiki-nav-group {
   display: block;
 }
 
+.rs-prose ul.rs-md-item,
+.rs-prose ol.rs-md-item {
+  margin: 0.3rem 0;
+}
+
 [data-md-block-index] > [data-peek-slot] {
   display: block;
   margin: 0.45rem 0 0.85rem;

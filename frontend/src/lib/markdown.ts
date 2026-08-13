@@ -213,7 +213,7 @@ interface ListItem {
 }
 
 /** Collect a run of list lines, then render them as a properly nested tree. */
-function parseList(lines: string[], from: number): { html: string; next: number } {
+function parseList(lines: string[], from: number): { htmls: string[]; next: number } {
   const items: ListItem[] = [];
   let i = from;
 
@@ -243,7 +243,28 @@ function parseList(lines: string[], from: number): { html: string; next: number 
     }
   }
 
-  return { html: renderListLevel(items, 0).html, next: i };
+  return { htmls: splitListIntoItemHtml(items), next: i };
+}
+
+/** One HTML block per top-level list item so SourcePeek can sit under that row. */
+function splitListIntoItemHtml(items: ListItem[]): string[] {
+  if (!items.length) return [];
+  const baseIndent = items[0].indent;
+  const htmls: string[] = [];
+  let i = 0;
+  while (i < items.length) {
+    if (items[i].indent < baseIndent) break;
+    if (items[i].indent > baseIndent) {
+      i += 1;
+      continue;
+    }
+    const start = i;
+    i += 1;
+    while (i < items.length && items[i].indent > baseIndent) i += 1;
+    const rendered = renderListLevel(items.slice(start, i), 0).html;
+    htmls.push(rendered.replace(/<(ul|ol)\b/, '<$1 class="rs-md-item"'));
+  }
+  return htmls;
 }
 
 function renderListLevel(
@@ -328,10 +349,14 @@ function parseTable(lines: string[], from: number): { html: string; next: number
   };
 }
 
-/** Render one fence-free segment to HTML, appending any headings to `toc`. */
-function renderSegment(md: string, toc: TocEntry[], usedIds: Set<string>): string {
+/** Render one fence-free segment as fine HTML blocks (p / li / heading / quote). */
+function renderSegment(
+  md: string,
+  toc: TocEntry[],
+  usedIds: Set<string>,
+  push: (html: string) => void,
+): void {
   const lines = md.split("\n");
-  const out: string[] = [];
   let i = 0;
 
   while (i < lines.length) {
@@ -354,7 +379,7 @@ function renderSegment(md: string, toc: TocEntry[], usedIds: Set<string>): strin
       if (level >= 2 && level <= 3) {
         toc.push({ id, level, text: raw.replace(/[`*_]/g, "") });
       }
-      out.push(
+      push(
         `<h${level} id="${id}" class="rs-heading"><a class="rs-anchor" href="#${id}" aria-label="anchor">#</a>${renderInline(
           raw,
         )}</h${level}>`,
@@ -364,7 +389,7 @@ function renderSegment(md: string, toc: TocEntry[], usedIds: Set<string>): strin
     }
 
     if (HR_RE.test(line)) {
-      out.push("<hr />");
+      push("<hr />");
       i += 1;
       continue;
     }
@@ -377,14 +402,14 @@ function renderSegment(md: string, toc: TocEntry[], usedIds: Set<string>): strin
       }
       const joined = quoted.join(" ");
       if (!isHtmlChrome(joined)) {
-        out.push(`<blockquote>${renderInline(joined)}</blockquote>`);
+        push(`<blockquote>${renderInline(joined)}</blockquote>`);
       }
       continue;
     }
 
     if (UL_RE.test(line) || OL_RE.test(line)) {
       const list = parseList(lines, i);
-      out.push(list.html);
+      for (const html of list.htmls) push(html);
       i = list.next;
       continue;
     }
@@ -392,7 +417,7 @@ function renderSegment(md: string, toc: TocEntry[], usedIds: Set<string>): strin
     if (line.includes("|")) {
       const table = parseTable(lines, i);
       if (table) {
-        out.push(table.html);
+        push(table.html);
         i = table.next;
         continue;
       }
@@ -419,12 +444,10 @@ function renderSegment(md: string, toc: TocEntry[], usedIds: Set<string>): strin
     if (para.length) {
       const joined = para.join(" ");
       if (!isHtmlChrome(joined)) {
-        out.push(`<p>${renderInline(joined)}</p>`);
+        push(`<p>${renderInline(joined)}</p>`);
       }
     }
   }
-
-  return out.join("\n");
 }
 
 const RELATED_SOURCE_LINE_RE = /^\s*\*\*(?:相关源码|Related source):\*\*/;
@@ -438,8 +461,9 @@ export function renderMarkdown(md: string): RenderedMarkdown {
   let buffer: string[] = [];
   const flush = () => {
     if (!buffer.length) return;
-    const html = renderSegment(buffer.join("\n"), toc, usedIds);
-    if (html.trim()) blocks.push({ kind: "html", html });
+    renderSegment(buffer.join("\n"), toc, usedIds, (html) => {
+      if (html.trim()) blocks.push({ kind: "html", html });
+    });
     buffer = [];
   };
 
