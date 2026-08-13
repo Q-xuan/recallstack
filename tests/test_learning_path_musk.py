@@ -343,6 +343,153 @@ def test_evidence_chip_resolves_symbol_line_from_stored_file(monkeypatch):
     assert worksheet.count("## 只看这一处证据") == 1
 
 
+def test_junk_refs_lose_to_sibling_rs_with_symbol(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    util = """\
+pub struct PromptContext;
+
+pub fn replace_or_insert_system_head(window: &mut Window, head: &str) {
+    window.replace_head(head);
+}
+"""
+    draft = ConceptDraft(
+        slug="context-assembly",
+        title="上下文装配",
+        wiki_page_id="topics/context-assembly",
+        source_references=[
+            SourceReference(
+                path="crates/codegen/xai-chat-state/Cargo.toml",
+                start_line=1,
+            ),
+        ],
+    )
+    texts = {
+        "crates/codegen/xai-chat-state/Cargo.toml": "[package]\nname = \"xai-chat-state\"\n",
+        "crates/codegen/xai-chat-state/src/conversation_util.rs": util,
+    }
+    chip = path_evidence_chip(draft, file_texts=texts)
+    assert chip is not None
+    assert chip.startswith("crates/codegen/xai-chat-state/src/conversation_util.rs:")
+    assert "replace_or_insert_system_head" in chip
+    assert ":1 " not in chip
+    assert "Cargo.toml" not in chip
+
+
+def test_sh_json_toml_never_win_even_without_store():
+    draft = ConceptDraft(
+        slug="tool-system",
+        title="工具层",
+        wiki_page_id="topics/tool-system",
+        source_references=[
+            SourceReference(
+                path="crates/codegen/xai-grok-hooks/examples/hooks/bin/tool-logger.sh",
+                start_line=1,
+            ),
+            SourceReference(
+                path="crates/codegen/xai-grok-pager/npm/grok/package.json",
+                start_line=1,
+            ),
+            SourceReference(
+                path="crates/codegen/xai-chat-state/Cargo.toml",
+                start_line=1,
+            ),
+            SourceReference(
+                path="crates/codegen/xai-grok-agent/src/tool_bridge.rs",
+                start_line=1,
+            ),
+        ],
+    )
+    chip = path_evidence_chip(draft)
+    assert chip is not None
+    assert "tool_bridge.rs" in chip
+    assert "ToolBridge" in chip
+    assert ".sh" not in chip
+    assert "package.json" not in chip
+    assert "Cargo.toml" not in chip
+
+
+def test_live_grok_payload_picks_rs_not_toml_json_sh():
+    """Exact shapes from Jake's grok-study GET after 4eb66b0."""
+    store = {
+        "README.md": "# grok\n",
+        "crates/codegen/xai-grok-pager/npm/grok/bin/grok": "#!/usr/bin/env node\n",
+        "crates/codegen/xai-grok-pager/src/lib.rs": "pub struct Pager;\n\npub fn boot() {}\n",
+        "crates/codegen/xai-grok-pager/src/main.rs": (
+            "fn main() {\n    xai_grok_pager::boot();\n}\n"
+        ),
+        "crates/codegen/xai-grok-agent/src/agent.rs": "pub struct Agent;\n",
+        "crates/codegen/xai-grok-agent/src/turn.rs": (
+            "impl Agent {\n    pub fn start_turn(&mut self) {\n        self.call_model();\n    }\n}\n"
+        ),
+        "crates/codegen/xai-grok-hooks/examples/hooks/bin/tool-logger.sh": "#!/bin/sh\n",
+        "crates/codegen/xai-grok-agent/src/tool_bridge.rs": (
+            "// Tool dispatch.\n\npub struct ToolBridge;\n\nimpl ToolBridge {\n    pub fn dispatch(&self) {}\n}\n"
+        ),
+        "crates/codegen/xai-grok-pager/npm/grok/package.json": '{"name":"grok"}\n',
+        "crates/codegen/xai-grok-pager/src/pager.rs": "// pager\npub struct Pager {\n    buf: String,\n}\n",
+        "crates/codegen/xai-chat-state/Cargo.toml": "[package]\nname=\"xai-chat-state\"\n",
+        "crates/codegen/xai-chat-state/src/conversation_util.rs": (
+            "// system head\npub fn replace_or_insert_system_head() {}\n"
+        ),
+        "crates/codegen/xai-agent-lifecycle/Cargo.toml": "[package]\nname=\"lifecycle\"\n",
+        "crates/codegen/xai-agent-lifecycle/src/runtime.rs": "// runtime\npub struct AgentRuntime;\n",
+        "crates/codegen/xai-grok-agent/src/prompt/agents_md.rs": (
+            "pub fn load_agents_md() {}\n"
+        ),
+    }
+
+    def chip(slug: str, path: str) -> str | None:
+        return path_evidence_chip(
+            ConceptDraft(
+                slug=slug,
+                title=slug,
+                wiki_page_id=f"topics/{slug}",
+                source_references=[SourceReference(path=path, start_line=1)],
+            ),
+            file_texts=store,
+        )
+
+    goal = chip("project-goal", "README.md")
+    assert goal is not None and goal.startswith("README.md:")
+
+    boot = chip("entry-and-boot", "crates/codegen/xai-grok-pager/npm/grok/bin/grok")
+    assert boot is not None
+    assert boot.endswith(".rs:1 main") or ".rs:" in boot
+    assert "npm/" not in boot
+    assert boot.endswith(" main") or "fn main" in store.get(boot.split(":")[0], "")
+
+    loop = chip("agent-loop", "crates/codegen/xai-grok-agent/src/agent.rs")
+    assert loop == "crates/codegen/xai-grok-agent/src/turn.rs:2 start_turn"
+
+    tools = chip(
+        "tool-system",
+        "crates/codegen/xai-grok-hooks/examples/hooks/bin/tool-logger.sh",
+    )
+    assert tools == "crates/codegen/xai-grok-agent/src/tool_bridge.rs:3 ToolBridge"
+
+    tui = chip("terminal-ui", "crates/codegen/xai-grok-pager/npm/grok/package.json")
+    assert tui == "crates/codegen/xai-grok-pager/src/pager.rs:2 Pager"
+
+    ctx = chip("context-assembly", "crates/codegen/xai-chat-state/Cargo.toml")
+    assert ctx == (
+        "crates/codegen/xai-chat-state/src/conversation_util.rs:2 "
+        "replace_or_insert_system_head"
+    )
+
+    runtime = chip("agent-runtime", "crates/codegen/xai-agent-lifecycle/Cargo.toml")
+    assert runtime is not None
+    assert "AgentRuntime" in runtime
+    assert "Cargo.toml" not in runtime
+    assert ":1 " not in runtime
+
+    prompt = chip("system-prompt", "crates/codegen/xai-grok-agent/src/prompt/agents_md.rs")
+    assert prompt is not None
+    assert "agents_md.rs" in prompt
+    assert "Cargo.toml" not in prompt
+    assert ".json" not in prompt
+    assert ".sh" not in prompt
+
+
 def test_path_out_get_upgrade_resolves_line_from_scan_store(monkeypatch):
     monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
     loop = SimpleNamespace(

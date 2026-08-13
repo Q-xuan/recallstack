@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from recallstack.db.models import (
     Attempt,
     Concept,
@@ -55,6 +57,8 @@ from repowiki.core.wiki_builder import (
     upgrade_legacy_module_markdown,
     upgrade_wiki_page_content,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def repo_out(repo: Repository) -> RepositoryOut:
@@ -256,6 +260,12 @@ def path_out(
 
             file_texts = load_version_file_texts(version_id)
     file_texts = file_texts or {}
+    if not file_texts:
+        logger.warning(
+            "learning-path GET: scan store empty for version %s; "
+            "will not emit toml/json/sh chips — re-scan if file texts were never persisted",
+            getattr(path, "repository_version_id", ""),
+        )
 
     candidates: list[tuple[int, str, object, object]] = []
     for n in path.nodes or []:
