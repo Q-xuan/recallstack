@@ -11,6 +11,7 @@ from repowiki.core.models import (
     ReadingGuide,
     ReadingStep,
     Symbol,
+    TechItem,
     TermTip,
     WikiData,
 )
@@ -286,12 +287,14 @@ def test_zh_headings_term_tips_and_unchanged_paths():
 
     arch = wiki.get_page("architecture").content
     assert arch.startswith("# 架构概览")
-    assert "**类型:** codebase-modules" in arch
-    assert "## 组成" in arch
+    assert "codebase-modules" in arch
+    assert "## 链路里的角色" in arch
     assert "crates/lib.py" in arch
     assert "## 术语小贴士" in arch
     assert "**Type:**" not in arch
     assert "## Components" not in arch
+    assert "## 组成" not in arch
+    assert "**类型:**" not in arch
 
     page = wiki.get_page("modules/crates")
     assert page.title == "crates"
@@ -464,4 +467,46 @@ def test_fallback_module_markdown_is_handbook_not_inventory(monkeypatch):
     for mod in data.modules:
         for f in mod.files:
             assert f.key_symbols == []
+
+
+def test_overview_is_deepwiki_handbook_not_stack_dump():
+    project = _project({"app/main.py": "def main():\n    return 1\n"})
+    graph = DependencyGraph.build_from_project(project)
+    data = WikiData(
+        overview=ProjectOverview(
+            name="fixture",
+            one_liner="a tiny service",
+            description="fixture starts at main and answers one request.",
+            tech_stack=[
+                TechItem(name="Python", category="language", version="3.12"),
+                TechItem(name="FastAPI", category="framework"),
+            ],
+            citations=[Citation(path="app/main.py", start_line=1)],
+        ),
+        architecture=ArchitectureDiagram(
+            architecture_type="monolith",
+            description="request enters main.",
+            mermaid_component="graph TD\n  A[main] --> B[core]",
+            components=[{"name": "app", "purpose": "receives the process", "files": ["app/main.py"]}],
+        ),
+    )
+    wiki = WikiBuilder().build(project, data, graph, language="zh")
+    overview = wiki.get_page("index").content
+    assert "这篇文档讲" in overview
+    assert "## 它是什么" in overview
+    assert "架构见图" in overview
+    assert "[架构概览](architecture)" in overview
+    assert "| 技术 |" in overview
+    assert "Python" in overview
+    assert "- **Python**" not in overview
+    assert "`app/main.py:1`" in overview
+    assert overview.index("相关源码") < overview.index("## 它是什么")
+
+    arch = wiki.get_page("architecture").content
+    assert "```mermaid" in arch
+    assert "## 链路里的角色" in arch
+    assert arch.index("```mermaid") < arch.index("## 链路里的角色")
+    assert "**app**" in arch
+    assert "`app/main.py`" in arch
+    assert "  - 文件:" not in arch
 

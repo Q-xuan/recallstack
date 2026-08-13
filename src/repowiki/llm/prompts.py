@@ -150,11 +150,13 @@ def build_overview_prompt(
         {
             "role": "system",
             "content": (
-                "You are a senior software engineer explaining a project to a new team member. "
+                "You are a senior software engineer writing a DeepWiki overview page. "
                 "Be direct, specific, and concrete. "
                 "Do NOT use filler phrases like 'leveraging', 'utilizing', 'cutting-edge', "
                 "'robust', or 'comprehensive'. Just describe what things do. "
                 "Cite real file paths from the tree using backticks like `src/app.py:12`. "
+                "FORBIDDEN: file inventory, JavaDoc/method dumps, 'Heaviest modules by PageRank', "
+                "homework headings (what this step asks of you / pass check). "
                 f"{_lang_instruction(language)}"
             ),
         },
@@ -176,9 +178,14 @@ def build_overview_prompt(
                 '  "citations": [{"path": "real/file.py", "start_line": 1, "symbol": "", "note": "why this file matters"}],\n'
                 f"{_term_tips_field()}"
                 "}\n\n"
-                "Write description as 2-4 professional paragraphs: what the project is for, "
-                "where responsibility sits, how the main pieces connect. "
-                "Do not dump a file inventory. "
+                "Write description as 2-4 professional paragraphs in DeepWiki order: "
+                "what this document covers and what the reader can explain afterwards; "
+                "what the project is (characteristics, not a README paraphrase); "
+                "how the main pieces connect on one real flow. "
+                "Do not dump a file inventory, method list, or JavaDoc. "
+                "Never write homework headings (what this step asks, pass check). "
+                "tech_stack: a short list of load-bearing tools (name, category, version) — "
+                "not every dependency. "
                 f"{_term_tips_rules(required=True)} "
                 "citations.path MUST be a real path from the tree. Omit citations rather than invent paths.\n\n"
                 f"{_json_instruction(language)}"
@@ -328,10 +335,13 @@ def build_architecture_prompt(
         {
             "role": "system",
             "content": (
-                "You are a software architect analyzing a codebase. "
-                "Identify the architecture pattern and generate Mermaid diagrams. "
+                "You are a software architect writing a DeepWiki architecture page. "
+                "Lead with a valid Mermaid diagram of the runtime flow, then describe "
+                "components as roles on that flow — not as a file tree. "
                 "Mermaid syntax must be valid. Use simple node names (no special chars). "
                 "Cite real file paths from the tree; never invent them. "
+                "FORBIDDEN: file inventory, JavaDoc/method dumps, 'Heaviest modules by PageRank', "
+                "homework headings. "
                 f"{_lang_instruction(language)}"
             ),
         },
@@ -353,9 +363,13 @@ def build_architecture_prompt(
                 f"{_term_tips_field()}"
                 "}\n\n"
                 "IMPORTANT: Mermaid code must be a single string with \\n for newlines. "
-                "Use simple alphanumeric node IDs. "
+                "Use simple alphanumeric node IDs. mermaid_component is REQUIRED when the "
+                "graph is knowable — it is rendered near the top of the page. "
+                "components: each is a ROLE in the flow (who calls whom), not a folder listing. "
+                "Keep files to 1-3 load-bearing paths per component. "
                 "components.files and citations.path MUST be real paths from the tree. "
-                "description must explain the system, not list heaviest files. "
+                "description must explain the system as a call path, not list heaviest files. "
+                "Never write a method dump or homework worksheet. "
                 f"{_term_tips_rules(required=True)}\n\n"
                 f"{_json_instruction(language)}"
             ),

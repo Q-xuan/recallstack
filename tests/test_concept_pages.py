@@ -114,20 +114,26 @@ def test_concept_page_handbook_not_template_dump(monkeypatch):
     assert "<picture" not in content
     assert "srcset" not in content
     headings = [line for line in content.splitlines() if line.startswith("## ")]
-    assert headings[0] == "## 本步要你干什么"
-    assert "## 本步要你干什么" in content
-    assert "## 先回到原理" in content
-    assert "## 只看这一处证据" in content
+    assert headings[0] == "## 它是什么"
+    assert "## 本步要你干什么" not in content
+    assert "## 过关" not in content
+    assert "## 先回到原理" not in content
+    assert "## 只看这一处证据" not in content
+    assert "## 它是什么" in content
+    assert "## 它在系统里的位置" in content
     assert "## 不是什么" in content
     assert "## 术语小贴士" in content
-    assert "## 过关" in content
     assert "## 这份仓库做什么" not in content
     assert "## 自测" not in content
     assert "## 源码证据" not in content
-    assert "点击展开 `README.md:1-48`" in content
-    assert "先点开证据再往下" in content
-    assert "#practice" in content
-    assert "项目目标" in content.split("## 过关", 1)[1]
+    assert "`README.md:1-48`" in content
+    assert "点击展开" not in content
+    assert "先点开证据再往下" not in content
+    assert "#practice" not in content
+    assert "**难度**" not in content
+    assert "用两句话写出" not in content
+    assert "相关源码" in content
+    assert "## 一次调用怎么走" not in content
 
 
 def test_non_goal_concept_uses_first_principles_heading(monkeypatch):
@@ -144,14 +150,81 @@ def test_non_goal_concept_uses_first_principles_heading(monkeypatch):
     other = ConceptDraft(slug="project-goal", title="项目目标", why_learn="目标")
     page = append_concept_pages(wiki, [other, draft]).get_page("concepts/application-entry")
     assert page is not None
-    assert "## 本步要你干什么" in page.content
-    assert "## 先回到原理" in page.content
+    assert "## 本步要你干什么" not in page.content
+    assert "## 过关" not in page.content
+    assert "## 先回到原理" not in page.content
+    assert "## 它是什么" in page.content
+    assert "## 它在系统里的位置" in page.content
+    assert "## 一次调用怎么走" in page.content
     assert "## 职责与边界" not in page.content
     assert "## 这份仓库做什么" not in page.content
-    assert "应用入口" in page.content.split("## 过关", 1)[1]
     assert "为什么重要" not in page.content
     assert page.content.count("入口是阅读调用链的起点。") == 1
-    assert "点击展开 `app/main.py:1`" in page.content
+    assert "`app/main.py:1`" in page.content
+    assert "点击展开" not in page.content
+    assert "## 先读" in page.content
+    assert "concepts/project-goal" in page.content
+
+
+def test_upgrade_legacy_concept_markdown_strips_homework(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    from recallstack.learning.learning_contract import (
+        step_task_for_slug,
+        upgrade_legacy_concept_markdown,
+    )
+
+    old = """# 项目目标
+
+> 先建立对仓库目标与边界的心智模型，再深入实现。
+
+**难度** 2/5 · **阅读时长** 约 10 分钟 · **重要度** 0.90
+
+## 本步要你干什么
+
+用两句话写出这个仓库为谁、解决什么、明确不做什么。
+
+## 先回到原理
+
+grok-study 是本地研究工作台。
+
+## 只看这一处证据
+
+先点开证据再往下。
+
+- 点击展开 `README.md:1-48`（第 1–48 行）
+
+## 自测
+
+1. 用一句话说清目标
+
+## 过关
+
+1. 用一句话说清目标
+先看证据，再到底部练习区作答。[打开练习](#practice)
+"""
+    upgraded = upgrade_legacy_concept_markdown(old, slug="project-goal", title="项目目标")
+    assert "## 本步要你干什么" not in upgraded
+    assert "用两句话写出这个仓库为谁" not in upgraded
+    assert "## 过关" not in upgraded
+    assert "## 自测" not in upgraded
+    assert "## 先回到原理" not in upgraded
+    assert "## 只看这一处证据" not in upgraded
+    assert "为什么重要" not in upgraded
+    assert "## 它是什么" in upgraded
+    assert "grok-study 是本地研究工作台。" in upgraded
+    assert "## 它在系统里的位置" in upgraded
+    assert "`README.md:1-48`" in upgraded
+    assert "点击展开" not in upgraded
+    assert "先点开证据" not in upgraded
+    assert "#practice" not in upgraded
+    assert "**难度**" not in upgraded
+    assert "这篇说明这个仓库解决什么问题" in upgraded
+    # Path UI still has the task; wiki GET must not re-insert it.
+    assert "两句话" in step_task_for_slug("project-goal", "项目目标")
+    again = upgrade_legacy_concept_markdown(upgraded, slug="project-goal", title="项目目标")
+    assert again == upgraded
+    assert again.count("## 它是什么") == 1
+    assert again.count("相关源码") == 1
 
 
 def test_upgrade_legacy_concept_markdown_rewrites_old_template(monkeypatch):
@@ -179,14 +252,18 @@ grok-study 是本地研究工作台。
 1. 用一句话说清目标
 """
     upgraded = upgrade_legacy_concept_markdown(old, slug="project-goal", title="项目目标")
-    assert "## 本步要你干什么" in upgraded
-    assert "用两句话写出这个仓库为谁" in upgraded
+    assert "## 本步要你干什么" not in upgraded
+    assert "用两句话写出这个仓库为谁" not in upgraded
     assert "为什么重要" not in upgraded
-    assert "## 先回到原理" in upgraded
-    assert "## 只看这一处证据" in upgraded
-    assert "点击展开 `README.md:1-48`" in upgraded
-    assert "## 过关" in upgraded
+    assert "## 它是什么" in upgraded
+    assert "grok-study 是本地研究工作台。" in upgraded
+    assert "## 先回到原理" not in upgraded
+    assert "## 只看这一处证据" not in upgraded
+    assert "`README.md:1-48`" in upgraded
+    assert "点击展开" not in upgraded
+    assert "## 过关" not in upgraded
     assert "## 自测" not in upgraded
+    assert "相关源码" in upgraded
 
 
 def test_source_ref_re_matches_readme_span():

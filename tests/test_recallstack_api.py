@@ -220,7 +220,10 @@ def test_concept_pages_cross_link_and_cite_evidence(client: TestClient):
     assert concept_pages, "analyze should emit concept pages"
     for page in concept_pages:
         assert page["concept_id"], "concept pages must resolve back to their concept row"
-        assert "difficulty" in page["content"].lower() or "难度" in page["content"]
+        assert "difficulty" not in page["content"].lower()
+        assert "难度" not in page["content"]
+        assert "本步要你干什么" not in page["content"]
+        assert "## 过关" not in page["content"]
 
     # At least one concept cites a source location in `path:line` form, which is
     # what the reader turns into an inline snippet.
@@ -382,11 +385,15 @@ def test_wiki_get_upgrades_legacy_concept_markdown(client: TestClient, monkeypat
     wiki = client.get(f"/api/recallstack/repositories/{repo_id}/wiki")
     assert wiki.status_code == 200, wiki.text
     page = next(p for p in wiki.json()["pages"] if p["id"] == "concepts/project-goal")
-    assert "## 本步要你干什么" in page["content"]
+    assert "## 本步要你干什么" not in page["content"]
+    assert "用两句话写出这个仓库为谁" not in page["content"]
     assert "为什么重要" not in page["content"]
-    assert "点击展开 `README.md:1-48`" in page["content"]
-    assert "## 过关" in page["content"]
-    assert "## 先回到原理" in page["content"]
+    assert "`README.md:1-48`" in page["content"]
+    assert "点击展开" not in page["content"]
+    assert "## 过关" not in page["content"]
+    assert "## 它是什么" in page["content"]
+    assert "## 先回到原理" not in page["content"]
+    assert "goal body" in page["content"]
 
 
 def test_source_preview_refuses_secret_files(client: TestClient):

@@ -39,7 +39,93 @@ _GENERIC_REASON_RE = re.compile(
 
 CORE_PATH_CAP = 8
 
-_MUTE_REF_RE = re.compile(r"(?m)^- `([^`]+)`\s*$")
+_SOURCE_CHIP_RE = re.compile(
+    r"(?i)^[\w./\-]+(?:\.[A-Za-z0-9]+)+(?::\d+(?:-\d+)?)?$"
+)
+_CHROME_LINE_RE = re.compile(
+    r"(?i)(\*\*(难度|Difficulty)\*\*.*(阅读时长|Reading time)|"
+    r"\*\*(阅读时长|Reading time)\*\*.*(重要度|Importance))"
+)
+_CLICK_CHIP_RE = re.compile(
+    r"(?:点击展开|Click to expand)\s*`([^`]+)`(?:（[^）]*）|\s*\([^)]*\))?"
+)
+_PRACTICE_LINE_RE = re.compile(
+    r"(?i)(#practice|打开练习|practice panel|先看证据，再到底部|"
+    r"先点开证据再往下|Open the evidence first)"
+)
+_HOMEWORK_HEADINGS = {
+    "本步要你干什么",
+    "What this step asks of you",
+    "过关",
+    "Pass",
+    "自测",
+    "Self-check",
+    "只看这一处证据",
+    "Look at this evidence only",
+    "源码证据",
+    "Source evidence",
+    "Source Evidence",
+    "为什么重要",
+    "Why it matters",
+    "Why this matters",
+}
+_WHAT_HEADINGS = {
+    "它是什么",
+    "What it is",
+    "What is this",
+    "先回到原理",
+    "Back to first principles",
+    "这份仓库做什么",
+    "What this repo does",
+    "职责与边界",
+    "Responsibility and boundaries",
+}
+_POSITION_HEADINGS = {
+    "它在系统里的位置",
+    "Where it sits",
+}
+_FLOW_HEADINGS = {
+    "一次调用怎么走",
+    "How a call runs",
+}
+_TYPE_ROLE_HEADINGS = {
+    "关键类型在链路上的职责",
+    "Key types and their roles",
+}
+_NOT_THIS_HEADINGS = {
+    "不是什么",
+    "What this is not",
+}
+_TIPS_HEADINGS = {
+    "术语小贴士",
+    "Term tips",
+}
+_PREREQ_HEADINGS = {
+    "先读",
+    "Read first",
+}
+_NEXT_HEADINGS = {
+    "接下来",
+    "Next",
+    "继续读",
+    "Leads to",
+}
+_RELATED_HEADINGS = {
+    "相关源码",
+    "Related source",
+    "Relevant source files",
+}
+_FLOW_SLUGS = {
+    "application-entry",
+    "request-routing",
+    "call-flow",
+    "authentication",
+    "data-persistence",
+    "error-handling",
+    "background-tasks",
+    "caching",
+    "configuration",
+}
 
 
 def path_mission() -> str:
@@ -257,7 +343,10 @@ def pass_questions(concept: ConceptDraft) -> str:
 
 
 def format_evidence_line(loc: str) -> str:
-    """Explicit click instruction wrapping a SOURCE_REF_RE-matching chip."""
+    """Path UI helper: wrap a SOURCE_REF_RE chip in a click instruction.
+
+    Wiki handbook pages must use the bare ``path:line`` chip instead.
+    """
     loc = loc.strip()
     if not loc:
         return ""
@@ -279,6 +368,168 @@ def format_evidence_line(loc: str) -> str:
     )
 
 
+def handbook_lede(slug: str, title: str = "") -> str:
+    """Opening line for a concept *wiki* page — not the learning-path task."""
+    shown = title or slug
+    if slug == "project-goal":
+        return t(
+            "This page explains what problem the repo solves and who it is for. "
+            "After reading you should be able to state the goal and what it "
+            "explicitly does not do, without leaning on the folder tree.",
+            "这篇说明这个仓库解决什么问题、给谁用。读完应能不靠目录讲清目标与明确不做什么。",
+        )
+    if slug == "application-entry":
+        return t(
+            "This page explains where the process starts and what it wires first. "
+            "After reading you should be able to name the entrypoint and the first calls.",
+            "这篇说明进程从哪启动、启动后先装配什么。读完应能指出入口文件和最先的几步调用。",
+        )
+    if slug in _FLOW_SLUGS:
+        return t(
+            f"This page explains how `{shown}` sits on a real call path. "
+            "After reading you should be able to say who calls it, what it calls, "
+            "and what breaks if it disappears.",
+            f"这篇说明「{shown}」在一次真实调用里的位置。读完应能讲清谁调用它、它调用谁、消失会坏哪。",
+        )
+    return t(
+        f"This page explains `{shown}`. After reading you should be able to say "
+        "what it owns and where that responsibility stops.",
+        f"这篇说明「{shown}」。读完应能讲清它负责什么、边界停在哪里。",
+    )
+
+
+def handbook_position(slug: str, title: str = "") -> str:
+    """Who calls it / what it calls / what breaks — wiki voice, not a worksheet."""
+    shown = title or slug
+    if slug == "project-goal":
+        return t(
+            "The goal constrains how the rest of the wiki is read: start at the "
+            "entrypoints, then the hub modules. Directories are a consequence, "
+            "not the reason the repository exists.",
+            "目标约束整份 Wiki 的阅读顺序：先看入口，再看枢纽模块。目录是结果，不是仓库存在的原因。",
+        )
+    if slug == "application-entry":
+        return t(
+            "The OS or runtime calls the entrypoint; the entrypoint then wires "
+            "the rest. If it disappeared, nothing else in the graph would run.",
+            "进程由运行时调进入口；入口再去装配其余模块。如果它消失，图上别的节点都不会跑。",
+        )
+    return t(
+        f"If `{shown}` disappeared, a user-visible behaviour would break. "
+        "Name the callers and callees from the evidence, not from the folder name.",
+        f"如果「{shown}」这一层消失，用户能察觉的行为会坏。"
+        "从证据说出调用它的和它调用的，不要从目录名说。",
+    )
+
+
+def flow_narrative(slug: str, title: str = "") -> str:
+    """Short how-a-call-runs blurb. Empty when the concept has no runtime flow."""
+    if slug not in _FLOW_SLUGS:
+        return ""
+    shown = title or slug
+    texts = {
+        "application-entry": t(
+            "The process enters at the entrypoint file, constructs what it owns, "
+            "and hands control to the main loop or server.",
+            "进程从入口文件进来，装配自己负责的对象，再把控制权交给主循环或服务器。",
+        ),
+        "request-routing": t(
+            "An external event hits the receiving layer, is mapped to a handler, "
+            "then enters business logic.",
+            "外部事件打到接收层，映射到处理函数，再进入业务逻辑。",
+        ),
+        "call-flow": t(
+            "One call runs from the entrypoint through collaborators to a side effect.",
+            "一次调用从入口穿过协作对象，走到副作用。",
+        ),
+        "authentication": t(
+            "A request reaches the identity check; on success it continues, on failure it stops.",
+            "请求先经过身份检查：通过则继续，失败则停下。",
+        ),
+        "data-persistence": t(
+            "A write or read is issued by a caller; the persistence layer talks to storage and returns.",
+            "调用方发出写入或读出，持久化层与存储对话后再返回。",
+        ),
+        "error-handling": t(
+            "An assumption fails, the error is caught or returned, and the user-visible path changes.",
+            "某个假设为假，错误被接住或返回，用户看到的路径随之改变。",
+        ),
+        "background-tasks": t(
+            "Work continues after the request returns; the side effect runs on a job or async path.",
+            "请求返回之后工作仍在继续；副作用走任务或异步路径。",
+        ),
+        "caching": t(
+            "A read hits the cache first; on miss it loads the source of truth and stores the result.",
+            "读取先打到缓存；未命中再加载真相源并写回。",
+        ),
+        "configuration": t(
+            "Config is loaded at boot, then read by the code paths whose behaviour it changes.",
+            "配置在启动时载入，再被它会改变行为的代码路径读走。",
+        ),
+    }
+    return texts.get(slug) or t(
+        f"Follow one call that touches `{shown}` from the outside in.",
+        f"顺着一次碰到「{shown}」的调用从外往里走。",
+    )
+
+
+def wiki_prose_excerpt(content: str, max_chars: int = 360) -> str:
+    """First sentences of a wiki page, skipping diagrams, tables, and lists."""
+    if not content:
+        return ""
+    text = re.sub(r"```[\s\S]*?```", "\n", content)
+    kept: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("|") or stripped.startswith("- ") or stripped.startswith("* "):
+            continue
+        if stripped.startswith(">"):
+            stripped = stripped[1:].strip()
+        if not stripped or _CHROME_LINE_RE.search(stripped):
+            continue
+        if _PRACTICE_LINE_RE.search(stripped):
+            continue
+        kept.append(stripped)
+    blob = " ".join(kept)
+    blob = re.sub(r"\s+", " ", blob).strip()
+    if not blob:
+        return ""
+    parts = re.split(r"(?<=[。.!？?])\s+", blob)
+    excerpt = " ".join(parts[:2]).strip()
+    if len(excerpt) > max_chars:
+        excerpt = excerpt[: max_chars - 1].rstrip() + "…"
+    return excerpt
+
+
+def related_source_chip_line(
+    locs: list[str],
+    *,
+    label: str | None = None,
+    symbols: list[str] | None = None,
+) -> str:
+    chips: list[str] = []
+    seen: set[str] = set()
+    extras = list(symbols or [])
+    for i, loc in enumerate(locs):
+        chip = (loc or "").strip()
+        if not chip or chip in seen or not _SOURCE_CHIP_RE.match(chip):
+            continue
+        seen.add(chip)
+        bit = f"`{chip}`"
+        symbol = extras[i].strip() if i < len(extras) and extras[i] else ""
+        if symbol:
+            bit += f" — `{symbol}`"
+        chips.append(bit)
+        if len(chips) >= 8:
+            break
+    if not chips:
+        return ""
+    heading = label or t("Related source", "相关源码")
+    return f"**{heading}:** " + " · ".join(chips)
+
+
 def _parse_line_span(loc: str) -> tuple[int | None, int | None]:
     if ":" not in loc:
         return None, None
@@ -294,55 +545,246 @@ def _parse_line_span(loc: str) -> tuple[int | None, int | None]:
     return None, None
 
 
-def _rewrite_mute_chips(text: str) -> str:
-    def _sub(match: re.Match[str]) -> str:
+def _collect_source_chips(text: str) -> tuple[list[str], list[str]]:
+    found: list[str] = []
+    symbols: list[str] = []
+    seen: set[str] = set()
+    for match in re.finditer(
+        r"(?:点击展开|Click to expand)\s*`([^`]+)`(?:（[^）]*）|\s*\([^)]*\))?(?:\s*—\s*`([^`]+)`)?",
+        text or "",
+    ):
         loc = match.group(1).strip()
-        if "点击展开" in match.group(0) or "Click to expand" in match.group(0):
-            return match.group(0)
-        return f"- {format_evidence_line(loc)}"
+        if loc and loc not in seen and _SOURCE_CHIP_RE.match(loc):
+            seen.add(loc)
+            found.append(loc)
+            symbols.append((match.group(2) or "").strip())
+    for match in re.finditer(r"`([^`]+)`(?:\s*—\s*`([^`]+)`)?", text or ""):
+        loc = match.group(1).strip()
+        if loc and loc not in seen and _SOURCE_CHIP_RE.match(loc):
+            seen.add(loc)
+            found.append(loc)
+            symbols.append((match.group(2) or "").strip())
+    return found, symbols
 
-    return _MUTE_REF_RE.sub(_sub, text)
+
+def _split_markdown_sections(content: str) -> tuple[str, list[tuple[str, str]]]:
+    parts = re.split(r"(?m)^## ", content)
+    lead = parts[0]
+    sections: list[tuple[str, str]] = []
+    for part in parts[1:]:
+        title, _, rest = part.partition("\n")
+        sections.append((title.strip(), rest))
+    return lead, sections
 
 
-def upgrade_legacy_concept_markdown(content: str, slug: str = "", title: str = "") -> str:
-    """Rewrite persisted concept pages so old scans pick up the new contract."""
+def _heading_bucket(title: str) -> str | None:
+    stripped = title.strip()
+    if stripped in _HOMEWORK_HEADINGS or stripped in _RELATED_HEADINGS:
+        return "drop"
+    if stripped in _WHAT_HEADINGS:
+        return "what"
+    if stripped in _POSITION_HEADINGS:
+        return "position"
+    if stripped in _FLOW_HEADINGS:
+        return "flow"
+    if stripped in _TYPE_ROLE_HEADINGS:
+        return "types"
+    if stripped in _NOT_THIS_HEADINGS:
+        return "not"
+    if stripped in _TIPS_HEADINGS:
+        return "tips"
+    if stripped in _PREREQ_HEADINGS:
+        return "prereq"
+    if stripped in _NEXT_HEADINGS:
+        return "next"
+    return None
+
+
+def _clean_lead(lead: str) -> tuple[str, str, list[str], list[str]]:
+    """Return (title_line, leftover_prose, chips, symbols) from the pre-heading block."""
+    title_line = ""
+    quotes: list[str] = []
+    prose: list[str] = []
+    chips, symbols = _collect_source_chips(lead)
+    for raw in lead.splitlines():
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("# ") and not title_line:
+            title_line = stripped
+            continue
+        if _CHROME_LINE_RE.search(stripped):
+            continue
+        if _PRACTICE_LINE_RE.search(stripped):
+            continue
+        if stripped.startswith("**相关源码") or stripped.startswith("**Related source"):
+            continue
+        if stripped.startswith(">"):
+            quote = stripped.lstrip("> ").strip()
+            if quote and quote not in quotes:
+                quotes.append(quote)
+            continue
+        prose.append(stripped)
+    leftover = "\n\n".join(item for item in [*quotes, *prose] if item)
+    return title_line, leftover, chips, symbols
+
+
+def _join_bodies(chunks: list[str]) -> str:
+    seen: list[str] = []
+    for chunk in chunks:
+        text = (chunk or "").strip()
+        if not text:
+            continue
+        text = _CLICK_CHIP_RE.sub(lambda m: f"`{m.group(1).strip()}`", text)
+        text = re.sub(r"(?m)^[ \t]*\*\*(难度|Difficulty)\*\*.*$", "", text)
+        text = re.sub(
+            r"(?m)^[ \t]*\*\*(相关源码|Related source).*$",
+            "",
+            text,
+        )
+        lines = [ln for ln in text.splitlines() if not _PRACTICE_LINE_RE.search(ln)]
+        text = "\n".join(lines).strip()
+        if not text:
+            continue
+        if any(text == other for other in seen):
+            continue
+        if any(text in other and text != other for other in seen):
+            continue
+        seen = [other for other in seen if not (other in text and other != text)]
+        seen.append(text)
+    return "\n\n".join(seen)
+
+
+def _strip_leading_lede(text: str, lede: str) -> str:
+    text = (text or "").strip()
+    lede = (lede or "").strip()
+    if not text or not lede:
+        return text
+    if text == lede:
+        return ""
+    if text.startswith(lede):
+        return text[len(lede) :].strip()
+    return text
+
+
+def _append_section(out: list[str], heading: str, body: str) -> None:
+    body = (body or "").strip()
+    if not body:
+        return
+    out.append(f"## {heading}\n")
+    out.append(f"{body}\n")
+
+
+def upgrade_legacy_concept_markdown(
+    content: str,
+    slug: str = "",
+    title: str = "",
+    *,
+    has_overview: bool = False,
+    has_architecture: bool = False,
+    overview_excerpt: str = "",
+) -> str:
+    """Strip homework chrome from persisted concept wiki pages.
+
+    Learning-path ``step_task`` stays on the path API; it must not be written
+    back into wiki markdown on GET.
+    """
     if not content or "## " not in content:
         return content
-    text = _rewrite_mute_chips(content)
 
-    evidence_intro = t("Open the evidence first, then keep reading.", "先点开证据再往下。")
-    text = re.sub(
-        r"(?m)^## (源码证据|Source evidence)\s*$",
-        t("## Look at this evidence only", "## 只看这一处证据") + "\n\n" + evidence_intro,
-        text,
-    )
-    text = re.sub(r"(?m)^## (自测|Self-check)\s*$", t("## Pass", "## 过关"), text)
-    text = re.sub(
-        r"(?m)^## (为什么重要|Why (?:it matters|this matters))\n+(?:>[^\n]*\n)+\n?",
-        "",
-        text,
-        count=1,
-    )
-    text = re.sub(
-        r"(?m)^## (这份仓库做什么|What this repo does|职责与边界|Responsibility and boundaries)\s*$",
-        t("## Back to first principles", "## 先回到原理"),
-        text,
-        count=1,
-    )
+    lead, sections = _split_markdown_sections(content)
+    title_line, leftover, chips, chip_symbols = _clean_lead(lead)
+    grouped: dict[str, list[str]] = {
+        key: []
+        for key in (
+            "what",
+            "position",
+            "flow",
+            "types",
+            "not",
+            "tips",
+            "prereq",
+            "next",
+            "other",
+        )
+    }
+    for heading, body in sections:
+        extra_locs, extra_symbols = _collect_source_chips(body)
+        chips.extend(extra_locs)
+        chip_symbols.extend(extra_symbols)
+        bucket = _heading_bucket(heading)
+        if bucket == "drop":
+            continue
+        if bucket is None:
+            grouped["other"].append(f"## {heading}\n\n{body.strip()}".strip())
+            continue
+        grouped[bucket].append(body)
 
-    task_heading = t("## What this step asks of you", "## 本步要你干什么")
-    if task_heading not in text:
-        task = step_task_for_slug(slug, title)
-        insert = f"{task_heading}\n\n{task}\n\n"
-        parts = text.split("\n", 1)
-        if parts[0].startswith("# "):
-            rest = parts[1] if len(parts) > 1 else ""
-            match = re.search(r"(?m)^## ", rest)
-            if match:
-                rest = rest[: match.start()] + insert + rest[match.start() :]
-                text = parts[0] + "\n" + rest
-            else:
-                text = parts[0] + "\n\n" + insert + rest
-        else:
-            text = insert + text
+    shown_title = title or (
+        title_line[2:].strip() if title_line.startswith("# ") else slug
+    )
+    lede = handbook_lede(slug, shown_title)
+    what_chunks = [
+        _strip_leading_lede(leftover, lede),
+        *(_strip_leading_lede(body, lede) for body in grouped["what"]),
+    ]
+    what = _join_bodies(what_chunks)
+    position = _join_bodies(grouped["position"])
+    if not position:
+        position = handbook_position(slug, title)
+        extra_links: list[str] = []
+        if has_overview:
+            extra_links.append(t("[Overview](index)", "[概述](index)"))
+        if has_architecture:
+            extra_links.append(t("[Architecture](architecture)", "[架构概览](architecture)"))
+        if extra_links:
+            position = (
+                position
+                + "\n\n"
+                + t("See also: ", "相关页面：")
+                + " · ".join(extra_links)
+            )
+        excerpt = (overview_excerpt or "").strip()
+        if excerpt and excerpt not in what and excerpt not in position:
+            position = f"{position}\n\n{excerpt}"
+
+    out: list[str] = []
+    out.append(title_line if title_line else f"# {shown_title}")
+    out.append("")
+    out.append(f"> {lede}\n")
+    chip_line = related_source_chip_line(chips, symbols=chip_symbols)
+    if chip_line:
+        out.append(chip_line)
+        out.append("")
+
+    _append_section(out, t("What it is", "它是什么"), what)
+    _append_section(out, t("Where it sits", "它在系统里的位置"), position)
+    _append_section(out, t("How a call runs", "一次调用怎么走"), _join_bodies(grouped["flow"]))
+    _append_section(
+        out,
+        t("Key types and their roles", "关键类型在链路上的职责"),
+        _join_bodies(grouped["types"]),
+    )
+    _append_section(out, t("What this is not", "不是什么"), _join_bodies(grouped["not"]))
+    _append_section(out, t("Term tips", "术语小贴士"), _join_bodies(grouped["tips"]))
+    _append_section(out, t("Read first", "先读"), _join_bodies(grouped["prereq"]))
+    _append_section(out, t("Next", "接下来"), _join_bodies(grouped["next"]))
+    for block in grouped["other"]:
+        cleaned = _join_bodies([block])
+        if cleaned:
+            out.append(cleaned)
+            out.append("")
+
+    text = "\n".join(out)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    # Never re-insert the learning-path task into wiki markdown.
+    if "本步要你干什么" in text or "What this step asks of you" in text:
+        text = re.sub(
+            r"(?ms)^## (本步要你干什么|What this step asks of you)\n.*?(?=^## |\Z)",
+            "",
+            text,
+        )
+    if "过关" in text or re.search(r"(?m)^## Pass\s*$", text):
+        text = re.sub(r"(?ms)^## (过关|Pass)\n.*?(?=^## |\Z)", "", text)
     return text.rstrip() + "\n"

@@ -296,9 +296,10 @@ def test_zh_no_llm_fallback_is_handbook_not_inventory(tmp_path):
     graph = DependencyGraph.build_from_project(project)
     pages = WikiBuilder().build(project, wiki, graph, language="zh")
     arch = pages.get_page("architecture").content
-    assert "**类型:**" in arch
+    assert "**类型:**" not in arch
     assert "**Type:**" not in arch
     assert "codebase-modules" in arch
+    assert "## 链路里的角色" in arch or "这篇文档讲" in arch
     assert "## 术语小贴士" in arch
     assert "Heaviest modules by PageRank" not in arch
     for page in pages.pages:

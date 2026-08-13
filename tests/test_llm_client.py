@@ -86,6 +86,11 @@ def test_zh_prompts_ask_for_handbook_prose_and_term_tips():
     arch = build_architecture_prompt("tree", "files", "zh")
     assert "PageRank file dump" in arch[-1]["content"]
     assert "term_tips" in arch[-1]["content"]
+    assert "ROLE in the flow" in arch[-1]["content"]
+    assert "homework" in arch[0]["content"]
+    overview_user = overview[-1]["content"]
+    assert "file inventory" in overview_user
+    assert "DeepWiki order" in overview_user
     deep = build_module_prompt("app", "src", "demo", "zh", depth="deep")
     assert "term_tips is REQUIRED" in deep[-1]["content"]
     assert "`PtyHandle`" in deep[0]["content"]

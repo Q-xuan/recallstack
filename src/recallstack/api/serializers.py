@@ -32,6 +32,7 @@ from recallstack.learning.learning_contract import (
     path_mission,
     step_task_for_slug,
     upgrade_legacy_concept_markdown,
+    wiki_prose_excerpt,
 )
 from repowiki.core.wiki_builder import upgrade_legacy_module_markdown
 
@@ -105,8 +106,16 @@ def wiki_out(
 ) -> WikiOut:
     payload = version.wiki_pages or {}
     concept_by_slug = {c.slug: c for c in (concepts or [])}
+    raw_pages = payload.get("pages") or []
+    page_ids = {item.get("id") for item in raw_pages}
+    overview_excerpt = wiki_prose_excerpt(
+        next(
+            (item.get("content") or "" for item in raw_pages if item.get("id") == "index"),
+            "",
+        )
+    )
     pages: list[WikiPageOut] = []
-    for p in payload.get("pages") or []:
+    for p in raw_pages:
         page_id = p.get("id") or ""
         concept = None
         content = p.get("content") or ""
@@ -117,6 +126,9 @@ def wiki_out(
                 content,
                 slug=slug,
                 title=(concept.title if concept else p.get("title")) or "",
+                has_overview="index" in page_ids,
+                has_architecture="architecture" in page_ids,
+                overview_excerpt=overview_excerpt if slug == "project-goal" else "",
             )
         elif page_id.startswith("modules/"):
             content = upgrade_legacy_module_markdown(content, language=content_lang())

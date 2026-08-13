@@ -16,9 +16,11 @@ from recallstack.learning.concept_extractor import readme_prose_excerpt
 from recallstack.learning.i18n import content_lang, t
 from recallstack.learning.learning_contract import (
     first_principles,
-    format_evidence_line,
-    pass_questions,
-    step_task,
+    flow_narrative,
+    handbook_lede,
+    handbook_position,
+    related_source_chip_line,
+    wiki_prose_excerpt,
 )
 from repowiki.core.graph import DependencyGraph
 from repowiki.core.models import (
@@ -307,15 +309,85 @@ def _tips_for_concept(concept: ConceptDraft) -> list[TermTip]:
     return out
 
 
-def _principles_body(concept: ConceptDraft, project_name: str) -> str:
-    principles = first_principles(concept, project_name)
+def _what_body(concept: ConceptDraft, folded: str = "") -> str:
+    """Handbook 'what it is' — description / why, not the path-step task."""
+    parts: list[str] = []
     body = _clean_concept_body(concept.description)
     why = (concept.why_learn or "").strip()
+    if why and _is_html_dump(why):
+        why = ""
     if body and why and body == why:
-        body = ""
-    if body and body not in principles:
-        return f"{principles}\n\n{body}"
-    return principles
+        why = ""
+    if body:
+        parts.append(body)
+    if why and why not in body:
+        parts.append(why)
+    if folded and not any(folded in p or p in folded for p in parts):
+        parts.append(folded)
+    if parts:
+        return "\n\n".join(parts)
+    return first_principles(concept, "")
+
+
+def _position_body(concept: ConceptDraft, wiki: Wiki) -> str:
+    parts = [handbook_position(concept.slug, concept.title)]
+    links: list[str] = []
+    if wiki.get_page("index"):
+        links.append(t("[Overview](index)", "[概述](index)"))
+    if wiki.get_page("architecture"):
+        links.append(t("[Architecture](architecture)", "[架构概览](architecture)"))
+    module_links = 0
+    for page in wiki.pages:
+        if not (page.id.startswith("modules/") and page.title):
+            continue
+        links.append(f"[{page.title}]({page.id})")
+        module_links += 1
+        if module_links >= 3:
+            break
+    if links:
+        parts.append(t("See also: ", "相关页面：") + " · ".join(links))
+    return "\n\n".join(parts)
+
+
+def _type_role_lines(prose: str, concept: ConceptDraft) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for match in re.finditer(r"`([A-Z][A-Za-z0-9_]+)`", prose or ""):
+        name = match.group(1)
+        if name not in seen:
+            seen.add(name)
+            names.append(name)
+    for ref in concept.source_references:
+        symbol = (ref.symbol or "").strip()
+        if symbol and symbol[0].isupper() and symbol in prose and symbol not in seen:
+            seen.add(symbol)
+            names.append(symbol)
+    if not names:
+        return []
+    lines = [t("## Key types and their roles\n", "## 关键类型在链路上的职责\n")]
+    for name in names[:8]:
+        lines.append(
+            t(
+                f"- **`{name}`** — a role on the path described above",
+                f"- **`{name}`** — 出现在上文链路中的角色",
+            )
+        )
+    lines.append("")
+    return lines
+
+
+def _fold_overview_architecture(wiki: Wiki, concept: ConceptDraft) -> str:
+    if concept.slug not in {"project-goal"}:
+        return ""
+    chunks: list[str] = []
+    for page_id in ("index", "architecture"):
+        page = wiki.get_page(page_id)
+        if page is None:
+            continue
+        excerpt = wiki_prose_excerpt(page.content, max_chars=280)
+        if excerpt:
+            chunks.append(excerpt)
+    return " ".join(chunks[:2]).strip()
 
 
 def _append_term_tips_md(lines: list[str], tips: list[TermTip]) -> None:
@@ -331,11 +403,11 @@ def _append_term_tips_md(lines: list[str], tips: list[TermTip]) -> None:
 
 
 def append_concept_pages(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
-    """Attach concept wiki pages so learning objects live inside the wiki tree.
+    """Attach concept wiki pages as DeepWiki handbook entries.
 
-    First-principles layout: title, one-line why, the action for this step,
-    constraint reasoning, one primary citation, not-this, term tips, then a
-    pass check that can only be answered from the evidence.
+    Learning-path homework (step_task / 本步要你干什么 / 过关) stays on the
+    path UI. Concept pages here are what/where/flow, with source chips as
+    evidence — not a first-principles worksheet.
     """
     if not concepts:
         return wiki
@@ -355,46 +427,34 @@ def append_concept_pages(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
     concept_sidebar = SidebarItem(title=t("Concepts", "词条"), page_id="", children=[])
     for i, c in enumerate(concepts):
         page_id = f"concepts/{c.slug}"
-        minutes = c.estimated_minutes or 10
-        why = (c.why_learn or "").strip()
+        folded = _fold_overview_architecture(wiki, c)
+        what = _what_body(c, folded)
+        flow = flow_narrative(c.slug, c.title)
         lines = [
             f"# {c.title}\n",
+            f"> {handbook_lede(c.slug, c.title)}\n",
         ]
-        if why:
-            lines.append(f"{why}\n")
-        lines.append(
-            t(
-                f"**Difficulty** {c.difficulty}/5 · **Reading time** ~{minutes} min · "
-                f"**Importance** {c.importance:.2f}\n",
-                f"**难度** {c.difficulty}/5 · **阅读时长** 约 {minutes} 分钟 · "
-                f"**重要度** {c.importance:.2f}\n",
-            )
-        )
-        lines.append(t("## What this step asks of you\n", "## 本步要你干什么\n"))
-        lines.append(f"{step_task(c)}\n")
-        lines.append(t("## Back to first principles\n", "## 先回到原理\n"))
-        lines.append(f"{_principles_body(c, wiki.project_name)}\n")
+        chip_locs = [_format_ref(ref) for ref in c.source_references[:8]]
+        chip_symbols = [(ref.symbol or "") for ref in c.source_references[:8]]
+        chip_line = related_source_chip_line(chip_locs, symbols=chip_symbols)
+        if chip_line:
+            lines.append(f"{chip_line}\n")
 
-        lines.append(t("## Look at this evidence only\n", "## 只看这一处证据\n"))
-        if c.source_references:
-            lines.append(
-                t(
-                    "Open the evidence first, then keep reading.",
-                    "先点开证据再往下。",
-                )
-            )
-            lines.append("")
-            for ref in c.source_references[:8]:
-                symbol = f" — `{ref.symbol}`" if ref.symbol else ""
-                lines.append(f"- {format_evidence_line(_format_ref(ref))}{symbol}")
-        else:
-            lines.append(
-                t(
-                    "_No file-level evidence was extracted for this concept._",
-                    "_该概念未能提取到文件级证据。_",
-                )
-            )
-        lines.append("")
+        lines.append(t("## What it is\n", "## 它是什么\n"))
+        lines.append(f"{what}\n")
+
+        lines.append(t("## Where it sits\n", "## 它在系统里的位置\n"))
+        lines.append(f"{_position_body(c, wiki)}\n")
+
+        if flow:
+            lines.append(t("## How a call runs\n", "## 一次调用怎么走\n"))
+            if c.source_references:
+                lines.append(f"{flow} `{_format_ref(c.source_references[0])}`\n")
+            else:
+                lines.append(f"{flow}\n")
+
+        prose_for_types = "\n".join([what, flow])
+        lines.extend(_type_role_lines(prose_for_types, c))
 
         not_this = _not_this_for(c)
         if not_this:
@@ -414,22 +474,11 @@ def append_concept_pages(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
 
         unlocks = dependents.get(c.slug, [])
         if unlocks:
-            lines.append(t("## Leads to\n", "## 继续读\n"))
+            lines.append(t("## Next\n", "## 接下来\n"))
             for d in unlocks[:8]:
                 lines.append(f"- {link(d)}")
             lines.append("")
 
-        lines.extend(
-            [
-                t("## Pass\n", "## 过关\n"),
-                pass_questions(c),
-                t(
-                    "Answer in the practice panel below — after looking at the evidence. "
-                    "[Open practice](#practice)",
-                    "先看证据，再到底部练习区作答。[打开练习](#practice)",
-                ),
-            ]
-        )
         wiki.pages.append(
             WikiPage(
                 id=page_id,
@@ -552,8 +601,9 @@ def _concept_enrich_messages(
         {
             "role": "system",
             "content": (
-                "You write a short handbook entry for one learning concept in a codebase wiki. "
+                "You write a short DeepWiki handbook entry for one concept in a codebase wiki. "
                 "Be specific to THIS repository. No HTML. No file inventory. "
+                "No homework headings (what this step asks, pass check, first principles worksheet). "
                 f"{_lang_instruction(language)}"
             ),
         },
@@ -568,8 +618,8 @@ def _concept_enrich_messages(
                 f"## Files (sample)\n{file_list or '(none)'}\n\n"
                 "Return JSON:\n"
                 "{\n"
-                '  "description": "2-4 sentences: what it is for, who uses it, capability boundary",\n'
-                '  "why_learn": "one sentence",\n'
+                '  "description": "2-4 handbook sentences: what it is, who uses it, where it sits — not a quiz prompt",\n'
+                '  "why_learn": "one sentence the wiki can fold into the opening",\n'
                 '  "not_this": ["common confusion 1"],\n'
                 '  "term_tips": [{"term": "PageRank", "tip": "how THIS repo uses it"}]\n'
                 "}\n"

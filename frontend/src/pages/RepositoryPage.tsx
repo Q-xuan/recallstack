@@ -679,7 +679,9 @@ export default function RepositoryPage() {
                     }}
                   />
 
-                  {boundConcept && <ConceptPracticePanel concept={boundConcept} />}
+                  {mode === "learn" && boundConcept && (
+                    <ConceptPracticePanel concept={boundConcept} />
+                  )}
 
                   {(prevPage || nextPage) && (
                     <nav className="rs-pager" aria-label={t("上一页 / 下一页", "Previous / next page")}>
