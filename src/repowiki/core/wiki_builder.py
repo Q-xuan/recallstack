@@ -256,14 +256,16 @@ class WikiBuilder:
                     lines.append(f"Architecture: see [{arch_title}](architecture).\n")
 
         structure = list(getattr(overview, "codebase_structure", None) or [])
+        subsystems = list(getattr(overview, "subsystems", None) or [])
         if structure:
             lines.append(f"## {structural_title('codebase-split', language)}\n")
             lines.extend(_codebase_structure_table(structure, language))
-        elif overview.tech_stack:
-            lines.append(f"## {structural_title('tech-stack', language)}\n")
-            lines.extend(_tech_stack_table(overview.tech_stack, language))
+        elif not what and not subsystems:
+            filtered = filter_tech_stack(overview.tech_stack, project)
+            if filtered:
+                lines.append(f"## {structural_title('tech-stack', language)}\n")
+                lines.extend(_tech_stack_table(filtered, language))
 
-        subsystems = list(getattr(overview, "subsystems", None) or [])
         if subsystems:
             lines.append(f"## {structural_title('core-subsystems', language)}\n")
             lines.extend(_render_subsystems(subsystems, language))
@@ -823,6 +825,56 @@ def _overview_lede(name: str, one_liner: str, language: str) -> str:
         f"main capabilities sit.{extra} After reading you should be able to "
         "state the goal without leaning on the folder tree."
     )
+
+
+_LANG_ALIASES = {
+    "python": "python",
+    "javascript": "javascript",
+    "js": "javascript",
+    "typescript": "typescript",
+    "ts": "typescript",
+    "java": "java",
+    "go": "go",
+    "golang": "go",
+    "rust": "rust",
+    "ruby": "ruby",
+    "php": "php",
+    "c++": "cpp",
+    "cpp": "cpp",
+    "c#": "csharp",
+    "csharp": "csharp",
+    "kotlin": "kotlin",
+    "swift": "swift",
+}
+_UNSPECIFIED = {"未指定", "unspecified", "unknown", "n/a", "none", "-", "n.a."}
+
+
+def filter_tech_stack(items, project) -> list:
+    """Drop invented languages (Python/JavaScript 未指定 on a Rust repo)."""
+    langs = {
+        (getattr(f, "language", "") or "").strip().lower()
+        for f in (getattr(project, "files", None) or [])
+        if (getattr(f, "language", "") or "").strip()
+        and getattr(f, "language", "") != "unknown"
+    }
+    out = []
+    for item in items or []:
+        name = (getattr(item, "name", "") or "").strip()
+        cat = (getattr(item, "category", "") or "").strip().lower()
+        ver = (getattr(item, "version", "") or "").strip()
+        if ver.lower() in _UNSPECIFIED:
+            try:
+                item.version = ""
+            except Exception:
+                pass
+        key = _LANG_ALIASES.get(name.lower())
+        is_lang = cat == "language" or key is not None
+        if is_lang and langs:
+            token = key or name.lower()
+            if token not in langs and not any(token in lang or lang in token for lang in langs):
+                continue
+        out.append(item)
+    return out
 
 
 def _tech_stack_table(items, language: str = "en") -> list[str]:

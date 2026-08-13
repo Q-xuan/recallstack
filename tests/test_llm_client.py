@@ -12,6 +12,7 @@ from repowiki.llm.client import (
 from repowiki.llm.prompts import (
     build_architecture_prompt,
     build_module_prompt,
+    build_outline_prompt,
     build_overview_prompt,
     extract_json,
 )
@@ -116,3 +117,33 @@ def test_zh_prompts_ask_for_handbook_prose_and_term_tips():
     assert "Agent Loop" in titled[-1]["content"]
     assert "Tool System" in titled[-1]["content"]
     assert "see_also" in titled[-1]["content"]
+
+
+def test_extract_json_recovers_truncated_topics_payload():
+    parsed = extract_json('{ "topics": [ { "id": "a" ')
+    assert parsed is not None
+    assert parsed["topics"][0]["id"] == "a"
+
+
+def test_extract_json_strips_trailing_commas_and_fences():
+    raw = """```json
+{"topics": [{"id": "agent-loop",}], "overview_focus": "boot",}
+```"""
+    parsed = extract_json(raw)
+    assert parsed["topics"][0]["id"] == "agent-loop"
+    assert parsed["overview_focus"] == "boot"
+
+
+def test_outline_prompt_is_topics_only_and_compact():
+    prompt = build_outline_prompt("tree", "mods", "ranks", "entries", "zh")
+    user = prompt[-1]["content"]
+    assert "Output a wiki outline as JSON" in user
+    assert '"topics"' in user
+    assert "Do NOT emit modules[]" in user
+    assert '"sections": ["purpose", "implementation"' not in user
+
+
+def test_outline_max_tokens_constant():
+    from repowiki.core.analyzer import OUTLINE_MAX_TOKENS
+
+    assert OUTLINE_MAX_TOKENS >= 4096

@@ -38,7 +38,7 @@ class ScriptedLLM:
     async def complete(self, messages, max_tokens=4096, **kwargs):
         text = messages[-1]["content"]
         self.calls.append(text)
-        self.kwargs.append(kwargs)
+        self.kwargs.append({"max_tokens": max_tokens, **kwargs})
         if "Output a wiki outline as JSON" in text:
             return json.dumps(
                 {
@@ -173,6 +173,30 @@ class ScriptedLLM:
         return "{}"
 
 
+class MermaidRetryLLM(ScriptedLLM):
+    """First architecture call has no mermaid; the retry must fill it."""
+
+    def __init__(self):
+        super().__init__()
+        self.arch_calls = 0
+
+    async def complete(self, messages, max_tokens=4096, **kwargs):
+        text = messages[-1]["content"]
+        if "Analyze the architecture" in text:
+            self.arch_calls += 1
+            self.calls.append(text)
+            self.kwargs.append({"max_tokens": max_tokens, **kwargs})
+            payload = {
+                "architecture_type": "monolith",
+                "description": "entrypoint to db",
+                "components": [{"name": "app", "purpose": "core", "files": ["app/main.py"]}],
+                "mermaid_component": "" if self.arch_calls == 1 else "graph TD\n  A-->B",
+                "data_flow": "main to db",
+            }
+            return json.dumps(payload)
+        return await super().complete(messages, max_tokens=max_tokens, **kwargs)
+
+
 def _file(path: str, content: str, *, entry: bool = False, config: bool = False) -> FileInfo:
     return FileInfo(
         path=path,
@@ -252,6 +276,10 @@ def test_write_path_with_scripted_llm_and_cite_check(tmp_path):
     assert any("Output a wiki outline as JSON" in c for c in llm.calls)
     assert any("Document the '" in c for c in llm.calls)
     assert all(k.get("response_format") == {"type": "json_object"} for k in llm.kwargs)
+    outline_kw = next(
+        k for c, k in zip(llm.calls, llm.kwargs, strict=True) if "Output a wiki outline as JSON" in c
+    )
+    assert outline_kw["max_tokens"] >= 4096
     assert "Wiki outline focus" in next(c for c in llm.calls if "Generate a project overview" in c)
     assert "Outlining wiki..." in progress
     assert "Verifying citations..." in progress
@@ -283,6 +311,13 @@ def test_write_path_with_scripted_llm_and_cite_check(tmp_path):
     assert "`spawn` (function)" not in page.content
     assert "does/not/exist.py" not in page.content
     assert "totally/fake.py" not in page.content
+
+
+def test_architecture_retries_when_mermaid_missing(tmp_path):
+    llm = MermaidRetryLLM()
+    wiki, _, _ = _run(_analyze(tmp_path, llm))
+    assert llm.arch_calls == 2
+    assert "A-->B" in (wiki.architecture.mermaid_component or "")
 
 
 def test_zh_no_llm_fallback_is_handbook_not_inventory(tmp_path):

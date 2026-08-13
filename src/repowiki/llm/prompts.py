@@ -89,7 +89,8 @@ def build_outline_prompt(
             "role": "system",
             "content": (
                 "You are a staff engineer planning a codebase wiki. "
-                "Produce a compact writing plan, not the wiki itself. "
+                "Produce a COMPACT writing plan (topics only), not the wiki itself. "
+                "Keep the JSON small enough to finish: 8-14 topics, short strings. "
                 "Prioritize entrypoints and high-PageRank files. "
                 f"{_lang_instruction(language)}"
             ),
@@ -98,15 +99,13 @@ def build_outline_prompt(
             "role": "user",
             "content": (
                 f"## File Tree\n```\n{file_tree}\n```\n\n"
-                f"## Modules\n{module_summaries}\n\n"
+                f"## Modules (evidence only — do NOT outline each one)\n{module_summaries}\n\n"
                 f"## File importance (PageRank)\n{rankings}\n\n"
                 f"## Entrypoints and config\n{entrypoints}\n\n"
                 "Output a wiki outline as JSON:\n"
                 "{\n"
                 '  "overview_focus": "what the overview page must explain",\n'
                 '  "architecture_focus": "what the architecture page must explain",\n'
-                '  "emphasized_pages": ["overview", "architecture"],\n'
-                '  "reading_order": ["entry-and-boot", "agent-runtime"],\n'
                 '  "topics": [\n'
                 "    {\n"
                 '      "id": "agent-runtime",\n'
@@ -114,34 +113,20 @@ def build_outline_prompt(
                 '      "section": "deep-dive",\n'
                 '      "purpose": "what the reader can explain after this page",\n'
                 '      "key_files": ["real/path.rs"],\n'
-                '      "key_symbols": ["TypeName"],\n'
                 '      "depth": "deep"\n'
-                "    }\n"
-                "  ],\n"
-                '  "modules": [\n'
-                "    {\n"
-                '      "name": "exact module name from the list above",\n'
-                '      "priority": 3,\n'
-                '      "depth": "deep",\n'
-                '      "sections": ["purpose", "implementation", "call_chains", "edge_cases"],\n'
-                '      "key_files": ["path/from/the/tree.py"],\n'
-                '      "key_symbols": ["ClassName", "func_name"],\n'
-                '      "notes": "what a reader must understand here"\n'
                 "    }\n"
                 "  ]\n"
                 "}\n\n"
                 "topics are the PRIMARY wiki IA (zread 深入探索): 8-14 conceptual systems "
-                "this repo actually has (Agent Runtime, Tool System, ACP, TUI, entry/boot). "
+                "this repo actually has (Agent Runtime, Agent Loop, Tool System, ACP, TUI, entry/boot). "
                 "section is getting-started or deep-dive. Titles are human system names, "
                 "NEVER directory paths and NEVER 'Module: crates/foo'. "
                 "Do NOT invent a generic web-app syllabus (authentication, caching, "
                 "request-routing) unless those are first-class directories/crates here. "
-                "topics[].key_files MUST be real paths from the tree. "
-                "Rules: module names MUST match the Modules list exactly. "
-                "depth is one of deep, standard, brief. "
-                "Mark at most a third of modules as deep. "
-                "key_files MUST be real paths from the tree. "
-                "key_symbols are 1-3 types/functions that appear in the walkthrough, never a method dump. "
+                "topics[].key_files MUST be real paths from the tree (2-6 per topic). "
+                "depth is one of deep, standard, brief. Mark at most a third as deep. "
+                "Do NOT emit modules[], reading_order, or emphasized_pages — those are planned locally. "
+                "Do NOT dump a crate inventory. Keep purpose to one sentence. "
                 "overview_focus and architecture_focus must be narrative (responsibilities and wiring), "
                 "never a PageRank file dump.\n\n"
                 f"{_json_instruction(language)}"
@@ -240,7 +225,8 @@ def build_overview_prompt(
                 "(e.g. 细节见 [Agent Loop](topics/agent-loop)). "
                 "Leave key_features empty. Do not dump a file inventory, method list, or JavaDoc. "
                 "Never write homework headings (what this step asks, 本步要你干什么, pass check). "
-                "tech_stack is a footnote of load-bearing tools, not the page body. "
+                "Never list Python/JavaScript with version 未指定 unless those languages "
+                "actually appear in the tree. Leave tech_stack empty when unsure. "
                 f"{_term_tips_rules(required=True)} "
                 "citations.path MUST be a real path from the tree. Omit citations rather than invent paths.\n\n"
                 f"{_json_instruction(language)}"
@@ -627,28 +613,133 @@ def build_inline_explain_prompt(
 
 
 def extract_json(text: str) -> dict | list | None:
-    """extract JSON from LLM output, handling markdown fences and extra text."""
-    # strip markdown code fences
-    text = re.sub(r"^```(?:json)?\s*\n?", "", text.strip(), flags=re.MULTILINE)
-    text = re.sub(r"\n?```\s*$", "", text.strip(), flags=re.MULTILINE)
+    """Extract JSON from LLM output: fences, trailing commas, truncated objects."""
+    if text is None:
+        return None
+    raw = str(text).strip()
+    if not raw:
+        return None
+    for candidate in _json_candidates(raw):
+        parsed = _loads_relaxed(candidate)
+        if parsed is not None:
+            return parsed
+    return None
 
-    # try direct parse first
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
 
-    # find the first { or [ and match to the last } or ]
-    for start_char, end_char in [("{", "}"), ("[", "]")]:
-        start = text.find(start_char)
+def _strip_fences(text: str) -> str:
+    text = text.strip()
+    fenced = re.search(r"```(?:json)?\s*\r?\n?(.*?)```", text, re.DOTALL | re.IGNORECASE)
+    if fenced:
+        return fenced.group(1).strip()
+    text = re.sub(r"^```(?:json)?\s*\r?\n?", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\r?\n?```\s*$", "", text)
+    return text.strip()
+
+
+def _json_candidates(text: str) -> list[str]:
+    stripped = _strip_fences(text)
+    out: list[str] = [stripped]
+    if stripped != text.strip():
+        out.append(text.strip())
+    for start_char in ("{", "["):
+        start = stripped.find(start_char)
         if start == -1:
             continue
-        end = text.rfind(end_char)
-        if end == -1 or end <= start:
+        end_char = "}" if start_char == "{" else "]"
+        end = stripped.rfind(end_char)
+        if end > start:
+            out.append(stripped[start : end + 1])
+        out.append(stripped[start:])
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for item in out:
+        if item and item not in seen:
+            seen.add(item)
+            uniq.append(item)
+    return uniq
+
+
+def _strip_trailing_commas(text: str) -> str:
+    prev = None
+    while prev != text:
+        prev = text
+        text = re.sub(r",(\s*[}\]])", r"\1", text)
+    return text
+
+
+def _unclosed_string(text: str) -> bool:
+    in_string = False
+    escape = False
+    for ch in text:
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+    return in_string
+
+
+def _closers_for(text: str) -> str:
+    in_string = False
+    escape = False
+    stack: list[str] = []
+    for ch in text:
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
             continue
+        if ch == '"':
+            in_string = True
+        elif ch in "{[":
+            stack.append("}" if ch == "{" else "]")
+        elif ch in "}]":
+            if stack and stack[-1] == ch:
+                stack.pop()
+    return "".join(reversed(stack))
+
+
+def _repair_truncated_json(text: str) -> str | None:
+    s = _strip_trailing_commas(text.strip())
+    if _unclosed_string(s):
+        s += '"'
+    s = re.sub(r":\s*$", "", s)
+    s = _strip_trailing_commas(s)
+    for _ in range(12):
+        candidate = s + _closers_for(s)
         try:
-            return json.loads(text[start:end + 1])
+            json.loads(candidate)
+            return candidate
+        except json.JSONDecodeError:
+            last_comma = s.rfind(",")
+            if last_comma <= 0:
+                break
+            s = _strip_trailing_commas(s[:last_comma])
+    candidate = s + _closers_for(s)
+    try:
+        json.loads(candidate)
+        return candidate
+    except json.JSONDecodeError:
+        return None
+
+
+def _loads_relaxed(text: str) -> dict | list | None:
+    for variant in (text, _strip_trailing_commas(text)):
+        try:
+            return json.loads(variant)
         except json.JSONDecodeError:
             continue
-
-    return None
+    repaired = _repair_truncated_json(text)
+    if not repaired:
+        return None
+    try:
+        return json.loads(repaired)
+    except json.JSONDecodeError:
+        return None

@@ -163,11 +163,15 @@ def build_deterministic_topics(
         matched = [
             f.path
             for f in project.files
-            if _path_has_system(f.path, names) and f.path not in claimed
+            if _path_has_system(f.path, names)
         ]
         if not matched:
             continue
         key = _pick_keys(matched, rank_index, claimed, limit=6)
+        if not key:
+            # Sibling systems (Agent Runtime vs Agent Loop) may share a crate.
+            unused = _pick_keys(matched, rank_index, set(), limit=6)
+            key = unused
         if not key:
             continue
         topics.append(
@@ -281,6 +285,10 @@ def fallback_topic_doc(
         ],
         implementation_details=mod.implementation_details,
         call_chains=mod.call_chains,
+        mermaid=runtime_mermaid_for(
+            entry_files=list(topic.key_files[:1]),
+            topics=[topic],
+        ),
         edge_cases=mod.edge_cases,
         files=mod.files,
         citations=mod.citations,

@@ -59,6 +59,8 @@ logger = logging.getLogger(__name__)
 # One repair call per deep module, and only when many cites failed.
 _REPAIR_MIN_INVALID = 3
 _MAX_REPAIRS = 3
+# grok-study-scale outlines (~16 topics) truncated at 2048 and failed to parse.
+OUTLINE_MAX_TOKENS = 8192
 
 
 class Analyzer:
@@ -166,7 +168,7 @@ class Analyzer:
         base = build_deterministic_outline(
             project, modules, graph, language=self._lang()
         )
-        cache_key = f"outline:{self.language}:{tree_hash}"
+        cache_key = f"outline:v2:{self.language}:{tree_hash}"
         cached = await self.cache.get(cache_key)
         if cached:
             try:
@@ -204,17 +206,23 @@ class Analyzer:
             "\n".join(entries) or "(none)",
             self.language,
         )
-        raw = await self._complete_json(messages, max_tokens=2048)
+        raw = await self._complete_json(messages, max_tokens=OUTLINE_MAX_TOKENS)
         data = extract_json(raw)
         if not data or not isinstance(data, dict):
-            logger.warning("Failed to parse outline JSON, using deterministic outline")
+            logger.warning(
+                "Failed to parse outline JSON, using deterministic outline; raw[:400]=%r",
+                (raw or "")[:400],
+            )
             return base
 
         filtered = {k: v for k, v in data.items() if k in WikiOutline.model_fields}
         try:
             llm_outline = WikiOutline(**filtered)
         except Exception:
-            logger.warning("Outline JSON failed validation, using deterministic outline")
+            logger.warning(
+                "Outline JSON failed validation, using deterministic outline; raw[:400]=%r",
+                (raw or "")[:400],
+            )
             return base
 
         merged = merge_outline(
@@ -223,7 +231,7 @@ class Analyzer:
             known_modules=set(modules),
             known_paths={f.path for f in project.files},
         )
-        if llm_outline.modules or llm_outline.overview_focus:
+        if llm_outline.topics or llm_outline.overview_focus:
             await self.cache.put(cache_key, llm_outline.model_dump())
         return merged
 
@@ -363,7 +371,7 @@ class Analyzer:
                 topic, files, language=self._lang(), graph=graph
             )
             if not files:
-                return fallback
+                return _ensure_topic_flow(fallback, topic, fallback)
             plan = ModuleOutline(
                 name=topic.title or topic.id,
                 depth=topic.depth if topic.depth in {"deep", "standard", "brief"} else "standard",
@@ -382,11 +390,11 @@ class Analyzer:
             cached = await self.cache.get(cache_key)
             if cached:
                 try:
-                    return TopicDoc(**cached)
+                    return _ensure_topic_flow(TopicDoc(**cached), topic, fallback)
                 except Exception:
                     pass
             if not self._llm_enabled():
-                return fallback
+                return _ensure_topic_flow(fallback, topic, fallback)
             messages = build_module_prompt(
                 topic.title or topic.id,
                 files_context,
@@ -400,11 +408,15 @@ class Analyzer:
             raw = await self._complete_json(messages, max_tokens=4096)
             data = extract_json(raw)
             if not data or not isinstance(data, dict):
-                logger.warning("Failed to parse topic '%s' JSON", topic.id)
-                return fallback
+                logger.warning(
+                    "Failed to parse topic '%s' JSON; raw[:400]=%r",
+                    topic.id,
+                    (raw or "")[:400],
+                )
+                return _ensure_topic_flow(fallback, topic, fallback)
             data.setdefault("name", topic.id)
-            doc = _coerce_topic(data, topic)
-            if doc.description or doc.implementation_details or doc.files:
+            doc = _ensure_topic_flow(_coerce_topic(data, topic), topic, fallback)
+            if doc.description or doc.implementation_details or doc.files or doc.call_chains:
                 await self.cache.put(cache_key, doc.model_dump())
             return doc
 
@@ -503,10 +515,24 @@ class Analyzer:
         raw = await self._complete_json(messages, max_tokens=4096)
         data = extract_json(raw)
         if not data or not isinstance(data, dict):
-            logger.warning("Failed to parse architecture JSON")
-            return fallback
+            logger.warning(
+                "Failed to parse architecture JSON; raw[:400]=%r",
+                (raw or "")[:400],
+            )
+            data = None
 
-        arch = _coerce_model(data, ArchitectureDiagram)
+        arch = _coerce_model(data, ArchitectureDiagram) if data else ArchitectureDiagram()
+        if not (arch.mermaid_component or "").strip():
+            logger.warning("Architecture mermaid empty, retrying once")
+            raw = await self._complete_json(messages, max_tokens=4096)
+            data2 = extract_json(raw)
+            if data2 and isinstance(data2, dict):
+                retry = _coerce_model(data2, ArchitectureDiagram)
+                if (retry.mermaid_component or "").strip() or not data:
+                    arch = retry
+            elif not data:
+                return fallback
+
         arch = self._fill_architecture_gaps(arch, project, outline, graph)
         if arch.architecture_type or arch.description or arch.mermaid_component:
             await self.cache.put(cache_key, arch.model_dump())
@@ -748,6 +774,10 @@ class Analyzer:
             overview.subsystems = subsystems_from_topics(outline.topics)
         if not overview.see_also and outline:
             overview.see_also = topic_wiki_links(outline.topics)
+        if overview.tech_stack:
+            from repowiki.core.wiki_builder import filter_tech_stack
+
+            overview.tech_stack = filter_tech_stack(overview.tech_stack, project)
         if not overview.term_tips:
             overview.term_tips = _generic_term_tips(self._lang())
         return overview
@@ -872,6 +902,26 @@ class Analyzer:
             graph=graph,
             notes=(plan.notes if plan else "") or "",
         )
+
+
+def _ensure_topic_flow(doc: TopicDoc, topic, fallback: TopicDoc) -> TopicDoc:
+    """DeepWiki topic pages need a call flow (steps and/or mermaid)."""
+    if getattr(topic, "section", "") == "getting-started" or getattr(topic, "id", "") == "getting-started":
+        return doc
+    has_steps = any(getattr(c, "steps", None) for c in (doc.call_chains or []))
+    if not has_steps and fallback.call_chains:
+        doc.call_chains = list(fallback.call_chains)
+        has_steps = any(getattr(c, "steps", None) for c in doc.call_chains)
+    if not (doc.mermaid or "").strip():
+        fb = (getattr(fallback, "mermaid", "") or "").strip()
+        if fb:
+            doc.mermaid = fb
+        elif getattr(topic, "depth", "") == "deep" or not has_steps:
+            doc.mermaid = runtime_mermaid_for(
+                entry_files=list(getattr(topic, "key_files", None) or [])[:1],
+                topics=[topic],
+            )
+    return doc
 
 
 def _fallback_what_it_is(

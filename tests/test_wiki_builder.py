@@ -650,3 +650,56 @@ def test_architecture_renders_type_roles_under_components():
     assert "`main` — 启动进程 — `app/main.py`" in arch
     assert "  - 文件:" not in arch
 
+
+def test_overview_omits_unused_languages_and_marketing_when_structured():
+    project = ProjectContext(
+        name="grok-study",
+        root=".",
+        files=[
+            FileInfo(
+                path="bin/grok.rs",
+                size=20,
+                language="rust",
+                content="fn main() {}\n",
+                lines=2,
+                is_entrypoint=True,
+            ),
+            FileInfo(
+                path="crates/agent/src/lib.rs",
+                size=24,
+                language="rust",
+                content="pub struct Session;\n",
+                lines=2,
+            ),
+        ],
+    )
+    graph = DependencyGraph.build_from_project(project)
+    data = WikiData(
+        overview=ProjectOverview(
+            name="grok-study",
+            what_it_is=["进程从 `bin/grok.rs:1` 启动。"],
+            mermaid_component="flowchart TD\n  A --> B",
+            codebase_structure=[
+                CodebasePart(name="agent", location="crates/agent", purpose="loop"),
+            ],
+            subsystems=[
+                Subsystem(name="Agent Loop", role="跑一轮对话", files=["crates/agent/src/lib.rs"]),
+            ],
+            tech_stack=[
+                TechItem(name="Python", category="language", version="未指定"),
+                TechItem(name="JavaScript", category="language", version="未指定"),
+                TechItem(name="Rust", category="language"),
+            ],
+            key_features=["营销口号"],
+        ),
+    )
+    overview = WikiBuilder().build(project, data, graph, language="zh").get_page("index").content
+    assert "## 代码如何拆分" in overview
+    assert "## 核心子系统" in overview
+    assert "## 主要能力" not in overview
+    assert "营销口号" not in overview
+    assert "Python" not in overview
+    assert "JavaScript" not in overview
+    assert "未指定" not in overview
+    assert "## 技术栈" not in overview
+

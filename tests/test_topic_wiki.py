@@ -124,6 +124,24 @@ def test_grok_learning_path_is_topics_not_web_app_syllabus():
     assert any(s not in {"project-goal", "getting-started"} for s in path_slugs)
 
 
+def test_grok_deterministic_topics_are_zread_systems_not_web_app():
+    from repowiki.core.topics import build_deterministic_topics
+
+    project = _grok_project()
+    graph = DependencyGraph.build_from_project(project)
+    topics = build_deterministic_topics(project, graph, language="zh")
+    ids = {t.id for t in topics}
+    titles = {t.title for t in topics}
+    assert "agent-runtime" in ids or any("Agent Runtime" in t or "Runtime" in t for t in titles)
+    assert "agent-loop" in ids or any("Loop" in t for t in titles)
+    assert "acp-protocol" in ids or any("ACP" in t for t in titles)
+    assert "terminal-ui" in ids or any("TUI" in t or "Terminal" in t for t in titles)
+    assert "tool-system" in ids or any("工具" in t or "Tool" in t for t in titles)
+    assert "caching" not in ids
+    assert "authentication" not in ids
+    assert "request-routing" not in ids
+
+
 def test_rebuild_hides_legacy_module_tree():
     pages = [
         {"id": "index", "title": "概述"},
