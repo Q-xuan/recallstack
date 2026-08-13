@@ -258,7 +258,7 @@ def path_out(
         if version_id:
             from recallstack.learning.code_loader import load_version_file_texts
 
-            file_texts = load_version_file_texts(version_id)
+            file_texts = load_version_file_texts(str(version_id))
     file_texts = file_texts or {}
     if not file_texts:
         logger.warning(

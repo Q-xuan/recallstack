@@ -8,7 +8,6 @@ from typing import Any
 
 from recallstack.domain.schemas import ConceptDraft, SourceReference
 from recallstack.learning.i18n import t
-from repowiki.core.cite_check import line_of_symbol_in_text
 
 logger = logging.getLogger(__name__)
 
@@ -84,9 +83,12 @@ _PATH_RANK = {slug: i for i, slug in enumerate(_PATH_TRUNK)}
 
 # (path suffixes tried in order, symbol that proves the invariant)
 _EVIDENCE_HINTS: dict[str, tuple[tuple[str, ...], str]] = {
-    "agent-loop": (("turn.rs", "lifecycle.rs", "app.rs", "loop.rs", "dispatch.rs"), "start_turn"),
-    "call-flow": (("turn.rs", "app.rs", "loop.rs"), "start_turn"),
-    "runtime-loop": (("turn.rs", "app.rs", "loop.rs"), "start_turn"),
+    "agent-loop": (
+        ("app/agent.rs", "turn.rs", "lifecycle.rs", "app.rs", "loop.rs", "dispatch.rs"),
+        "start_turn",
+    ),
+    "call-flow": (("app/agent.rs", "turn.rs", "app.rs", "loop.rs"), "start_turn"),
+    "runtime-loop": (("app/agent.rs", "turn.rs", "app.rs", "loop.rs"), "start_turn"),
     "entry-and-boot": (("main.rs", "lib.rs", "app.rs", "boot.rs", "bin/grok.rs", "grok.rs"), "main"),
     "application-entry": (("main.rs", "lib.rs", "app.rs", "boot.rs", "main.py"), "main"),
     "tool-system": (("tool_bridge.rs", "bridge.rs"), "ToolBridge"),
@@ -106,6 +108,7 @@ _FALLBACK_FILES: dict[str, tuple[str, ...]] = {
         "crates/tui/src/bin/grok.rs",
     ),
     "agent-loop": (
+        "crates/codegen/xai-grok-pager/src/app/agent.rs",
         "crates/codegen/xai-grok-agent/src/turn.rs",
         "crates/codegen/xai-grok-pager/src/app.rs",
         "crates/tui/src/app.rs",
@@ -147,9 +150,7 @@ _JUNK_BASENAMES = frozenset(
 _JUNK_EXTS = (".toml", ".json", ".sh", ".bash", ".zsh")
 _WEAK_SYMBOLS = frozenset({"main", "new", "run", "init", "start"})
 _SRC_EXT = (".rs", ".py", ".go")
-_DEFN_RE = re.compile(
-    r"(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|struct|enum|trait|type|class|def)\s+"
-)
+_DEFN_KW = r"(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|struct|enum|trait|type|class|def)\s+"
 
 _SOURCE_CHIP_RE = re.compile(
     r"(?i)^[\w./\-]+(?:\.[A-Za-z0-9]+)+(?::\d+(?:-\d+)?)?$"
@@ -779,9 +780,74 @@ def _first_definition_line(text: str) -> tuple[int, str]:
 
 
 def _line_defines_symbol(src_line: str, symbol: str) -> bool:
+    """True only when this line *defines* ``symbol``, not a call or comment."""
     if not src_line or not symbol:
         return False
-    return bool(_DEFN_RE.search(src_line) and re.search(rf"\b{re.escape(symbol)}\b", src_line))
+    stripped = src_line.strip()
+    if stripped.startswith(("//", "/*", "*", "#", "//!", "///")):
+        return False
+    return bool(re.search(_DEFN_KW + re.escape(symbol) + r"\b", src_line))
+
+
+def _definition_line_in_text(text: str, symbol: str) -> int:
+    if not text or not symbol:
+        return 0
+    for i, line in enumerate(text.splitlines(), 1):
+        if _line_defines_symbol(line, symbol):
+            return i
+    return 0
+
+
+def _is_production_src(path: str, *, slug: str = "") -> bool:
+    norm = (path or "").replace("\\", "/")
+    if not norm or is_junk_evidence_path(norm, slug=slug) or _is_js_trampoline(norm):
+        return False
+    if not norm.lower().endswith(_SRC_EXT):
+        return False
+    wrapped = f"/{norm.lower()}/"
+    if "/examples/" in wrapped or "/example/" in wrapped or "/fixtures/" in wrapped:
+        return False
+    if "/tests/" in wrapped or "/test/" in wrapped:
+        return False
+    return True
+
+
+def _pick_definition_in_store(
+    file_texts: dict[str, str],
+    symbol: str,
+    slug: str,
+    suffixes: tuple[str, ...],
+) -> tuple[str, int] | None:
+    """First production ``*.rs`` (or py/go) that defines ``symbol``.
+
+    Searches the whole scan store. The concept ref's crate is not a filter —
+    ``start_turn`` lives in ``xai-grok-pager/src/app/agent.rs``, not in the
+    ``xai-grok-agent/src/agent.rs`` topic ref.
+    """
+    name = (symbol or "").strip()
+    if not file_texts or len(name) < 2:
+        return None
+    hits: list[tuple[int, str, int]] = []
+    for path, text in file_texts.items():
+        norm = path.replace("\\", "/")
+        if not _is_production_src(norm, slug=slug):
+            continue
+        found = _definition_line_in_text(text, name)
+        if not found:
+            continue
+        score = 50 if norm.lower().endswith(".rs") else 20
+        if "/src/" in f"/{norm.lower()}/":
+            score += 10
+        for i, suffix in enumerate(suffixes):
+            if suffix and norm.endswith(suffix):
+                score += 40 - min(i, 12)
+                break
+        hits.append((score, norm, found))
+    if not hits:
+        return None
+    hits.sort(key=lambda item: (-item[0], item[1]))
+    _score, path, line = hits[0]
+    return path, line
 
 
 def _candidate_paths(
@@ -819,42 +885,6 @@ def _candidate_paths(
     return seen
 
 
-def _scan_store_for_symbol(
-    file_texts: dict[str, str],
-    symbol: str,
-    slug: str,
-) -> list[tuple[str, int, bool]]:
-    hits: list[tuple[str, int, bool]] = []
-    name = (symbol or "").strip()
-    if not file_texts or len(name) < 2:
-        return hits
-    weak = name.lower() in _WEAK_SYMBOLS
-    for path, text in file_texts.items():
-        norm = path.replace("\\", "/")
-        if is_junk_evidence_path(norm, slug=slug) or _is_js_trampoline(norm):
-            continue
-        low = norm.lower()
-        if not low.endswith(_SRC_EXT):
-            continue
-        wrapped = f"/{low}/"
-        if "/examples/" in wrapped or "/example/" in wrapped:
-            continue
-        if weak and ("/tests/" in wrapped or "/test/" in wrapped):
-            continue
-        found = line_of_symbol_in_text(text, name)
-        if not found:
-            continue
-        lines = text.splitlines()
-        src = lines[found - 1] if 0 < found <= len(lines) else ""
-        is_defn = _line_defines_symbol(src, name)
-        if found == 1 and not is_defn:
-            continue
-        if weak and not is_defn:
-            continue
-        hits.append((norm, found, is_defn))
-    return hits
-
-
 def _score_path(
     path: str,
     *,
@@ -889,14 +919,13 @@ def _score_path(
             break
     text = _file_text_for(file_texts, path)
     if text and symbol:
-        found = line_of_symbol_in_text(text, symbol)
+        found = _definition_line_in_text(text, symbol)
         if found:
-            src = text.splitlines()[found - 1] if found <= len(text.splitlines()) else ""
-            is_defn = _line_defines_symbol(src, symbol)
-            if found > 1 or is_defn:
-                line = found
-            score += 120 if is_defn else 70
+            line = found
+            score += 120
         else:
+            # File is in the store and does not define the hint — never stamp it.
+            use_sym = ""
             score -= 50
     elif text and not symbol:
         found_line, found_sym = _first_definition_line(text)
@@ -929,12 +958,27 @@ def path_evidence_chip(
     if not store:
         logger.debug("learning-path evidence: empty scan store for slug=%s", slug)
 
-    candidates = _candidate_paths(refs, slug, file_texts)
+    # Definition-first: if the hint is not in the topic ref, search every
+    # production *.rs in version_files. Weak names like ``main`` stay local.
     if symbol and store and symbol.lower() not in _WEAK_SYMBOLS:
-        for path, found, _is_defn in _scan_store_for_symbol(store, symbol, slug):
-            if path not in candidates:
-                candidates.append(path)
+        hit = _pick_definition_in_store(store, symbol, slug, suffixes)
+        if hit:
+            return _format_path_chip(hit[0], hit[1], symbol)
+        logger.info(
+            "learning-path evidence: no production definition of %s for slug=%s (%d files)",
+            symbol,
+            slug,
+            len(store),
+        )
+    elif symbol and store and symbol.lower() in _WEAK_SYMBOLS:
+        for path in _candidate_paths(refs, slug, store):
+            if _is_js_trampoline(path) or is_junk_evidence_path(path, slug=slug):
+                continue
+            found = _definition_line_in_text(_file_text_for(store, path), symbol)
+            if found:
+                return _format_path_chip(path, found, symbol)
 
+    candidates = _candidate_paths(refs, slug, file_texts)
     scored: list[tuple[int, str, int, str]] = []
     for path in candidates:
         if is_junk_evidence_path(path, slug=slug):

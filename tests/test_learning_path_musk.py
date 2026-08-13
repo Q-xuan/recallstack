@@ -532,3 +532,243 @@ def test_path_out_get_upgrade_resolves_line_from_scan_store(monkeypatch):
     assert "## 本步要你干什么" not in upgrade_legacy_concept_markdown(
         node.worksheet, slug="agent-loop", title="Agent Loop"
     )
+
+
+def _rs_with_def_at(line: int, statement: str) -> str:
+    rows = [f"// pad {i}" for i in range(1, line)]
+    rows.append(statement)
+    return "\n".join(rows) + "\n"
+
+
+def _jake_grok_store() -> dict[str, str]:
+    """Concept refs at :1; real defs in other crates — Jake's grok-study shape."""
+    return {
+        "README.md": "# grok\n",
+        "crates/codegen/xai-grok-pager/npm/grok/bin/grok": "#!/usr/bin/env node\nrequire('../src');\n",
+        "crates/codegen/xai-grok-pager/src/main.rs": (
+            "fn main() {\n    xai_grok_pager::boot();\n}\n"
+        ),
+        "crates/codegen/xai-grok-agent/src/agent.rs": (
+            "//! Agent types for the grok crate.\n\n"
+            "pub struct Agent;\n\n"
+            "impl Agent {\n    fn go(&mut self) {}\n}\n"
+        ),
+        "crates/codegen/xai-grok-pager/src/app/agent.rs": _rs_with_def_at(
+            791, "    pub fn start_turn(&mut self) {"
+        ),
+        "crates/codegen/xai-grok-hooks/examples/hooks/bin/tool-logger.sh": "#!/bin/sh\necho tool\n",
+        "crates/codegen/xai-grok-agent/src/tool_bridge.rs": _rs_with_def_at(
+            40, "pub struct ToolBridge {"
+        ),
+        "crates/codegen/xai-grok-pager/npm/grok/package.json": '{"name":"grok"}\n',
+        "crates/codegen/xai-grok-pager/src/pager.rs": _rs_with_def_at(
+            88, "pub struct Pager {"
+        ),
+        "crates/codegen/xai-chat-state/Cargo.toml": "[package]\nname=\"xai-chat-state\"\n",
+        "crates/codegen/xai-chat-state/src/conversation_util.rs": _rs_with_def_at(
+            55, "pub fn replace_or_insert_system_head(window: &mut Window, head: &str) {"
+        ),
+        "crates/codegen/xai-agent-lifecycle/Cargo.toml": "[package]\nname=\"lifecycle\"\n",
+        "crates/codegen/xai-agent-lifecycle/src/runtime.rs": _rs_with_def_at(
+            22, "pub struct AgentRuntime {"
+        ),
+        "crates/codegen/xai-grok-agent/src/prompt/agents_md.rs": (
+            "//! prompt\n\npub fn load_agents_md() {}\n"
+        ),
+    }
+
+
+def test_start_turn_definition_is_in_pager_not_grok_agent_ref():
+    """4eb66b0/f76f179: first agent.rs ref + overlay start_turn, never left that file."""
+    store = _jake_grok_store()
+    agent_ref = "crates/codegen/xai-grok-agent/src/agent.rs"
+    assert "start_turn" not in store[agent_ref]
+    assert store[agent_ref].splitlines()[0].startswith("//!")
+    pager = store["crates/codegen/xai-grok-pager/src/app/agent.rs"].splitlines()
+    assert pager[790] == "    pub fn start_turn(&mut self) {"
+
+    draft = ConceptDraft(
+        slug="agent-loop",
+        title="Agent Loop",
+        wiki_page_id="topics/agent-loop",
+        source_references=[SourceReference(path=agent_ref, start_line=1)],
+    )
+    chip = path_evidence_chip(draft, file_texts=store)
+    assert chip == "crates/codegen/xai-grok-pager/src/app/agent.rs:791 start_turn"
+    worksheet = path_worksheet(draft, file_texts=store)
+    assert worksheet.count("`crates/codegen/xai-grok-pager/src/app/agent.rs:791 start_turn`") == 1
+    assert "xai-grok-agent/src/agent.rs" not in worksheet
+
+
+def test_hinted_symbols_search_whole_store_not_concept_ref():
+    store = _jake_grok_store()
+    cases = (
+        (
+            "tool-system",
+            "crates/codegen/xai-grok-hooks/examples/hooks/bin/tool-logger.sh",
+            "crates/codegen/xai-grok-agent/src/tool_bridge.rs:40 ToolBridge",
+        ),
+        (
+            "terminal-ui",
+            "crates/codegen/xai-grok-pager/npm/grok/package.json",
+            "crates/codegen/xai-grok-pager/src/pager.rs:88 Pager",
+        ),
+        (
+            "context-assembly",
+            "crates/codegen/xai-chat-state/Cargo.toml",
+            "crates/codegen/xai-chat-state/src/conversation_util.rs:55 "
+            "replace_or_insert_system_head",
+        ),
+        (
+            "agent-runtime",
+            "crates/codegen/xai-agent-lifecycle/Cargo.toml",
+            "crates/codegen/xai-agent-lifecycle/src/runtime.rs:22 AgentRuntime",
+        ),
+    )
+    for slug, ref_path, expected in cases:
+        chip = path_evidence_chip(
+            ConceptDraft(
+                slug=slug,
+                title=slug,
+                wiki_page_id=f"topics/{slug}",
+                source_references=[SourceReference(path=ref_path, start_line=1)],
+            ),
+            file_texts=store,
+        )
+        assert chip == expected, (slug, chip)
+
+
+def test_call_site_in_ref_file_does_not_beat_real_definition():
+    store = _jake_grok_store()
+    store["crates/codegen/xai-grok-agent/src/agent.rs"] = (
+        "//! Agent types.\n\n"
+        "impl Agent {\n    fn go(&mut self) { self.pager.start_turn(); }\n}\n"
+    )
+    chip = path_evidence_chip(
+        ConceptDraft(
+            slug="agent-loop",
+            title="Agent Loop",
+            wiki_page_id="topics/agent-loop",
+            source_references=[
+                SourceReference(
+                    path="crates/codegen/xai-grok-agent/src/agent.rs",
+                    start_line=1,
+                )
+            ],
+        ),
+        file_texts=store,
+    )
+    assert chip == "crates/codegen/xai-grok-pager/src/app/agent.rs:791 start_turn"
+
+
+def test_junk_and_trampoline_never_used_when_store_has_rust_def():
+    store = _jake_grok_store()
+    boot = path_evidence_chip(
+        ConceptDraft(
+            slug="entry-and-boot",
+            title="入口与启动",
+            wiki_page_id="topics/entry-and-boot",
+            source_references=[
+                SourceReference(
+                    path="crates/codegen/xai-grok-pager/npm/grok/bin/grok",
+                    start_line=1,
+                )
+            ],
+        ),
+        file_texts=store,
+    )
+    assert boot is not None
+    assert "npm/" not in boot
+    assert ".sh" not in boot
+    assert "package.json" not in boot
+    assert "Cargo.toml" not in boot
+    assert boot.endswith(" main")
+    assert boot.startswith("crates/codegen/xai-grok-pager/src/main.rs:")
+
+
+def test_path_out_get_upgrade_uses_pager_start_turn_from_store(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    store = _jake_grok_store()
+    loop = SimpleNamespace(
+        id="c-loop",
+        repository_id="r",
+        repository_version_id="9e01e58d-075d-46c0-ba9b-a8661d7ff98d",
+        slug="agent-loop",
+        title="Agent Loop",
+        description="",
+        difficulty=2,
+        importance=0.9,
+        source_references=[
+            {
+                "path": "crates/codegen/xai-grok-agent/src/agent.rs",
+                "start_line": 1,
+            }
+        ],
+        content_hash="",
+        stale=False,
+        why_learn="",
+        estimated_minutes=15,
+        wiki_page_id="topics/agent-loop",
+    )
+    path = SimpleNamespace(
+        id="p1",
+        repository_version_id="9e01e58d-075d-46c0-ba9b-a8661d7ff98d",
+        title="路径",
+        description="",
+        estimated_minutes=10,
+        nodes=[
+            SimpleNamespace(
+                id="n1",
+                concept_id="c-loop",
+                position=1,
+                reason="old",
+                concept=loop,
+            )
+        ],
+    )
+    out = path_out(path, file_texts=store)
+    node = out.nodes[0]
+    assert node.evidence_chip == (
+        "crates/codegen/xai-grok-pager/src/app/agent.rs:791 start_turn"
+    )
+    assert "`crates/codegen/xai-grok-pager/src/app/agent.rs:791 start_turn`" in node.worksheet
+    assert "xai-grok-agent/src/agent.rs:1" not in node.worksheet
+
+
+def test_load_version_file_texts_from_data_dir_when_cwd_has_none(tmp_path, monkeypatch):
+    import json
+
+    from recallstack.learning.code_loader import load_version_file_texts
+
+    vid = "9e01e58d-075d-46c0-ba9b-a8661d7ff98d"
+    data = tmp_path / "data"
+    vf = data / "version_files"
+    vf.mkdir(parents=True)
+    payload = {
+        "crates/codegen/xai-grok-pager/src/app/agent.rs": _rs_with_def_at(
+            791, "    pub fn start_turn(&mut self) {"
+        )
+    }
+    (vf / f"{vid}.json").write_text(json.dumps(payload), encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setenv("RECALLSTACK_DATA_DIR", str(data))
+    texts = load_version_file_texts(vid)
+    assert "crates/codegen/xai-grok-pager/src/app/agent.rs" in texts
+    assert "pub fn start_turn" in texts["crates/codegen/xai-grok-pager/src/app/agent.rs"]
+    chip = path_evidence_chip(
+        ConceptDraft(
+            slug="agent-loop",
+            title="Agent Loop",
+            wiki_page_id="topics/agent-loop",
+            source_references=[
+                SourceReference(
+                    path="crates/codegen/xai-grok-agent/src/agent.rs",
+                    start_line=1,
+                )
+            ],
+        ),
+        file_texts=texts,
+    )
+    assert chip == "crates/codegen/xai-grok-pager/src/app/agent.rs:791 start_turn"

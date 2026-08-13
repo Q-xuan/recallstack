@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,34 @@ from recallstack.security import (
 logger = logging.getLogger(__name__)
 
 _VERSION_FILES_DIR = Path("data") / "version_files"
+
+
+def _package_repo_root() -> Path:
+    # src/recallstack/learning/code_loader.py → checkout root
+    return Path(__file__).resolve().parents[3]
+
+
+def version_file_lookup_paths(version_id: str) -> list[Path]:
+    """CWD, RECALLSTACK_DATA_DIR, then the checkout's data/version_files."""
+    name = f"{str(version_id).strip()}.json"
+    if name == ".json":
+        return []
+    seen: set[str] = set()
+    out: list[Path] = []
+
+    def add(path: Path) -> None:
+        key = str(path)
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(path)
+
+    data_dir = os.environ.get("RECALLSTACK_DATA_DIR", "").strip()
+    if data_dir:
+        add(Path(data_dir) / "version_files" / name)
+    add(Path("data") / "version_files" / name)
+    add(_package_repo_root() / "data" / "version_files" / name)
+    return out
 
 
 def missing_working_copy_message() -> str:
@@ -40,7 +69,7 @@ def resolve_local_repo_root(source_location: str) -> Path | None:
 
 
 def version_files_path(version_id: str) -> Path:
-    return _VERSION_FILES_DIR / f"{version_id}.json"
+    return _VERSION_FILES_DIR / f"{str(version_id).strip()}.json"
 
 
 def save_version_file_texts(version_id: str, files: dict[str, str]) -> None:
@@ -61,16 +90,34 @@ def save_version_file_texts(version_id: str, files: dict[str, str]) -> None:
 
 
 def load_version_file_texts(version_id: str) -> dict[str, str]:
-    path = version_files_path(version_id)
-    if not path.is_file():
+    vid = str(version_id or "").strip()
+    if not vid:
         return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    return {str(k): str(v) for k, v in data.items() if isinstance(k, str) and isinstance(v, str)}
+    tried: list[str] = []
+    for path in version_file_lookup_paths(vid):
+        tried.append(str(path))
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            logger.warning("learning-path: failed to parse scan store %s", path)
+            continue
+        if not isinstance(data, dict):
+            continue
+        texts = {
+            str(k): str(v)
+            for k, v in data.items()
+            if isinstance(k, str) and isinstance(v, str)
+        }
+        logger.debug("learning-path: loaded %d files from %s", len(texts), path)
+        return texts
+    logger.warning(
+        "learning-path: scan store missing for version %s (tried %s)",
+        vid,
+        tried,
+    )
+    return {}
 
 
 def _read_under(root: Path, rel: str) -> str | None:

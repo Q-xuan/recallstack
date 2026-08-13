@@ -48,6 +48,7 @@ from recallstack.domain.schemas import (
     WikiSearchOut,
 )
 from recallstack.jobs import get_job_runner
+from recallstack.learning.code_loader import load_version_file_texts
 from recallstack.security import SecurityError
 
 router = APIRouter(prefix="/recallstack", tags=["recallstack"])
@@ -423,7 +424,7 @@ def get_learning_path(repository_id: str, db: Session = Depends(get_db_session))
     path = store.get_learning_path(version.id)
     if not path:
         raise api_error(404, "path_not_found", "Learning path not found")
-    return path_out(path)
+    return path_out(path, file_texts=load_version_file_texts(str(version.id)))
 
 
 @router.get("/concepts/{concept_id}", response_model=ConceptOut)
