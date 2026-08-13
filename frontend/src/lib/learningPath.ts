@@ -7,6 +7,7 @@
 
 export const CORE_PATH_CAP = 8;
 
+/** Step-task copy for well-known slugs. Not the default path for every repo. */
 export const CORE_SLUGS = new Set([
   "project-goal",
   "application-entry",
@@ -83,7 +84,6 @@ const STEP_TASKS: Record<string, [string, string]> = {
 };
 
 export function isFillerConcept(slug: string, title: string): boolean {
-  if (CORE_SLUGS.has(slug)) return false;
   if (FILLER_SLUG.test(slug)) return true;
   if (FILLER_TITLE.test(title)) return true;
   if (FILLER_NAME.test(title)) return true;

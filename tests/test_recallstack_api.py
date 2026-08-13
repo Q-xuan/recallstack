@@ -76,7 +76,7 @@ def test_create_repository_and_analyze_and_attempt(client: TestClient):
     concepts = client.get(f"/api/recallstack/repositories/{repo_id}/concepts")
     assert concepts.status_code == 200
     concept_list = concepts.json()["concepts"]
-    assert len(concept_list) >= 5
+    assert len(concept_list) >= 3
 
     path = client.get(f"/api/recallstack/repositories/{repo_id}/learning-path")
     assert path.status_code == 200

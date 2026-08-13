@@ -16,16 +16,23 @@ export interface WikiTitleSource {
 const PAGE_ID_LABELS: Record<string, [string, string]> = {
   index: ["概述", "Overview"],
   architecture: ["架构概览", "Architecture"],
+  "getting-started": ["快速开始", "Quick start"],
   "reading-guide": ["导读", "Reading Guide"],
   dependencies: ["依赖", "Dependencies"],
   "modules/root": ["根目录", "Root"],
 };
 
 const GROUP_LABELS: Record<string, [string, string]> = {
-  modules: ["模块", "Modules"],
-  模块: ["模块", "Modules"],
+  modules: ["按目录", "By directory"],
+  模块: ["按目录", "By directory"],
+  "by directory": ["按目录", "By directory"],
+  按目录: ["按目录", "By directory"],
   concepts: ["词条", "Concepts"],
   词条: ["词条", "Concepts"],
+  "getting started": ["入门指南", "Getting Started"],
+  入门指南: ["入门指南", "Getting Started"],
+  "deep dive": ["深入探索", "Deep Dive"],
+  深入探索: ["深入探索", "Deep Dive"],
 };
 
 export function localizeSidebarTitle(item: WikiTitleSource, t: WikiTitleT): string {

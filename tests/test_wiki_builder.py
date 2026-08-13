@@ -77,7 +77,7 @@ def test_module_without_edges_gets_no_empty_diagram():
 def test_module_sidebar_nests_by_path():
     """Module names are full paths; listed flat they are wide and repetitive."""
     wiki, _ = _build(_split_project())
-    modules = next(item for item in wiki.sidebar if item.title == "Modules")
+    modules = next(item for item in wiki.sidebar if item.title == "By directory")
 
     app = next(c for c in modules.children if c.title == "app")
     assert app.page_id == ""  # intermediate directory, no page of its own
@@ -171,16 +171,21 @@ def _structural_wiki(language: str = "en"):
 def test_en_structural_sidebar_titles_stay_english():
     wiki, names = _structural_wiki("en")
     titles = [item.title for item in wiki.sidebar]
-    assert titles[0] == "Overview"
-    assert "Architecture" in titles
-    assert "Reading Guide" in titles
-    assert "Dependencies" in titles
-    modules = next(item for item in wiki.sidebar if item.title == "Modules")
+    assert titles[0] == "Getting Started"
+    assert "Deep Dive" in titles
+    assert "By directory" in titles
+    assert "Reading Guide" not in titles
+    assert "Dependencies" not in titles
+    modules = next(item for item in wiki.sidebar if item.title == "By directory")
     assert ROOT_NAME in names
     root = next(c for c in modules.children if c.page_id == "modules/root")
     assert root.title == "Root"
     crates = next(c for c in modules.children if c.title == "crates")
     assert crates.page_id == "modules/crates"
+    getting = next(item for item in wiki.sidebar if item.title == "Getting Started")
+    assert any(c.page_id == "index" for c in getting.children)
+    deep = next(item for item in wiki.sidebar if item.title == "Deep Dive")
+    assert any(c.page_id == "architecture" for c in deep.children)
     assert wiki.get_page("index").id == "index"
     assert wiki.get_page("modules/root").id == "modules/root"
     assert wiki.get_page("architecture").content.startswith("# Architecture")
@@ -192,14 +197,13 @@ def test_en_structural_sidebar_titles_stay_english():
 def test_zh_structural_sidebar_titles_and_headings():
     wiki, names = _structural_wiki("zh")
     titles = [item.title for item in wiki.sidebar]
-    assert titles[0] == "概述"
-    assert "架构概览" in titles
-    assert "导读" in titles
-    assert "依赖" in titles
+    assert titles[0] == "入门指南"
+    assert "深入探索" in titles
+    assert "按目录" in titles
     assert "Overview" not in titles
     assert "Modules" not in titles
     assert "总览" not in titles
-    modules = next(item for item in wiki.sidebar if item.title == "模块")
+    modules = next(item for item in wiki.sidebar if item.title == "按目录")
     assert ROOT_NAME in names
     root = next(c for c in modules.children if c.page_id == "modules/root")
     assert root.title == "根目录"
@@ -317,7 +321,7 @@ def test_zh_headings_term_tips_and_unchanged_paths():
     crates = next(
         c
         for item in wiki.sidebar
-        if item.title == "模块"
+        if item.title == "按目录"
         for c in item.children
         if c.page_id == "modules/crates"
     )

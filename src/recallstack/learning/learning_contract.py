@@ -7,7 +7,8 @@ import re
 from recallstack.domain.schemas import ConceptDraft
 from recallstack.learning.i18n import t
 
-# The core path is a stack of constraints, not a catalog of folders.
+# Kept as step-task templates only. Do NOT use this as the default learning
+# path for every repo — that was a generic web-app syllabus.
 CORE_SLUGS: tuple[str, ...] = (
     "project-goal",
     "application-entry",
@@ -159,7 +160,12 @@ def is_filler_concept(concept: ConceptDraft) -> bool:
 
 
 def is_core_path_concept(concept: ConceptDraft) -> bool:
-    return concept.slug in CORE_SLUGS and not is_filler_concept(concept)
+    """Path nodes are real concepts from this repo, not folder inventory."""
+    if is_filler_concept(concept):
+        return False
+    if concept.slug == "getting-started":
+        return False
+    return True
 
 
 def is_generic_reason(reason: str) -> bool:

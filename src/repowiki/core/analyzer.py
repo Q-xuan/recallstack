@@ -28,12 +28,14 @@ from repowiki.core.models import (
     ReadingGuide,
     ReadingStep,
     TermTip,
+    TopicDoc,
     WikiData,
     WikiOutline,
 )
 from repowiki.core.module_handbook import fallback_module_doc
 from repowiki.core.modules import group_into_modules
 from repowiki.core.outline import build_deterministic_outline, merge_outline
+from repowiki.core.topics import fallback_topic_doc
 from repowiki.llm.client import LLMClient
 from repowiki.llm.prompts import (
     build_architecture_prompt,
@@ -116,6 +118,13 @@ class Analyzer:
             modules_map, overview.one_liner, project, graph, outline, progress
         )
 
+        topic_docs: list[TopicDoc] = []
+        if outline.topics:
+            progress(f"Writing {len(outline.topics)} topics...")
+            topic_docs = await self._analyze_topics(
+                outline, overview.one_liner, project, graph, progress
+            )
+
         progress("Detecting architecture...")
         architecture = await self._generate_architecture(
             project, key_files_text, tree_hash, outline
@@ -130,6 +139,7 @@ class Analyzer:
         wiki = WikiData(
             overview=overview,
             modules=module_docs,
+            topics=topic_docs,
             architecture=architecture,
             reading_guide=reading_guide,
             outline=outline,
@@ -146,7 +156,9 @@ class Analyzer:
         graph: DependencyGraph,
         tree_hash: str,
     ) -> WikiOutline:
-        base = build_deterministic_outline(project, modules, graph)
+        base = build_deterministic_outline(
+            project, modules, graph, language=self._lang()
+        )
         cache_key = f"outline:{self.language}:{tree_hash}"
         cached = await self.cache.get(cache_key)
         if cached:
@@ -283,6 +295,97 @@ class Analyzer:
         priority = {m.name: m.priority for m in outline.modules}
         results.sort(key=lambda m: (-priority.get(m.name, 0), -len(m.files), m.name))
         return results
+
+    async def _analyze_topics(
+        self,
+        outline: WikiOutline,
+        project_summary: str,
+        project: ProjectContext,
+        graph: DependencyGraph,
+        progress: Callable[[str], None],
+    ) -> list[TopicDoc]:
+        files_by_path = {f.path.replace("\\", "/"): f for f in project.files}
+        tasks = []
+        for topic in outline.topics:
+            key_files = [
+                files_by_path[p.replace("\\", "/")]
+                for p in topic.key_files
+                if p.replace("\\", "/") in files_by_path
+            ]
+            if not key_files and topic.section != "getting-started":
+                continue
+            tasks.append(
+                self._analyze_one_topic(
+                    topic, key_files, project_summary, project, graph
+                )
+            )
+        results: list[TopicDoc] = []
+        for i, coro in enumerate(asyncio.as_completed(tasks)):
+            doc = await coro
+            if doc:
+                results.append(doc)
+            progress(f"Wrote topic {i + 1}/{len(tasks)}")
+        order = {t.id: i for i, t in enumerate(outline.topics)}
+        results.sort(key=lambda t: order.get(t.name, 100))
+        return results
+
+    async def _analyze_one_topic(
+        self,
+        topic,
+        files: list[FileInfo],
+        project_summary: str,
+        project: ProjectContext,
+        graph: DependencyGraph,
+    ) -> TopicDoc | None:
+        async with self._sem:
+            fallback = fallback_topic_doc(
+                topic, files, language=self._lang(), graph=graph
+            )
+            if not files:
+                return fallback
+            plan = ModuleOutline(
+                name=topic.title or topic.id,
+                depth=topic.depth if topic.depth in {"deep", "standard", "brief"} else "standard",
+                key_files=list(topic.key_files),
+                key_symbols=list(topic.key_symbols),
+                notes=topic.purpose,
+            )
+            files_context = pack_module_context(
+                files, depth=plan.depth, outline=plan, graph=graph, project=project
+            )
+            content_parts = [(f.content or f.preview or "") for f in files]
+            cache_key = (
+                f"topic:{self.language}:{plan.depth}:{topic.id}:"
+                f"{content_hash(''.join(content_parts))}"
+            )
+            cached = await self.cache.get(cache_key)
+            if cached:
+                try:
+                    return TopicDoc(**cached)
+                except Exception:
+                    pass
+            if not self._llm_enabled():
+                return fallback
+            messages = build_module_prompt(
+                topic.title or topic.id,
+                files_context,
+                project_summary,
+                self.language,
+                depth=plan.depth,
+                outline_notes=topic.purpose,
+                key_files=topic.key_files,
+                key_symbols=topic.key_symbols,
+            )
+            raw = await self._complete_json(messages, max_tokens=4096)
+            data = extract_json(raw)
+            if not data or not isinstance(data, dict):
+                logger.warning("Failed to parse topic '%s' JSON", topic.id)
+                return fallback
+            data.setdefault("name", topic.id)
+            doc = _coerce_topic(data, topic)
+            if doc.description or doc.implementation_details or doc.files:
+                await self.cache.put(cache_key, doc.model_dump())
+            return doc
 
     async def _analyze_one_module(
         self,
@@ -578,7 +681,14 @@ class Analyzer:
         self, project: ProjectContext, outline: WikiOutline | None
     ) -> ArchitectureDiagram:
         components: list[Component] = []
-        if outline:
+        if outline and outline.topics:
+            for item in outline.topics:
+                if item.section == "getting-started":
+                    continue
+                components.append(
+                    Component(name=item.title or item.id, files=list(item.key_files[:6]))
+                )
+        elif outline:
             for item in outline.modules[:12]:
                 components.append(
                     Component(name=item.name, files=list(item.key_files[:6]))
@@ -712,6 +822,30 @@ def _coerce_module(data: dict, name: str) -> ModuleDoc:
         return ModuleDoc(**filtered)
     except Exception:
         return ModuleDoc(name=name, purpose=str(payload.get("purpose") or ""))
+
+
+def _coerce_topic(data: dict, topic) -> TopicDoc:
+    payload = dict(data)
+    payload.setdefault("name", topic.id)
+    payload["call_chains"] = _coerce_call_chains(payload.get("call_chains"))
+    payload["edge_cases"] = _coerce_strings(payload.get("edge_cases"))
+    payload["citations"] = _coerce_citations(payload.get("citations"))
+    payload["term_tips"] = _coerce_term_tips(payload.get("term_tips"))
+    filtered = {k: v for k, v in payload.items() if k in TopicDoc.model_fields}
+    filtered["name"] = topic.id
+    filtered["title"] = topic.title or str(filtered.get("title") or topic.id)
+    filtered["section"] = topic.section or "deep-dive"
+    if topic.purpose and not filtered.get("purpose"):
+        filtered["purpose"] = topic.purpose
+    try:
+        return TopicDoc(**filtered)
+    except Exception:
+        return TopicDoc(
+            name=topic.id,
+            title=topic.title,
+            section=topic.section,
+            purpose=topic.purpose or str(payload.get("purpose") or ""),
+        )
 
 
 def _coerce_call_chains(raw) -> list[dict]:

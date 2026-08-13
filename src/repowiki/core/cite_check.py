@@ -81,6 +81,8 @@ def verify_wiki_data(data: WikiData, project: ProjectContext) -> WikiData:
     data.architecture = verify_architecture(data.architecture, index)
     data.reading_guide = verify_reading_guide(data.reading_guide, index)
     data.modules = [verify_module(m, index) for m in data.modules]
+    if data.topics:
+        data.topics = [verify_module(m, index) for m in data.topics]
     if data.file_index:
         cleaned: dict[str, FileDoc] = {}
         for path, doc in data.file_index.items():

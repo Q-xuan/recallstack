@@ -242,7 +242,14 @@ class AnalyzeRepositoryService:
                     stale=False,
                     why_learn=draft.why_learn,
                     estimated_minutes=draft.estimated_minutes,
-                    wiki_page_id=f"concepts/{draft.slug}",
+                    wiki_page_id=draft.wiki_page_id
+                    or (
+                        "index"
+                        if draft.slug in {"project-goal", "overview"}
+                        else f"topics/{draft.slug}"
+                        if draft.slug != "getting-started"
+                        else "getting-started"
+                    ),
                 )
                 self.session.add(row)
                 self.session.flush()

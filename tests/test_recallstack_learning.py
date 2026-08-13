@@ -74,8 +74,12 @@ def test_concept_graph_build(tmp_path: Path):
     project = _sample_project(tmp_path)
     graph = DependencyGraph.build_from_project(project)
     result = ConceptExtractor().extract(project, graph, commit_sha="abc")
-    assert len(result.concepts) >= 5
+    assert len(result.concepts) >= 3
     assert all(c.source_references for c in result.concepts if c.slug != "project-goal")
+    slugs = {c.slug for c in result.concepts}
+    assert "caching" not in slugs
+    assert "authentication" not in slugs
+    assert "request-routing" not in slugs
 
 
 def test_concept_prerequisite_cycle_removal():

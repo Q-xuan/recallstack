@@ -18,20 +18,11 @@ from recallstack.learning.learning_contract import (
     step_task,
 )
 
-# preferred thematic order for core path: goal → entry → main path → state → failure → verify
+# Path order follows the topic plan (overview first). Theme ranks only break ties.
 _THEME_ORDER = [
     "project-goal",
+    "entry-and-boot",
     "application-entry",
-    "configuration",
-    "request-routing",
-    "authentication",
-    "call-flow",
-    "data-persistence",
-    "caching",
-    "error-handling",
-    "background-tasks",
-    "testing-structure",
-    "module-boundaries",
 ]
 
 

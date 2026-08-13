@@ -105,8 +105,19 @@ def build_outline_prompt(
                 "{\n"
                 '  "overview_focus": "what the overview page must explain",\n'
                 '  "architecture_focus": "what the architecture page must explain",\n'
-                '  "emphasized_pages": ["overview", "architecture", "module-name"],\n'
-                '  "reading_order": ["module-a", "module-b"],\n'
+                '  "emphasized_pages": ["overview", "architecture"],\n'
+                '  "reading_order": ["entry-and-boot", "agent-runtime"],\n'
+                '  "topics": [\n'
+                "    {\n"
+                '      "id": "agent-runtime",\n'
+                '      "title": "Agent Runtime",\n'
+                '      "section": "deep-dive",\n'
+                '      "purpose": "what the reader can explain after this page",\n'
+                '      "key_files": ["real/path.rs"],\n'
+                '      "key_symbols": ["TypeName"],\n'
+                '      "depth": "deep"\n'
+                "    }\n"
+                "  ],\n"
                 '  "modules": [\n'
                 "    {\n"
                 '      "name": "exact module name from the list above",\n'
@@ -119,6 +130,13 @@ def build_outline_prompt(
                 "    }\n"
                 "  ]\n"
                 "}\n\n"
+                "topics are the PRIMARY wiki IA (zread 深入探索): 8-14 conceptual systems "
+                "this repo actually has (Agent Runtime, Tool System, ACP, TUI, entry/boot). "
+                "section is getting-started or deep-dive. Titles are human system names, "
+                "NEVER directory paths and NEVER 'Module: crates/foo'. "
+                "Do NOT invent a generic web-app syllabus (authentication, caching, "
+                "request-routing) unless those are first-class directories/crates here. "
+                "topics[].key_files MUST be real paths from the tree. "
                 "Rules: module names MUST match the Modules list exactly. "
                 "depth is one of deep, standard, brief. "
                 "Mark at most a third of modules as deep. "

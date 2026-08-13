@@ -137,6 +137,25 @@ class ModuleOutline(BaseModel):
     notes: str = ""
 
 
+class TopicOutline(BaseModel):
+    """Conceptual system page (zread 深入探索), not a directory module."""
+
+    id: str
+    title: str
+    section: str = "deep-dive"  # getting-started | deep-dive
+    purpose: str = ""
+    key_files: list[str] = Field(default_factory=list)
+    key_symbols: list[str] = Field(default_factory=list)
+    depth: str = "standard"
+
+
+class TopicDoc(ModuleDoc):
+    """Handbook page for one conceptual topic. ``name`` is the topic id."""
+
+    title: str = ""
+    section: str = "deep-dive"
+
+
 class WikiOutline(BaseModel):
     """Structured wiki plan: what to emphasize and in what order."""
 
@@ -145,6 +164,7 @@ class WikiOutline(BaseModel):
     emphasized_pages: list[str] = Field(default_factory=list)
     reading_order: list[str] = Field(default_factory=list)
     modules: list[ModuleOutline] = Field(default_factory=list)
+    topics: list[TopicOutline] = Field(default_factory=list)
 
     def module_for(self, name: str) -> ModuleOutline | None:
         for item in self.modules:
@@ -155,6 +175,12 @@ class WikiOutline(BaseModel):
     def depth_for(self, name: str) -> str:
         item = self.module_for(name)
         return item.depth if item else "standard"
+
+    def topic_for(self, topic_id: str) -> TopicOutline | None:
+        for item in self.topics:
+            if item.id == topic_id:
+                return item
+        return None
 
 
 class Component(BaseModel):
@@ -193,6 +219,7 @@ class WikiData(BaseModel):
 
     overview: ProjectOverview = Field(default_factory=ProjectOverview)
     modules: list[ModuleDoc] = Field(default_factory=list)
+    topics: list[TopicDoc] = Field(default_factory=list)
     architecture: ArchitectureDiagram = Field(default_factory=ArchitectureDiagram)
     reading_guide: ReadingGuide = Field(default_factory=ReadingGuide)
     file_index: dict[str, FileDoc] = Field(default_factory=dict)

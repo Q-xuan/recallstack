@@ -1265,6 +1265,46 @@ html[lang="zh-CN"] .rs-wiki-nav-group {
   font-weight: 600;
 }
 
+.rs-sources {
+  font-size: 12.5px;
+  margin-bottom: 22px;
+}
+
+.rs-sources-tree,
+.rs-sources-tree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.rs-sources-tree ul {
+  padding-left: 12px;
+}
+
+.rs-sources-dir {
+  padding: 3px 0;
+  color: var(--rs-muted);
+  font-weight: 600;
+}
+
+.rs-sources-file {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 3px 0;
+  color: var(--rs-ink-2);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+.rs-sources-file:hover {
+  color: var(--rs-accent);
+}
+
 /* ── Command palette ────────────────────────────────────────────────────── */
 
 .rs-palette-backdrop {

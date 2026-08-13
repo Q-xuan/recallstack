@@ -65,6 +65,11 @@ def test_deterministic_outline_without_llm():
     assert "app/main.py" in outline.overview_focus
     assert "Heaviest modules by PageRank" not in outline.architecture_focus
     assert "file inventory" in outline.architecture_focus.lower() or "not a file" in outline.architecture_focus.lower()
+    assert outline.topics
+    assert any(t.section == "getting-started" for t in outline.topics) or any(
+        t.id == "entry-and-boot" for t in outline.topics
+    )
+    assert all(not t.title.startswith("模块") for t in outline.topics)
 
 
 def test_deterministic_outline_on_mini_repo():

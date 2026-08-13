@@ -26,7 +26,11 @@ _STRUCTURAL_TITLES: dict[str, dict[str, str]] = {
     "data-flow": {"en": "Data Flow", "zh": "数据流", "ja": "データフロー", "ko": "데이터 흐름"},
     "tech-stack": {"en": "Tech Stack", "zh": "技术栈", "ja": "技術スタック", "ko": "기술 스택"},
     "key-features": {"en": "Key Features", "zh": "主要能力", "ja": "主な機能", "ko": "주요 기능"},
-    "getting-started": {"en": "Getting Started", "zh": "上手", "ja": "はじめに", "ko": "시작하기"},
+    "getting-started": {"en": "Getting Started", "zh": "入门指南", "ja": "入門", "ko": "시작하기"},
+    "setup": {"en": "Setup", "zh": "上手", "ja": "セットアップ", "ko": "설정"},
+    "quick-start": {"en": "Quick start", "zh": "快速开始", "ja": "クイックスタート", "ko": "빠른 시작"},
+    "deep-dive": {"en": "Deep Dive", "zh": "深入探索", "ja": "深掘り", "ko": "심층 탐색"},
+    "by-directory": {"en": "By directory", "zh": "按目录", "ja": "ディレクトリ別", "ko": "디렉터리별"},
     "files": {"en": "Files", "zh": "文件", "ja": "ファイル", "ko": "파일"},
     "related-source": {"en": "Related source", "zh": "相关源码", "ja": "関連ソース", "ko": "관련 소스"},
     "key-concepts": {"en": "Key Concepts", "zh": "关键概念", "ja": "重要概念", "ko": "핵심 개념"},
@@ -119,56 +123,73 @@ class WikiBuilder:
     ) -> Wiki:
         lang = normalize_wiki_lang(self.language if language is None else language)
         pages: list[WikiPage] = []
-        sidebar: list[SidebarItem] = []
 
-        # 1. index / overview page
         overview = wiki_data.overview
         overview_md = self._build_overview_page(
             overview, project, lang, architecture=wiki_data.architecture
         )
         overview_title = structural_title("overview", lang)
         pages.append(WikiPage(id="index", title=overview_title, content=overview_md, order=0))
-        sidebar.append(SidebarItem(title=overview_title, page_id="index"))
 
-        # 2. architecture page
+        gs_topic = next(
+            (t for t in (wiki_data.topics or []) if t.section == "getting-started" or t.name == "getting-started"),
+            None,
+        )
+        if gs_topic and (overview.setup_instructions or gs_topic.files or overview.description):
+            gs_title = gs_topic.title or structural_title("quick-start", lang)
+            gs_md = self._build_getting_started_page(overview, gs_topic, lang)
+            pages.append(WikiPage(id="getting-started", title=gs_title, content=gs_md, order=1))
+        elif overview.setup_instructions:
+            gs_title = structural_title("quick-start", lang)
+            gs_md = self._build_getting_started_page(overview, None, lang)
+            pages.append(WikiPage(id="getting-started", title=gs_title, content=gs_md, order=1))
+
         arch = wiki_data.architecture
         if arch.architecture_type:
             arch_title = structural_title("architecture", lang)
             arch_md = self._build_architecture_page(arch, lang)
-            pages.append(WikiPage(id="architecture", title=arch_title, content=arch_md, order=1))
-            sidebar.append(SidebarItem(title=arch_title, page_id="architecture"))
+            pages.append(WikiPage(id="architecture", title=arch_title, content=arch_md, order=2))
 
-        # 3. module pages
+        topic_docs = [t for t in (wiki_data.topics or []) if t.section != "getting-started" and t.name != "getting-started"]
+        for i, topic in enumerate(topic_docs):
+            page_id = f"topics/{topic.name}"
+            title = topic.title or topic.name
+            topic_md = self._build_module_page(
+                topic, graph, display_title=title, language=lang
+            )
+            pages.append(
+                WikiPage(
+                    id=page_id,
+                    title=title,
+                    content=topic_md,
+                    parent_id="topics",
+                    order=20 + i,
+                )
+            )
+
+        # Directory modules still exist as pages (按目录), not default nav.
         for i, mod in enumerate(wiki_data.modules):
             mod_id = f"modules/{mod.name}"
             mod_title = module_display_title(mod.name, lang)
             mod_md = self._build_module_page(mod, graph, display_title=mod_title, language=lang)
             pages.append(WikiPage(
                 id=mod_id, title=mod_title, content=mod_md,
-                parent_id="modules", order=i,
+                parent_id="modules", order=200 + i,
             ))
-        module_sidebar = self._build_module_sidebar(
-            [m.name for m in wiki_data.modules], language=lang
-        )
-        if module_sidebar.children:
-            sidebar.append(module_sidebar)
 
-        # 4. reading guide
         guide = wiki_data.reading_guide
         if guide.steps:
             guide_title = structural_title("reading-guide", lang)
             guide_md = self._build_reading_guide_page(guide, lang)
-            pages.append(WikiPage(id="reading-guide", title=guide_title, content=guide_md, order=10))
-            sidebar.append(SidebarItem(title=guide_title, page_id="reading-guide"))
+            pages.append(WikiPage(id="reading-guide", title=guide_title, content=guide_md, order=300))
 
-        # 5. dependency graph
         mermaid = graph.to_mermaid()
         if mermaid:
             dep_title = structural_title("dependencies", lang)
             dep_md = self._build_dependency_page(graph, mermaid, lang)
-            pages.append(WikiPage(id="dependencies", title=dep_title, content=dep_md, order=11))
-            sidebar.append(SidebarItem(title=dep_title, page_id="dependencies"))
+            pages.append(WikiPage(id="dependencies", title=dep_title, content=dep_md, order=301))
 
+        sidebar = self._topic_sidebar(pages, wiki_data, language=lang)
         return Wiki(pages=pages, sidebar=sidebar, project_name=project.name)
 
     def _build_overview_page(
@@ -218,11 +239,42 @@ class WikiBuilder:
             lines.append("")
 
         if overview.setup_instructions:
-            lines.append(f"## {structural_title('getting-started', language)}\n")
+            lines.append(f"## {structural_title('setup', language)}\n")
             for i, step in enumerate(overview.setup_instructions, 1):
                 lines.append(f"{i}. {step}")
             lines.append("")
 
+        return "\n".join(lines)
+
+    def _build_getting_started_page(self, overview, topic, language: str = "en") -> str:
+        title = structural_title("quick-start", language)
+        lines = [f"# {title}\n"]
+        if language == "zh":
+            lines.append("> 这篇按 README 和仓库根上的启动说明，讲怎么把项目跑起来。\n")
+        else:
+            lines.append(
+                "> This page follows the README and root setup notes so you can run the project.\n"
+            )
+        if overview.description:
+            lines.append(f"## {structural_title('what-is', language)}\n")
+            lines.append(f"{overview.description}\n")
+        if overview.setup_instructions:
+            lines.append(f"## {structural_title('setup', language)}\n")
+            for i, step in enumerate(overview.setup_instructions, 1):
+                lines.append(f"{i}. {step}")
+            lines.append("")
+        paths: list[str] = []
+        if topic is not None:
+            for item in getattr(topic, "files", None) or []:
+                path = getattr(item, "path", None) or (item if isinstance(item, str) else "")
+                if path:
+                    paths.append(path)
+        if not paths:
+            paths = ["README.md"]
+        lines.append(f"## {structural_title('related-source', language)}\n")
+        for path in paths[:8]:
+            lines.append(f"- `{path}`")
+        lines.append("")
         return "\n".join(lines)
 
     def _build_architecture_page(self, arch, language: str = "en") -> str:
@@ -285,7 +337,7 @@ class WikiBuilder:
         Path segments stay as in the repo; only the group label and ``root``
         are localized.
         """
-        root = SidebarItem(title=structural_title("modules", language), page_id="", children=[])
+        root = SidebarItem(title=structural_title("by-directory", language), page_id="", children=[])
         nodes: dict[str, SidebarItem] = {}
 
         def ensure(prefix: str) -> SidebarItem:
@@ -305,6 +357,63 @@ class WikiBuilder:
         for name in sorted(names):
             ensure(name).page_id = f"modules/{name}"
         return root
+
+    def _topic_sidebar(
+        self,
+        pages: list[WikiPage],
+        wiki_data: WikiData,
+        language: str = "en",
+    ) -> list[SidebarItem]:
+        """入门指南 / 深入探索 as the default nav; directory modules last."""
+        lang = normalize_wiki_lang(language)
+        page_ids = {p.id for p in pages}
+        getting: list[SidebarItem] = []
+        if "index" in page_ids:
+            getting.append(
+                SidebarItem(title=structural_title("overview", lang), page_id="index")
+            )
+        if "getting-started" in page_ids:
+            getting.append(
+                SidebarItem(
+                    title=structural_title("quick-start", lang),
+                    page_id="getting-started",
+                )
+            )
+        deep: list[SidebarItem] = []
+        if "architecture" in page_ids:
+            deep.append(
+                SidebarItem(
+                    title=structural_title("architecture", lang),
+                    page_id="architecture",
+                )
+            )
+        for topic in wiki_data.topics or []:
+            if topic.section == "getting-started" or topic.name == "getting-started":
+                continue
+            pid = f"topics/{topic.name}"
+            if pid in page_ids:
+                deep.append(SidebarItem(title=topic.title or topic.name, page_id=pid))
+        items: list[SidebarItem] = []
+        if getting:
+            items.append(
+                SidebarItem(
+                    title=structural_title("getting-started", lang),
+                    page_id="",
+                    children=getting,
+                )
+            )
+        if deep:
+            items.append(
+                SidebarItem(
+                    title=structural_title("deep-dive", lang),
+                    page_id="",
+                    children=deep,
+                )
+            )
+        module_names = [m.name for m in wiki_data.modules if f"modules/{m.name}" in page_ids]
+        if module_names:
+            items.append(self._build_module_sidebar(module_names, language=lang))
+        return items
 
     def _build_module_page(
         self,
@@ -762,3 +871,131 @@ def _split_markdown_sections(content: str) -> tuple[str, list[tuple[str, str]]]:
         title, _, rest = part.partition("\n")
         sections.append((title.strip(), rest))
     return lead, sections
+
+
+_TOPIC_GROUP_TITLES = {
+    "getting-started",
+    "getting started",
+    "入门指南",
+    "deep-dive",
+    "deep dive",
+    "深入探索",
+}
+_MODULE_GROUP_TITLES = {"modules", "模块", "by directory", "按目录"}
+_GENERIC_WEB_PAGE_SLUGS = {
+    "caching",
+    "authentication",
+    "request-routing",
+    "data-persistence",
+    "error-handling",
+    "background-tasks",
+}
+
+
+def rebuild_topic_sidebar(
+    pages: list[dict],
+    *,
+    language: str = "zh",
+) -> list[dict]:
+    """Rebuild 入门指南 / 深入探索 from persisted pages (GET upgrade)."""
+    lang = normalize_wiki_lang(language)
+    page_ids = {str(p.get("id") or "") for p in pages}
+    titles = {
+        str(p.get("id") or ""): str(p.get("title") or p.get("id") or "")
+        for p in pages
+    }
+
+    def leaf(page_id: str, title: str | None = None) -> dict:
+        return {
+            "title": title or titles.get(page_id, page_id),
+            "page_id": page_id,
+            "children": [],
+        }
+
+    getting: list[dict] = []
+    if "index" in page_ids:
+        getting.append(leaf("index", structural_title("overview", lang)))
+    if "getting-started" in page_ids:
+        getting.append(leaf("getting-started", structural_title("quick-start", lang)))
+
+    deep: list[dict] = []
+    if "architecture" in page_ids:
+        deep.append(leaf("architecture", structural_title("architecture", lang)))
+    topic_pages = sorted(
+        (p for p in pages if str(p.get("id") or "").startswith("topics/")),
+        key=lambda p: str(p.get("id") or ""),
+    )
+    for page in topic_pages:
+        pid = str(page.get("id") or "")
+        deep.append(leaf(pid))
+    if not topic_pages:
+        for page in pages:
+            pid = str(page.get("id") or "")
+            if not pid.startswith("concepts/"):
+                continue
+            slug = pid.split("/", 1)[-1]
+            if slug in {"project-goal", "module-inventory", "file-inventory"}:
+                continue
+            if slug in _GENERIC_WEB_PAGE_SLUGS:
+                continue
+            if slug.startswith("module-") or slug.startswith("file-") or slug.startswith("focus-"):
+                continue
+            deep.append(leaf(pid))
+
+    items: list[dict] = []
+    if getting:
+        items.append({
+            "title": structural_title("getting-started", lang),
+            "page_id": "",
+            "children": getting,
+        })
+    if deep:
+        items.append({
+            "title": structural_title("deep-dive", lang),
+            "page_id": "",
+            "children": deep,
+        })
+    module_children: list[dict] = []
+    for page in pages:
+        pid = str(page.get("id") or "")
+        if pid.startswith("modules/"):
+            module_children.append(leaf(pid))
+    if module_children:
+        items.append({
+            "title": structural_title("by-directory", lang),
+            "page_id": "",
+            "children": module_children[:24],
+        })
+    return items
+
+
+def sidebar_looks_like_module_tree(sidebar: list) -> bool:
+    """True when the persisted nav is still RepoWiki's directory clustering."""
+    if not sidebar:
+        return False
+    titles = [str(item.get("title") or "").strip() for item in sidebar if isinstance(item, dict)]
+    lowered = {t.lower() for t in titles}
+    if lowered & _TOPIC_GROUP_TITLES:
+        return False
+    if any(t in ("入门指南", "深入探索") for t in titles):
+        return False
+    if any(t in ("模块", "Modules") for t in titles):
+        return True
+    # Flat old nav: Overview, Architecture, then crate paths / Modules.
+    if titles and titles[0] in {"Overview", "概述", "Architecture", "架构概览"}:
+        for item in sidebar:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or "")
+            iid = str(item.get("page_id") or item.get("id") or "")
+            if title in ("模块", "Modules") or iid == "modules":
+                return True
+            children = item.get("children") or []
+            for child in children:
+                if not isinstance(child, dict):
+                    continue
+                ctitle = str(child.get("title") or "")
+                cid = str(child.get("page_id") or child.get("id") or "")
+                if cid.startswith("modules/") or ctitle.startswith(".") or "/" in ctitle:
+                    return True
+    return False

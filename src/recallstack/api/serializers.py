@@ -34,7 +34,12 @@ from recallstack.learning.learning_contract import (
     upgrade_legacy_concept_markdown,
     wiki_prose_excerpt,
 )
-from repowiki.core.wiki_builder import upgrade_legacy_module_markdown
+from repowiki.core.topics import is_generic_web_slug
+from repowiki.core.wiki_builder import (
+    rebuild_topic_sidebar,
+    sidebar_looks_like_module_tree,
+    upgrade_legacy_module_markdown,
+)
 
 
 def repo_out(repo: Repository) -> RepositoryOut:
@@ -132,6 +137,15 @@ def wiki_out(
             )
         elif page_id.startswith("modules/"):
             content = upgrade_legacy_module_markdown(content, language=content_lang())
+        else:
+            concept = next(
+                (
+                    c
+                    for c in (concepts or [])
+                    if getattr(c, "wiki_page_id", None) == page_id
+                ),
+                None,
+            )
         pages.append(
             WikiPageOut(
                 id=page_id,
@@ -156,12 +170,20 @@ def wiki_out(
             )
         return out
 
+    raw_sidebar = payload.get("sidebar") or []
+    if sidebar_looks_like_module_tree(raw_sidebar) or not raw_sidebar:
+        mapped_sidebar = map_sidebar(
+            rebuild_topic_sidebar(raw_pages, language=content_lang())
+        )
+    else:
+        mapped_sidebar = map_sidebar(raw_sidebar)
+
     return WikiOut(
         repository_id=repository_id,
         repository_version_id=version.id,
         project_name=payload.get("project_name") or "",
         pages=pages,
-        sidebar=map_sidebar(payload.get("sidebar") or []),
+        sidebar=mapped_sidebar,
     )
 
 
@@ -172,6 +194,10 @@ def path_out(path: LearningPath) -> LearningPathOut:
         slug = concept.slug if concept else ""
         title = concept.title if concept else ""
         if is_filler_slug_title(slug, title):
+            continue
+        if is_generic_web_slug(slug) and not (
+            (getattr(concept, "wiki_page_id", None) or "").startswith("topics/")
+        ):
             continue
         nodes.append(
             LearningPathNodeOut(

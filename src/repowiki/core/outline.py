@@ -36,6 +36,8 @@ def build_deterministic_outline(
     project: ProjectContext,
     modules: dict[str, list[FileInfo]],
     graph: DependencyGraph,
+    *,
+    language: str = "en",
 ) -> WikiOutline:
     """Plan pages from PageRank, entrypoints and config files. No LLM."""
     weights = graph.module_weights()
@@ -128,12 +130,17 @@ def build_deterministic_outline(
     emphasized = ["overview", "architecture"]
     emphasized.extend(names[:n_deep])
 
+    from repowiki.core.topics import build_deterministic_topics
+
+    topics = build_deterministic_topics(project, graph, language=language)
+
     return WikiOutline(
         overview_focus=" ".join(overview_bits),
         architecture_focus=" ".join(arch_bits),
         emphasized_pages=emphasized,
         reading_order=reading_order,
         modules=outlines,
+        topics=topics,
     )
 
 
@@ -176,12 +183,17 @@ def merge_outline(
     if not emphasized:
         emphasized = list(base.emphasized_pages)
 
+    from repowiki.core.topics import merge_topics
+
+    topics = merge_topics(list(base.topics), list(llm.topics or []), known_paths)
+
     return WikiOutline(
         overview_focus=llm.overview_focus or base.overview_focus,
         architecture_focus=llm.architecture_focus or base.architecture_focus,
         emphasized_pages=emphasized,
         reading_order=reading,
         modules=[by_name[n] for n in by_name],
+        topics=topics,
     )
 
 

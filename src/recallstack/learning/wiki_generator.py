@@ -35,6 +35,7 @@ from repowiki.core.models import (
 )
 from repowiki.core.module_handbook import fallback_module_doc
 from repowiki.core.modules import group_into_modules
+from repowiki.core.topics import fallback_topic_doc
 from repowiki.core.wiki_builder import Wiki, WikiBuilder, WikiPage
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,7 @@ def build_deterministic_wiki_data(
         f.path for f in project.files if getattr(f, "is_entrypoint", False)
     ][:8]
 
+    lang = content_lang()
     overview = ProjectOverview(
         name=project.name,
         one_liner=t(
@@ -95,15 +97,14 @@ def build_deterministic_wiki_data(
         description=description
         or t(
             "This wiki is a handbook, not a directory listing. Start at the entrypoints, "
-            "then follow import-graph hubs to see how responsibility is split. Concept pages "
-            "and the reading path come from the same scan.",
-            "本 Wiki 是内部手册，不是文件清单。先从入口看进程怎么启动，再顺着 import 图上的枢纽包"
-            "看职责怎么切。词条与阅读路径来自同一次扫描。",
+            "then follow the systems that actually run a call — not a crate inventory.",
+            "本 Wiki 是内部手册，不是文件清单。先从入口看进程怎么启动，再顺着一次调用经过的"
+            "系统读下去，而不是把 crate 列一遍。",
         ),
         key_features=[
             t(
                 "Scan + import graph produce a reading path; start at entrypoints, then hubs.",
-                "扫描与 import 图搭出阅读路径：先从入口进，再读枢纽模块。",
+                "扫描与 import 图搭出阅读路径：先从入口进，再读枢纽系统。",
             ),
             t(
                 f"{len(concepts)} practice concepts mapped onto source evidence",
@@ -129,34 +130,59 @@ def build_deterministic_wiki_data(
         fallback_module_doc(
             name,
             files,
-            language=content_lang(),
+            language=lang,
             graph=graph,
         )
         for name, files in sorted(modules_map.items(), key=lambda x: (-len(x[1]), x[0]))
     ]
 
+    from repowiki.core.outline import build_deterministic_outline
+
+    outline = build_deterministic_outline(project, modules_map, graph, language=lang)
+    files_by_path = {f.path.replace("\\", "/"): f for f in project.files}
+    topic_docs = []
+    for topic in outline.topics:
+        key_files = [
+            files_by_path[p.replace("\\", "/")]
+            for p in topic.key_files
+            if p.replace("\\", "/") in files_by_path
+        ]
+        topic_docs.append(
+            fallback_topic_doc(topic, key_files, language=lang, graph=graph)
+        )
+
     components = [
         Component(
-            name=m.name,
-            purpose=m.purpose,
-            files=[fd.path for fd in m.files[:6]],
+            name=doc.title or doc.name,
+            purpose=doc.purpose,
+            files=[fd.path for fd in doc.files[:6]],
         )
-        for m in module_docs[:12]
-    ]
+        for doc in topic_docs
+        if doc.section != "getting-started"
+    ][:12]
+    if not components:
+        components = [
+            Component(
+                name=m.name,
+                purpose=m.purpose,
+                files=[fd.path for fd in m.files[:6]],
+            )
+            for m in module_docs[:12]
+        ]
     architecture = ArchitectureDiagram(
-        architecture_type="codebase-modules",
+        architecture_type="system-topics",
         description=t(
-            "The repo is split by directory modules. Data enters at the entrypoints, "
-            "then moves through the highest-centrality packages. Use the diagram to see "
-            "coupling; PageRank only ranks which pages to write first, not a table of contents.",
-            "仓库按目录划成模块。请求从入口文件进来，经过图上最中心的包，再扩散到依赖方。"
-            "结构图用来看耦合；PageRank 只决定先写哪几页，不是目录清单。",
+            "The repo is split by the systems that actually run a call. Data enters at "
+            "the entrypoints, then moves through runtime, tools, and UI. Use the diagram "
+            "to see coupling; the left nav is conceptual, not a crate tree.",
+            "仓库按一次调用真正经过的系统切页。请求从入口进来，经过运行时、工具层和界面。"
+            "结构图用来看耦合；左侧是概念导航，不是 crate 树。",
         ),
         components=components,
         mermaid_component=graph.to_mermaid() or "",
         data_flow=t(
-            "Entrypoints → core modules → dependents (see the dependency diagram and the learning path).",
-            "入口文件 → 核心模块 → 依赖模块（见结构图与学习路径）。",
+            "Entrypoints → core systems → dependents (see architecture and the learning path).",
+            "入口文件 → 核心系统 → 依赖方（见架构概览与学习路径）。",
         ),
         term_tips=_generic_term_tips(),
     )
@@ -199,8 +225,10 @@ def build_deterministic_wiki_data(
     return WikiData(
         overview=overview,
         modules=module_docs,
+        topics=topic_docs,
         architecture=architecture,
         reading_guide=reading_guide,
+        outline=outline,
     )
 
 
@@ -489,7 +517,8 @@ def append_concept_pages(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
             )
         )
         concept_sidebar.children.append(SidebarItem(title=c.title, page_id=page_id))
-    if concept_sidebar.children:
+    has_topics = any(p.id.startswith("topics/") for p in wiki.pages)
+    if concept_sidebar.children and not has_topics:
         wiki.sidebar.append(concept_sidebar)
     return wiki
 
@@ -678,6 +707,7 @@ async def build_llm_enriched_wiki_data(
     return WikiData(
         overview=llm_wd.overview if (llm_wd.overview and llm_wd.overview.name) else det_wd.overview,
         modules=llm_wd.modules or det_wd.modules,
+        topics=llm_wd.topics or det_wd.topics,
         architecture=(
             llm_wd.architecture
             if (
@@ -688,6 +718,7 @@ async def build_llm_enriched_wiki_data(
         ),
         reading_guide=det_wd.reading_guide,
         file_index=llm_wd.file_index or det_wd.file_index,
+        outline=llm_wd.outline or det_wd.outline,
     )
 
 
@@ -711,6 +742,19 @@ def build_wiki_payload(
     wiki = WikiBuilder().build(project, wiki_data, graph, language=content_lang())
     wiki = append_concept_pages(wiki, concepts)
     wiki = link_reading_guide(wiki, concepts)
+    topic_plan = []
+    if wiki_data.outline and wiki_data.outline.topics:
+        topic_plan = [item.model_dump() for item in wiki_data.outline.topics]
+    elif wiki_data.topics:
+        topic_plan = [
+            {
+                "id": t.name,
+                "title": t.title,
+                "section": t.section,
+                "purpose": t.purpose,
+            }
+            for t in wiki_data.topics
+        ]
     return {
         "project_name": wiki.project_name,
         "pages": [
@@ -724,6 +768,7 @@ def build_wiki_payload(
             for p in wiki.pages
         ],
         "sidebar": [_sidebar_to_dict(s) for s in wiki.sidebar],
+        "topic_plan": topic_plan,
     }
 
 

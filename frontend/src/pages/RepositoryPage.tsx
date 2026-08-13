@@ -6,6 +6,8 @@ import AskPanel from "../components/AskPanel";
 import CommandPalette from "../components/CommandPalette";
 import ConceptPracticePanel from "../components/ConceptPracticePanel";
 import FolderPicker from "../components/FolderPicker";
+import SourcePeek from "../components/SourcePeek";
+import SourceRail from "../components/SourceRail";
 import TableOfContents from "../components/TableOfContents";
 import WikiContent from "../components/WikiContent";
 import type { TocEntry } from "../lib/markdown";
@@ -53,10 +55,21 @@ const RUNNING = new Set([
 /** Flatten the sidebar tree into reading order, for prev/next navigation. */
 function flattenSidebar(items: WikiSidebarItem[], out: WikiSidebarItem[] = []) {
   for (const item of items) {
+    const title = (item.title || "").trim().toLowerCase();
+    if (!item.page_id && (title === "按目录" || title === "by directory")) {
+      continue;
+    }
     if (item.page_id) out.push(item);
     if (item.children?.length) flattenSidebar(item.children, out);
   }
   return out;
+}
+
+function pathPageId(node: { concept?: { slug?: string; wiki_page_id?: string | null } | null }): string {
+  const wikiId = node.concept?.wiki_page_id;
+  if (wikiId) return wikiId;
+  const slug = node.concept?.slug;
+  return slug ? `concepts/${slug}` : "";
 }
 
 export default function RepositoryPage() {
@@ -88,6 +101,7 @@ export default function RepositoryPage() {
   const [paletteSeed, setPaletteSeed] = useState<string>("");
   const [askOpen, setAskOpen] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [peekRef, setPeekRef] = useState<string | null>(null);
   const articleRef = useRef<HTMLDivElement>(null);
 
   const analyzing = Boolean(status && RUNNING.has(status));
@@ -253,7 +267,7 @@ export default function RepositoryPage() {
     if (currentPage.id.startsWith("concepts/")) {
       return conceptBySlug[currentPage.id.split("/")[1]] || null;
     }
-    return null;
+    return concepts.find((c) => c.wiki_page_id === currentPage.id) || null;
   }, [currentPage, concepts, conceptBySlug]);
 
   const learnNodes = useMemo(() => (path ? corePathNodes(path.nodes) : []), [path]);
@@ -271,6 +285,7 @@ export default function RepositoryPage() {
   useEffect(() => {
     setToc([]);
     setProgress(0);
+    setPeekRef(null);
     if (!window.location.hash) window.scrollTo({ top: 0 });
   }, [currentPage?.id]);
 
@@ -422,8 +437,7 @@ export default function RepositoryPage() {
         {mode === "learn" && path ? (
           <ol className="space-y-0.5">
             {path.nodes.map((n, idx) => {
-              const slug = n.concept?.slug;
-              const pageId = slug ? `concepts/${slug}` : "";
+              const pageId = pathPageId(n);
               const active = pageId && currentPage?.id === pageId;
               return (
                 <li key={n.id}>
@@ -581,7 +595,7 @@ export default function RepositoryPage() {
                   </button>
                 )}
               </div>
-            ) : mode === "learn" && path && !currentPage?.id.startsWith("concepts/") ? (
+            ) : mode === "learn" && path && !learnNodes.some((n) => pathPageId(n) === currentPage?.id) ? (
               <div className="rs-wiki-article">
                 <div className="rs-chip rs-chip-accent mb-4">{t("辅助 · 学习路径", "Assistive · learning path")}</div>
                 <h1 className="rs-title text-[34px] font-semibold tracking-tight">{path.title}</h1>
@@ -595,7 +609,7 @@ export default function RepositoryPage() {
                 <ol className="mt-10 space-y-3">
                   {learnNodes.map((n, idx) => {
                     const c = n.concept;
-                    const pageId = c?.slug ? `concepts/${c.slug}` : "";
+                    const pageId = pathPageId(n);
                     const task = c ? stepTask(t, c.slug, c.title) : n.reason;
                     return (
                       <li key={n.id} className="rs-step-card">
@@ -712,6 +726,16 @@ export default function RepositoryPage() {
                 </article>
 
                 <aside className="rs-wiki-aside hidden xl:block">
+                  {currentPage && (
+                    <SourceRail content={currentPage.content} onOpen={setPeekRef} />
+                  )}
+                  {peekRef && id && (
+                    <SourcePeek
+                      repositoryId={id}
+                      reference={peekRef}
+                      onClose={() => setPeekRef(null)}
+                    />
+                  )}
                   <TableOfContents entries={toc} />
                 </aside>
               </div>
