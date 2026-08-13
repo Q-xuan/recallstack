@@ -78,14 +78,19 @@ export default function SourcePeek({ repositoryId, reference, onClose }: Props) 
   const [code, setCode] = useState<string | null>(null);
   const [range, setRange] = useState<{ start: number; end: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const missing = tNow("找不到工作副本里的这个文件", "This file is not in the scanned working copy.");
 
   useEffect(() => {
-    if (!parsed) return;
     let cancelled = false;
     setCode(null);
+    setRange(null);
+    if (!parsed) {
+      setError(missing);
+      return;
+    }
     setError(null);
     if (!repositoryId) {
-      setError(tNow("找不到工作副本里的这个文件", "This file is not in the scanned working copy."));
+      setError(missing);
       return;
     }
     (async () => {
@@ -101,8 +106,7 @@ export default function SourcePeek({ repositoryId, reference, onClose }: Props) 
         setRange({ start: res.start_line, end: res.end_line });
       } catch (e: unknown) {
         if (!cancelled) {
-          const fallback = tNow("找不到工作副本里的这个文件", "This file is not in the scanned working copy.");
-          setError(e instanceof Error && e.message ? e.message : fallback);
+          setError(e instanceof Error && e.message ? e.message : missing);
         }
       }
     })();
@@ -111,14 +115,14 @@ export default function SourcePeek({ repositoryId, reference, onClose }: Props) 
     };
   }, [repositoryId, reference]);
 
-  if (!parsed) return null;
+  const pathLabel = parsed?.path || reference;
 
   return (
     <div className="rs-peek">
       <div className="rs-peek-head">
         <div className="min-w-0">
-          <div className="rs-peek-path" title={parsed.path}>
-            {parsed.path}
+          <div className="rs-peek-path" title={pathLabel}>
+            {pathLabel}
           </div>
           {range && (
             <div className="rs-peek-range rs-tabular">
@@ -135,7 +139,7 @@ export default function SourcePeek({ repositoryId, reference, onClose }: Props) 
       ) : code === null ? (
         <p className="rs-peek-loading">{t("读取源码…", "Reading source…")}</p>
       ) : (
-        <CodeBlock code={code} lang={langFor(parsed.path)} />
+        <CodeBlock code={code} lang={langFor(parsed?.path || "")} />
       )}
     </div>
   );

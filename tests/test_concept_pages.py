@@ -346,25 +346,24 @@ def test_markdown_ts_normalizes_bare_mermaid():
     assert 'startsWith("%%")' in body
 
 
-def test_wiki_content_peek_hitbox_is_chip_only():
+def test_wiki_content_peek_is_react_sibling_not_portal():
     from pathlib import Path
 
     wiki = Path("frontend/src/components/WikiContent.tsx").read_text(encoding="utf-8")
     css = Path("frontend/src/index.css").read_text(encoding="utf-8")
     md = Path("frontend/src/lib/markdown.ts").read_text(encoding="utf-8")
     peek = Path("frontend/src/components/SourcePeek.tsx").read_text(encoding="utf-8")
-    assert "chipFromEvent" in wiki
-    assert 'closest(".rs-ref")' in wiki
-    assert ".rs-ref[data-ref]" not in wiki
+    assert "createPortal" not in wiki
+    assert "onClick={handleClick}" in wiki
+    assert 'closest(".rs-ref[data-ref]")' in wiki
+    assert "data-md-block-index" in wiki
+    assert "data-peek-slot" in wiki
+    assert "peek?.blockIndex === i" in wiki
     assert "p:has(.rs-ref)" not in css
-    sym = re.search(r"\.rs-ref-sym \{[^}]+\}", css)
-    assert sym and "pointer-events: none" in sym.group(0)
-    assert 'data-md-block="list-item"' in md
-    assert "closest(\"[data-md-block], .rs-related-source\")" in wiki.replace("'", '"')
-    assert ".rs-related-source" in css
-    assert "flex: 0 0 auto" in css
-    assert "display: flex" in css
-    assert "flex-wrap: wrap" in css
-    assert "path:line Symbol" in peek
+    assert "[data-md-block-index] > [data-peek-slot]" in css
+    assert "if (!parsed) return null" not in peek
     assert "normalizeMermaidSource" in md
+    assert 'data-md-block="list-item"' in md
+    assert ".rs-related-source" in css
+    assert "flex-wrap: wrap" in css
 

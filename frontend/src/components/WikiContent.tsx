@@ -1,5 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import CodeBlock from "./CodeBlock";
 import SourcePeek from "./SourcePeek";
 import { useT } from "../lib/i18n";
@@ -26,6 +25,11 @@ interface Props {
   onTocChange?: (toc: TocEntry[]) => void;
 }
 
+interface PeekState {
+  ref: string;
+  blockIndex: number;
+}
+
 export default function WikiContent({
   content,
   title,
@@ -36,9 +40,7 @@ export default function WikiContent({
 }: Props) {
   const t = useT();
   const ref = useRef<HTMLDivElement>(null);
-  // The peek is portalled into a slot injected right after the citation's own
-  // block, so the code appears where the claim was made instead of at the end.
-  const [peek, setPeek] = useState<{ reference: string; slot: HTMLElement } | null>(null);
+  const [peek, setPeek] = useState<PeekState | null>(null);
   const [toolbar, setToolbar] = useState<{
     selection: string;
     surroundingText: string;
@@ -51,12 +53,7 @@ export default function WikiContent({
     [content, title],
   );
 
-  const closePeek = useCallback(() => {
-    setPeek((prev) => {
-      prev?.slot.remove();
-      return null;
-    });
-  }, []);
+  const closePeek = useCallback(() => setPeek(null), []);
 
   useEffect(() => {
     onTocChange?.(toc);
@@ -68,104 +65,65 @@ export default function WikiContent({
     setToolbar(null);
   }, [content, title, closePeek]);
 
-  useEffect(() => closePeek, [closePeek]);
-
   const clearToolbar = useCallback(() => setToolbar(null), []);
 
-  // Read inside the click handler without making it depend on `peek`, which
-  // would tear down and rebuild the listener on every open/close.
-  const peekRef = useRef(peek);
-  peekRef.current = peek;
+  function chipFromEvent(target: EventTarget | null): HTMLElement | null {
+    const el =
+      target instanceof Element
+        ? target
+        : target instanceof Text
+          ? target.parentElement
+          : null;
+    if (!el) return null;
+    const refEl = el.closest(".rs-ref[data-ref]") as HTMLElement | null;
+    if (!refEl || (ref.current && !ref.current.contains(refEl))) return null;
+    return refEl;
+  }
 
-  // Clicks inside rendered HTML: source citations and internal wiki links.
-  // Bind even when repositoryId is briefly undefined — a missing id must still
-  // open SourcePeek so the reader sees an error instead of a dead chip.
-  useEffect(() => {
-    const root = ref.current;
-    if (!root) return;
+  function togglePeek(refEl: HTMLElement) {
+    const value = refEl.getAttribute("data-ref") || "";
+    const wrap = refEl.closest("[data-md-block-index]") as HTMLElement | null;
+    const blockIndex = wrap ? Number(wrap.getAttribute("data-md-block-index")) : -1;
+    setPeek((prev) =>
+      prev?.ref === value && prev?.blockIndex === blockIndex
+        ? null
+        : { ref: value, blockIndex },
+    );
+  }
 
-    function chipFromEvent(target: EventTarget | null): HTMLElement | null {
-      const el =
-        target instanceof Element
-          ? target
-          : target instanceof Text
-            ? target.parentElement
-            : null;
-      if (!el) return null;
-      // Symbol half (.rs-ref-sym) is inside the pill — closest the chip, not [data-ref].
-      const refEl = el.closest(".rs-ref") as HTMLElement | null;
-      if (!refEl || !root.contains(refEl) || !refEl.getAttribute("data-ref")) return null;
-      // Hitbox is the pill only — never the wrapping p / li / related-source row.
-      if (refEl.matches("p, li, ul, ol, td, blockquote, [data-md-block], .rs-related-source")) {
-        return null;
-      }
-      return refEl;
-    }
-
-    function openPeek(refEl: HTMLElement, value: string) {
-      // Prefer the inner list-item / related-source wrapper so the slot is a
-      // valid sibling (inside <li>, not a <div> child of <ul>).
-      const host =
-        (refEl.closest("[data-md-block], .rs-related-source") as HTMLElement | null) ??
-        (refEl.closest("li, p, td, blockquote") as HTMLElement | null) ??
-        refEl;
-      const slot = document.createElement("div");
-      slot.dataset.peekSlot = "";
-      host.after(slot);
-      setPeek((prev) => {
-        prev?.slot.remove();
-        return { reference: value, slot };
-      });
-    }
-
-    function togglePeek(refEl: HTMLElement) {
-      const value = refEl.getAttribute("data-ref") || "";
-      if (peekRef.current?.reference === value) closePeek();
-      else openPeek(refEl, value);
-    }
-
-    function handleClick(e: MouseEvent) {
-      const target = e.target as HTMLElement;
-
-      const refEl = chipFromEvent(target);
-      if (refEl) {
-        e.preventDefault();
-        e.stopPropagation();
-        togglePeek(refEl);
-        return;
-      }
-
-      const anchor = target.closest?.("a") as HTMLAnchorElement | null;
-      if (!anchor) return;
-      const href = anchor.getAttribute("href") || "";
-      if (!href || href.startsWith("#")) return;
-      // Absolute URLs leave the app; everything else is a wiki page id.
-      if (/^(https?:)?\/\//i.test(href) || href.startsWith("mailto:")) {
-        anchor.target = "_blank";
-        anchor.rel = "noreferrer noopener";
-        return;
-      }
-      if (onNavigatePage) {
-        e.preventDefault();
-        onNavigatePage(decodeURI(href.replace(/^\.?\//, "")));
-      }
-    }
-
-    function handleKey(e: KeyboardEvent) {
-      if (e.key !== "Enter" && e.key !== " ") return;
-      const refEl = chipFromEvent(e.target);
-      if (!refEl) return;
+  function handleClick(e: MouseEvent<HTMLDivElement>) {
+    const refEl = chipFromEvent(e.target);
+    if (refEl) {
       e.preventDefault();
+      e.stopPropagation();
       togglePeek(refEl);
+      return;
     }
 
-    root.addEventListener("click", handleClick);
-    root.addEventListener("keydown", handleKey);
-    return () => {
-      root.removeEventListener("click", handleClick);
-      root.removeEventListener("keydown", handleKey);
-    };
-  }, [onNavigatePage, closePeek, blocks]);
+    const target = e.target as HTMLElement;
+    const anchor = target.closest?.("a") as HTMLAnchorElement | null;
+    if (!anchor) return;
+    const href = anchor.getAttribute("href") || "";
+    if (!href || href.startsWith("#")) return;
+    // Absolute URLs leave the app; everything else is a wiki page id.
+    if (/^(https?:)?\/\//i.test(href) || href.startsWith("mailto:")) {
+      anchor.target = "_blank";
+      anchor.rel = "noreferrer noopener";
+      return;
+    }
+    if (onNavigatePage) {
+      e.preventDefault();
+      onNavigatePage(decodeURI(href.replace(/^\.?\//, "")));
+    }
+  }
+
+  function handleKey(e: KeyboardEvent<HTMLDivElement>) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const refEl = chipFromEvent(e.target);
+    if (!refEl) return;
+    e.preventDefault();
+    togglePeek(refEl);
+  }
 
   // Selection toolbar — "look this up in the wiki".
   useEffect(() => {
@@ -198,7 +156,7 @@ export default function WikiContent({
       });
     }
 
-    function handleMouseDown(e: MouseEvent) {
+    function handleMouseDown(e: globalThis.MouseEvent) {
       if ((e.target as HTMLElement).closest?.("[data-lookup-toolbar]")) return;
       setToolbar(null);
     }
@@ -212,7 +170,7 @@ export default function WikiContent({
   }, [onLookup]);
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="relative" onClick={handleClick} onKeyDown={handleKey}>
       {toolbar && onLookup && (
         <div
           data-lookup-toolbar
@@ -253,19 +211,22 @@ export default function WikiContent({
           if (block.kind === "code") {
             return <CodeBlock key={i} code={block.code} lang={block.lang} />;
           }
-          return <div key={i} dangerouslySetInnerHTML={{ __html: block.html }} />;
+          return (
+            <div key={i} data-md-block-index={i}>
+              <div dangerouslySetInnerHTML={{ __html: block.html }} />
+              {peek?.blockIndex === i && (
+                <div data-peek-slot="">
+                  <SourcePeek
+                    repositoryId={repositoryId}
+                    reference={peek.ref}
+                    onClose={closePeek}
+                  />
+                </div>
+              )}
+            </div>
+          );
         })}
       </article>
-
-      {peek &&
-        createPortal(
-          <SourcePeek
-            repositoryId={repositoryId}
-            reference={peek.reference}
-            onClose={closePeek}
-          />,
-          peek.slot,
-        )}
     </div>
   );
 }
