@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from recallstack.domain.schemas import ConceptDraft, SourceReference
 from recallstack.learning.concept_extractor import ConceptExtractor, readme_prose_excerpt
 from recallstack.learning.wiki_generator import append_concept_pages, build_deterministic_wiki_data
@@ -102,7 +104,7 @@ def test_concept_page_handbook_not_template_dump(monkeypatch):
         title="项目目标",
         description='<div align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="x">',
         why_learn=why,
-        source_references=[SourceReference(path="README.md", start_line=1)],
+        source_references=[SourceReference(path="README.md", start_line=1, end_line=48)],
     )
     page = append_concept_pages(wiki, [draft]).get_page("concepts/project-goal")
     assert page is not None
@@ -111,15 +113,24 @@ def test_concept_page_handbook_not_template_dump(monkeypatch):
     assert "为什么重要" not in content
     assert "<picture" not in content
     assert "srcset" not in content
-    assert "## 这份仓库做什么" in content
+    headings = [line for line in content.splitlines() if line.startswith("## ")]
+    assert headings[0] == "## 本步要你干什么"
+    assert "## 本步要你干什么" in content
+    assert "## 先回到原理" in content
+    assert "## 只看这一处证据" in content
     assert "## 不是什么" in content
     assert "## 术语小贴士" in content
-    assert "## 源码证据" in content
-    assert "## 自测" in content
-    assert "项目目标" in content.split("## 自测", 1)[1]
+    assert "## 过关" in content
+    assert "## 这份仓库做什么" not in content
+    assert "## 自测" not in content
+    assert "## 源码证据" not in content
+    assert "点击展开 `README.md:1-48`" in content
+    assert "先点开证据再往下" in content
+    assert "#practice" in content
+    assert "项目目标" in content.split("## 过关", 1)[1]
 
 
-def test_non_goal_concept_uses_boundary_heading(monkeypatch):
+def test_non_goal_concept_uses_first_principles_heading(monkeypatch):
     monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
     wiki = Wiki(project_name="demo", pages=[], sidebar=[])
     draft = ConceptDraft(
@@ -133,8 +144,62 @@ def test_non_goal_concept_uses_boundary_heading(monkeypatch):
     other = ConceptDraft(slug="project-goal", title="项目目标", why_learn="目标")
     page = append_concept_pages(wiki, [other, draft]).get_page("concepts/application-entry")
     assert page is not None
-    assert "## 职责与边界" in page.content
+    assert "## 本步要你干什么" in page.content
+    assert "## 先回到原理" in page.content
+    assert "## 职责与边界" not in page.content
     assert "## 这份仓库做什么" not in page.content
-    assert "应用入口" in page.content.split("## 自测", 1)[1]
+    assert "应用入口" in page.content.split("## 过关", 1)[1]
     assert "为什么重要" not in page.content
     assert page.content.count("入口是阅读调用链的起点。") == 1
+    assert "点击展开 `app/main.py:1`" in page.content
+
+
+def test_upgrade_legacy_concept_markdown_rewrites_old_template(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    from recallstack.learning.learning_contract import upgrade_legacy_concept_markdown
+
+    old = """# 项目目标
+
+> 先建立对仓库目标与边界的心智模型，再深入实现。
+
+## 为什么重要
+
+> 先建立对仓库目标与边界的心智模型，再深入实现。
+
+## 这份仓库做什么
+
+grok-study 是本地研究工作台。
+
+## 源码证据
+
+- `README.md:1-48`
+
+## 自测
+
+1. 用一句话说清目标
+"""
+    upgraded = upgrade_legacy_concept_markdown(old, slug="project-goal", title="项目目标")
+    assert "## 本步要你干什么" in upgraded
+    assert "用两句话写出这个仓库为谁" in upgraded
+    assert "为什么重要" not in upgraded
+    assert "## 先回到原理" in upgraded
+    assert "## 只看这一处证据" in upgraded
+    assert "点击展开 `README.md:1-48`" in upgraded
+    assert "## 过关" in upgraded
+    assert "## 自测" not in upgraded
+
+
+def test_source_ref_re_matches_readme_span():
+    from pathlib import Path
+
+    src = Path("frontend/src/lib/markdown.ts").read_text(encoding="utf-8")
+    match = re.search(r"export const SOURCE_REF_RE =\s*/(.+)/;", src)
+    assert match, "SOURCE_REF_RE must be exported from markdown.ts"
+    regex = re.compile(match.group(1))
+    assert regex.fullmatch("README.md:1-48")
+    assert regex.fullmatch("README.md")
+    assert regex.fullmatch("app/main.py:12-40")
+    assert regex.fullmatch("crates/foo/src/lib.rs:1")
+    assert not regex.fullmatch("README")
+    assert not regex.fullmatch("just a sentence")
+

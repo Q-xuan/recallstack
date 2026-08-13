@@ -14,6 +14,12 @@ from typing import Any
 from recallstack.domain.schemas import ConceptDraft, ConceptTermTip
 from recallstack.learning.concept_extractor import readme_prose_excerpt
 from recallstack.learning.i18n import content_lang, t
+from recallstack.learning.learning_contract import (
+    first_principles,
+    format_evidence_line,
+    pass_questions,
+    step_task,
+)
 from repowiki.core.graph import DependencyGraph
 from repowiki.core.models import (
     ArchitectureDiagram,
@@ -325,64 +331,15 @@ def _tips_for_concept(concept: ConceptDraft) -> list[TermTip]:
     return out
 
 
-def _role_heading(concept: ConceptDraft) -> str:
-    if concept.slug == "project-goal":
-        return t("## What this repo does\n", "## 这份仓库做什么\n")
-    return t("## Responsibility and boundaries\n", "## 职责与边界\n")
-
-
-def _role_body(concept: ConceptDraft, project_name: str) -> str:
+def _principles_body(concept: ConceptDraft, project_name: str) -> str:
+    principles = first_principles(concept, project_name)
     body = _clean_concept_body(concept.description)
     why = (concept.why_learn or "").strip()
     if body and why and body == why:
         body = ""
-    if body:
-        return body
-    name = project_name or concept.title
-    if concept.slug == "project-goal":
-        return t(
-            f"{name} solves a specific problem for its users. This page states the goal "
-            "and capability boundary; how the implementation is wired belongs on the "
-            "entrypoint and module pages.",
-            f"{name} 用来解决一类具体问题、给特定读者用。"
-            "本页讲目标与能力边界；实现怎么串，放到入口和模块词条。",
-        )
-    return t(
-        f"`{concept.title}` is a responsibility boundary in this repo. Read the evidence "
-        "below to see what it owns and who it collaborates with.",
-        f"「{concept.title}」是本仓库里的一块职责边界。先看它负责什么、不负责什么，"
-        "再顺着下面的源码证据读实现。",
-    )
-
-
-def _self_check(concept: ConceptDraft) -> str:
-    title = concept.title
-    if concept.slug == "project-goal":
-        return t(
-            f"1. In one sentence, who is `{title}` for and what problem does it solve?\n"
-            "2. Name one thing this repo is NOT responsible for\n"
-            "3. Point to the README or an entrypoint that supports that claim\n",
-            f"1. 用一句话说清「{title}」给谁用、解决什么问题\n"
-            "2. 举一件这个仓库明确不负责的事\n"
-            "3. 指出 README 或入口文件里支撑该判断的证据\n",
-        )
-    if concept.slug == "application-entry":
-        return t(
-            f"1. Name the entrypoint file for `{title}` and what it calls first\n"
-            "2. What does the entrypoint own vs. what it only wires in?\n"
-            "3. Point to one source location on this page that shows the boot path\n",
-            f"1. 指出「{title}」对应的入口文件，以及它首先调用了什么\n"
-            "2. 入口自己负责什么，只是装配进来的又是什么？\n"
-            "3. 在本页源码证据里指出一处能看出启动路径的位置\n",
-        )
-    return t(
-        f"1. In your own words, what does `{title}` own — and where does that stop?\n"
-        "2. Point to at least one source evidence path on this page\n"
-        "3. Name one prerequisite or follow-on concept that changes if this boundary moves\n",
-        f"1. 用自己的话说明「{title}」负责什么、边界停在哪里\n"
-        "2. 指出本页至少一处源码证据（路径即可）\n"
-        "3. 如果这条边界移动，会影响到哪条先修或后续概念？\n",
-    )
+    if body and body not in principles:
+        return f"{principles}\n\n{body}"
+    return principles
 
 
 def _append_term_tips_md(lines: list[str], tips: list[TermTip]) -> None:
@@ -400,8 +357,9 @@ def _append_term_tips_md(lines: list[str], tips: list[TermTip]) -> None:
 def append_concept_pages(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
     """Attach concept wiki pages so learning objects live inside the wiki tree.
 
-    Handbook layout: title, one-line why, meta, role/boundaries, not-this,
-    term tips, evidence, cross-links, then a concept-specific self-check.
+    First-principles layout: title, one-line why, the action for this step,
+    constraint reasoning, one primary citation, not-this, term tips, then a
+    pass check that can only be answered from the evidence.
     """
     if not concepts:
         return wiki
@@ -427,7 +385,7 @@ def append_concept_pages(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
             f"# {c.title}\n",
         ]
         if why:
-            lines.append(f"> {why}\n")
+            lines.append(f"{why}\n")
         lines.append(
             t(
                 f"**Difficulty** {c.difficulty}/5 · **Reading time** ~{minutes} min · "
@@ -436,8 +394,31 @@ def append_concept_pages(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
                 f"**重要度** {c.importance:.2f}\n",
             )
         )
-        lines.append(_role_heading(c))
-        lines.append(f"{_role_body(c, wiki.project_name)}\n")
+        lines.append(t("## What this step asks of you\n", "## 本步要你干什么\n"))
+        lines.append(f"{step_task(c)}\n")
+        lines.append(t("## Back to first principles\n", "## 先回到原理\n"))
+        lines.append(f"{_principles_body(c, wiki.project_name)}\n")
+
+        lines.append(t("## Look at this evidence only\n", "## 只看这一处证据\n"))
+        if c.source_references:
+            lines.append(
+                t(
+                    "Open the evidence first, then keep reading.",
+                    "先点开证据再往下。",
+                )
+            )
+            lines.append("")
+            for ref in c.source_references[:8]:
+                symbol = f" — `{ref.symbol}`" if ref.symbol else ""
+                lines.append(f"- {format_evidence_line(_format_ref(ref))}{symbol}")
+        else:
+            lines.append(
+                t(
+                    "_No file-level evidence was extracted for this concept._",
+                    "_该概念未能提取到文件级证据。_",
+                )
+            )
+        lines.append("")
 
         not_this = _not_this_for(c)
         if not_this:
@@ -447,20 +428,6 @@ def append_concept_pages(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
             lines.append("")
 
         _append_term_tips_md(lines, _tips_for_concept(c))
-
-        lines.append(t("## Source evidence\n", "## 源码证据\n"))
-        if c.source_references:
-            for ref in c.source_references[:8]:
-                symbol = f" — `{ref.symbol}`" if ref.symbol else ""
-                lines.append(f"- `{_format_ref(ref)}`{symbol}")
-        else:
-            lines.append(
-                t(
-                    "_No file-level evidence was extracted for this concept._",
-                    "_该概念未能提取到文件级证据。_",
-                )
-            )
-        lines.append("")
 
         prereqs = [p for p in c.prerequisites if p in title_by_slug]
         if prereqs:
@@ -478,8 +445,13 @@ def append_concept_pages(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
 
         lines.extend(
             [
-                t("## Self-check\n", "## 自测\n"),
-                _self_check(c),
+                t("## Pass\n", "## 过关\n"),
+                pass_questions(c),
+                t(
+                    "Answer in the practice panel below — after looking at the evidence. "
+                    "[Open practice](#practice)",
+                    "先看证据，再到底部练习区作答。[打开练习](#practice)",
+                ),
             ]
         )
         wiki.pages.append(

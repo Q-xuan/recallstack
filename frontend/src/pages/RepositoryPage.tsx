@@ -10,6 +10,7 @@ import TableOfContents from "../components/TableOfContents";
 import WikiContent from "../components/WikiContent";
 import type { TocEntry } from "../lib/markdown";
 import { localizeBreadcrumbSegment, localizeSidebarTitle } from "../lib/wikiTitles";
+import { PATH_MISSION, corePathNodes, stepTask } from "../lib/learningPath";
 import {
   Concept,
   LearningPath,
@@ -254,6 +255,15 @@ export default function RepositoryPage() {
     }
     return null;
   }, [currentPage, concepts, conceptBySlug]);
+
+  const learnNodes = useMemo(() => (path ? corePathNodes(path.nodes) : []), [path]);
+
+  const currentStepTask = useMemo(() => {
+    if (!boundConcept) return "";
+    const node = learnNodes.find((n) => n.concept?.slug === boundConcept.slug);
+    if (node?.reason) return node.reason;
+    return stepTask(t, boundConcept.slug, boundConcept.title);
+  }, [boundConcept, learnNodes, t]);
 
   const ready = Boolean(wiki && wiki.pages.length > 0);
 
@@ -576,16 +586,17 @@ export default function RepositoryPage() {
                 <div className="rs-chip rs-chip-accent mb-4">{t("辅助 · 学习路径", "Assistive · learning path")}</div>
                 <h1 className="rs-title text-[34px] font-semibold tracking-tight">{path.title}</h1>
                 <p className="mt-3 text-[16px] leading-relaxed text-[var(--rs-ink-2)] max-w-2xl">
-                  {path.description}
+                  {t(PATH_MISSION[0], PATH_MISSION[1])}
                 </p>
                 <div className="mt-2 text-[13px] text-[var(--rs-muted)] rs-tabular">
-                  {t(`约 ${path.estimated_minutes} 分钟 · ${path.nodes.length} 个节点`, `~${path.estimated_minutes} min · ${path.nodes.length} steps`)}
+                  {t(`约 ${path.estimated_minutes} 分钟 · ${learnNodes.length} 个节点`, `~${path.estimated_minutes} min · ${learnNodes.length} steps`)}
                 </div>
 
                 <ol className="mt-10 space-y-3">
-                  {path.nodes.map((n, idx) => {
+                  {learnNodes.map((n, idx) => {
                     const c = n.concept;
                     const pageId = c?.slug ? `concepts/${c.slug}` : "";
+                    const task = c ? stepTask(t, c.slug, c.title) : n.reason;
                     return (
                       <li key={n.id} className="rs-step-card">
                         <div className="flex gap-4">
@@ -601,8 +612,11 @@ export default function RepositoryPage() {
                             >
                               {c?.title || n.concept_id}
                             </button>
-                            <p className="mt-1.5 text-[14px] leading-relaxed text-[var(--rs-ink-2)]">
-                              {n.reason}
+                            <p className="mt-1.5 text-[13px] font-medium text-[var(--rs-accent)]">
+                              {t("本步任务", "This step")}
+                            </p>
+                            <p className="mt-1 text-[14px] leading-relaxed text-[var(--rs-ink-2)]">
+                              {task || n.reason}
                             </p>
                             {pageId && (
                               <button
@@ -641,6 +655,17 @@ export default function RepositoryPage() {
                       )}
                     </span>
                   </nav>
+
+                  {mode === "learn" && currentStepTask && (
+                    <div className="mb-6 rounded-[12px] border border-[var(--rs-line)] bg-[var(--rs-surface-2)] px-4 py-3">
+                      <div className="text-[12px] font-medium text-[var(--rs-accent)]">
+                        {t("本步任务", "This step")}
+                      </div>
+                      <p className="mt-1 text-[14px] leading-relaxed text-[var(--rs-ink-2)]">
+                        {currentStepTask}
+                      </p>
+                    </div>
+                  )}
 
                   <WikiContent
                     content={currentPage.content}

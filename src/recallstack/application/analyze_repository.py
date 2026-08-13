@@ -30,6 +30,7 @@ from recallstack.learning.question_generator import QuestionGenerator
 from recallstack.learning.stale import compute_changed_paths, mark_stale_for_changed_files
 from recallstack.learning.wiki_generator import build_wiki_payload
 from recallstack.security import SecurityError, validate_git_url, validate_local_path
+from repowiki.core.models import ProjectContext
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +151,7 @@ class AnalyzeRepositoryService:
             and (existing.wiki_pages or {}).get("pages")
         ):
             logger.info("idempotent hit for %s@%s", repo.id, commit_sha)
+            self._save_version_file_texts(existing, project)
             return existing
 
         old_version = self.store.get_latest_version(repo.id)
@@ -340,6 +342,7 @@ class AnalyzeRepositoryService:
             # Use a lightweight sidecar table alternative: encode in version by separate file not needed for MVP;
             # recompute from concepts is enough for stale next time if we persist hashes in JSON file under data/.
             self._save_version_file_hashes(version, file_hashes)
+            self._save_version_file_texts(version, project)
 
             version.status = "ready"
             version.completed_at = utcnow()
@@ -502,3 +505,13 @@ class AnalyzeRepositoryService:
             return json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return {}
+
+    def _save_version_file_texts(self, version: RepositoryVersion, project: ProjectContext) -> None:
+        from recallstack.learning.code_loader import save_version_file_texts
+
+        texts = {
+            f.path: (f.content or f.preview or "")
+            for f in project.files
+            if (f.content or f.preview)
+        }
+        save_version_file_texts(version.id, texts)

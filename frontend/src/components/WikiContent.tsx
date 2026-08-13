@@ -78,6 +78,8 @@ export default function WikiContent({
   peekRef.current = peek;
 
   // Clicks inside rendered HTML: source citations and internal wiki links.
+  // Bind even when repositoryId is briefly undefined — a missing id must still
+  // open SourcePeek so the reader sees an error instead of a dead chip.
   useEffect(() => {
     const root = ref.current;
     if (!root) return;
@@ -93,15 +95,20 @@ export default function WikiContent({
       });
     }
 
+    function togglePeek(refEl: HTMLElement) {
+      const value = refEl.getAttribute("data-ref") || "";
+      if (peekRef.current?.reference === value) closePeek();
+      else openPeek(refEl, value);
+    }
+
     function handleClick(e: MouseEvent) {
       const target = e.target as HTMLElement;
 
       const refEl = target.closest?.("[data-ref]") as HTMLElement | null;
-      if (refEl && repositoryId) {
+      if (refEl && root.contains(refEl)) {
         e.preventDefault();
-        const value = refEl.getAttribute("data-ref") || "";
-        if (peekRef.current?.reference === value) closePeek();
-        else openPeek(refEl, value);
+        e.stopPropagation();
+        togglePeek(refEl);
         return;
       }
 
@@ -121,9 +128,22 @@ export default function WikiContent({
       }
     }
 
+    function handleKey(e: KeyboardEvent) {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      const target = e.target as HTMLElement;
+      const refEl = target.closest?.("[data-ref]") as HTMLElement | null;
+      if (!refEl || !root.contains(refEl)) return;
+      e.preventDefault();
+      togglePeek(refEl);
+    }
+
     root.addEventListener("click", handleClick);
-    return () => root.removeEventListener("click", handleClick);
-  }, [repositoryId, onNavigatePage, closePeek, blocks]);
+    root.addEventListener("keydown", handleKey);
+    return () => {
+      root.removeEventListener("click", handleClick);
+      root.removeEventListener("keydown", handleKey);
+    };
+  }, [onNavigatePage, closePeek, blocks]);
 
   // Selection toolbar — "look this up in the wiki".
   useEffect(() => {
@@ -216,7 +236,6 @@ export default function WikiContent({
       </article>
 
       {peek &&
-        repositoryId &&
         createPortal(
           <SourcePeek
             repositoryId={repositoryId}

@@ -4,7 +4,7 @@ import { tNow, useT } from "../lib/i18n";
 import { recallstackApi } from "../lib/recallstackApi";
 
 interface Props {
-  repositoryId: string;
+  repositoryId?: string;
   reference: string;
   onClose: () => void;
 }
@@ -82,6 +82,10 @@ export default function SourcePeek({ repositoryId, reference, onClose }: Props) 
     let cancelled = false;
     setCode(null);
     setError(null);
+    if (!repositoryId) {
+      setError(tNow("找不到工作副本里的这个文件", "This file is not in the scanned working copy."));
+      return;
+    }
     (async () => {
       try {
         const res = await recallstackApi.sourceSnippet({
@@ -94,7 +98,10 @@ export default function SourcePeek({ repositoryId, reference, onClose }: Props) 
         setCode(res.content);
         setRange({ start: res.start_line, end: res.end_line });
       } catch (e: unknown) {
-        if (!cancelled) setError(e instanceof Error ? e.message : tNow("无法读取源码", "Could not read source"));
+        if (!cancelled) {
+          const fallback = tNow("找不到工作副本里的这个文件", "This file is not in the scanned working copy.");
+          setError(e instanceof Error && e.message ? e.message : fallback);
+        }
       }
     })();
     return () => {

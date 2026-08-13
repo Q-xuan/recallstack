@@ -47,6 +47,16 @@ def _clone_url(url: str) -> str:
     return f"https://{host}/{owner}/{repo}.git"
 
 
+def cached_clone_path(url: str) -> Path | None:
+    """Return the on-disk clone cache for a git URL, if it already exists."""
+    parsed = parse_git_url(url)
+    if not parsed:
+        return None
+    host, owner, repo = parsed
+    dest = _CLONE_DIR / host / owner / repo
+    return dest if dest.is_dir() else None
+
+
 def ingest_github(
     url: str,
     max_file_size: int = 200 * 1024,

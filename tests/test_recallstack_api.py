@@ -254,6 +254,141 @@ def test_source_preview_reads_a_nested_file(client: TestClient):
     assert "def main" in r.json()["content"] or "boot" in r.json()["content"]
 
 
+def test_source_preview_serves_scanned_text_without_working_copy(client: TestClient, monkeypatch):
+    """GitHub/cloned repos have no local path; peek must use the analyze cache."""
+    import shutil
+
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    repo_id = _analyzed_repo(client)
+    fixture = Path(client.fixture_repo)  # type: ignore[attr-defined]
+    shutil.rmtree(fixture)
+
+    r = client.get(
+        "/api/recallstack/source",
+        params={"repository_id": repo_id, "path": "README.md", "start_line": 1, "end_line": 2},
+    )
+    assert r.status_code == 200, r.text
+    assert "Fixture" in r.json()["content"] or "Demo" in r.json()["content"]
+
+
+def test_source_preview_github_repo_uses_scan_cache(client: TestClient, monkeypatch):
+    from recallstack.db.models import Repository
+    from recallstack.db.session import session_scope
+
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    repo_id = _analyzed_repo(client)
+    with session_scope() as session:
+        row = session.get(Repository, repo_id)
+        assert row is not None
+        row.source_type = "github"
+        row.source_location = "https://github.com/example/fixture"
+        session.commit()
+
+    r = client.get(
+        "/api/recallstack/source",
+        params={"repository_id": repo_id, "path": "README.md", "start_line": 1, "end_line": 48},
+    )
+    assert r.status_code == 200, r.text
+    assert "Fixture" in r.json()["content"] or "Demo" in r.json()["content"]
+
+
+def test_source_preview_missing_file_is_chinese_error(client: TestClient, monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    repo_id = _analyzed_repo(client)
+    r = client.get(
+        "/api/recallstack/source",
+        params={"repository_id": repo_id, "path": "no-such-file.py"},
+    )
+    assert r.status_code == 404, r.text
+    body = r.json()
+    message = body.get("detail", {}).get("message") or body.get("detail") or ""
+    assert "找不到工作副本里的这个文件" in str(message)
+
+
+def test_source_preview_mini_repo_readme(client: TestClient, monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    mini = Path("fixtures/mini_repo").resolve()
+    created = client.post(
+        "/api/recallstack/repositories",
+        json={"source_type": "local", "source_location": str(mini), "name": "mini"},
+    )
+    assert created.status_code == 200, created.text
+    repo_id = created.json()["id"]
+    analyzed = client.post(f"/api/recallstack/repositories/{repo_id}/analyze?wait=true")
+    assert analyzed.status_code == 200, analyzed.text
+
+    r = client.get(
+        "/api/recallstack/source",
+        params={"repository_id": repo_id, "path": "README.md", "start_line": 1, "end_line": 48},
+    )
+    assert r.status_code == 200, r.text
+    assert "Mini Repo" in r.json()["content"]
+
+
+def test_learning_path_api_omits_filler_and_states_mission(client: TestClient, monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    repo_id = _analyzed_repo(client)
+    path = client.get(f"/api/recallstack/repositories/{repo_id}/learning-path")
+    assert path.status_code == 200, path.text
+    body = path.json()
+    assert "走完这条路径" in body["description"]
+    slugs = [n["concept"]["slug"] for n in body["nodes"] if n.get("concept")]
+    titles = [n["concept"]["title"] for n in body["nodes"] if n.get("concept")]
+    assert all(not s.startswith(("module-", "focus-", "file-")) for s in slugs)
+    assert all("README.md" not in t and "Cargo.toml" not in t for t in titles)
+    assert any("两句话" in (n.get("reason") or "") for n in body["nodes"])
+
+
+def test_wiki_get_upgrades_legacy_concept_markdown(client: TestClient, monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    repo_id = _analyzed_repo(client)
+    from sqlalchemy import select
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from recallstack.db.models import RepositoryVersion
+    from recallstack.db.session import session_scope
+
+    old = (
+        "# 项目目标\n\n"
+        "> why-line\n\n"
+        "## 为什么重要\n\n"
+        "> why-line\n\n"
+        "## 这份仓库做什么\n\n"
+        "goal body\n\n"
+        "## 源码证据\n\n"
+        "- `README.md:1-48`\n\n"
+        "## 自测\n\n"
+        "1. x\n"
+    )
+    with session_scope() as session:
+        version = session.scalars(
+            select(RepositoryVersion)
+            .where(RepositoryVersion.repository_id == repo_id)
+            .order_by(RepositoryVersion.created_at.desc())
+        ).first()
+        assert version is not None
+        payload = dict(version.wiki_pages or {})
+        pages = []
+        for page in payload.get("pages") or []:
+            if page.get("id") == "concepts/project-goal":
+                pages.append({**page, "content": old})
+            else:
+                pages.append(dict(page))
+        payload["pages"] = pages
+        version.wiki_pages = payload
+        flag_modified(version, "wiki_pages")
+        session.commit()
+
+    wiki = client.get(f"/api/recallstack/repositories/{repo_id}/wiki")
+    assert wiki.status_code == 200, wiki.text
+    page = next(p for p in wiki.json()["pages"] if p["id"] == "concepts/project-goal")
+    assert "## 本步要你干什么" in page["content"]
+    assert "为什么重要" not in page["content"]
+    assert "点击展开 `README.md:1-48`" in page["content"]
+    assert "## 过关" in page["content"]
+    assert "## 先回到原理" in page["content"]
+
+
 def test_source_preview_refuses_secret_files(client: TestClient):
     # `path` is caller-supplied, so the endpoint cannot rely on concepts having
     # filtered it. It previously served any file inside the repository root.

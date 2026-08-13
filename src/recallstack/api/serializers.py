@@ -25,6 +25,13 @@ from recallstack.domain.schemas import (
     WikiPageOut,
     WikiSidebarItemOut,
 )
+from recallstack.learning.learning_contract import (
+    CORE_PATH_CAP,
+    is_filler_slug_title,
+    path_mission,
+    step_task_for_slug,
+    upgrade_legacy_concept_markdown,
+)
 
 
 def repo_out(repo: Repository) -> RepositoryOut:
@@ -100,13 +107,20 @@ def wiki_out(
     for p in payload.get("pages") or []:
         page_id = p.get("id") or ""
         concept = None
+        content = p.get("content") or ""
         if page_id.startswith("concepts/"):
-            concept = concept_by_slug.get(page_id.split("/", 1)[1])
+            slug = page_id.split("/", 1)[1]
+            concept = concept_by_slug.get(slug)
+            content = upgrade_legacy_concept_markdown(
+                content,
+                slug=slug,
+                title=(concept.title if concept else p.get("title")) or "",
+            )
         pages.append(
             WikiPageOut(
                 id=page_id,
                 title=p.get("title") or page_id,
-                content=p.get("content") or "",
+                content=content,
                 parent_id=p.get("parent_id") or "",
                 order=int(p.get("order") or 0),
                 concept_id=concept.id if concept else None,
@@ -138,20 +152,27 @@ def wiki_out(
 def path_out(path: LearningPath) -> LearningPathOut:
     nodes: list[LearningPathNodeOut] = []
     for n in path.nodes or []:
+        concept = getattr(n, "concept", None)
+        slug = concept.slug if concept else ""
+        title = concept.title if concept else ""
+        if is_filler_slug_title(slug, title):
+            continue
         nodes.append(
             LearningPathNodeOut(
                 id=n.id,
                 concept_id=n.concept_id,
-                position=n.position,
-                reason=n.reason,
-                concept=concept_out(n.concept) if getattr(n, "concept", None) else None,
+                position=len(nodes) + 1,
+                reason=step_task_for_slug(slug, title) if slug else (n.reason or ""),
+                concept=concept_out(concept) if concept else None,
             )
         )
+        if len(nodes) >= CORE_PATH_CAP:
+            break
     return LearningPathOut(
         id=path.id,
         repository_version_id=path.repository_version_id,
         title=path.title,
-        description=path.description,
+        description=path_mission(),
         estimated_minutes=path.estimated_minutes,
         nodes=nodes,
     )

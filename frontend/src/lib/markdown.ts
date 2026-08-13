@@ -27,8 +27,9 @@ export interface RenderedMarkdown {
   toc: TocEntry[];
 }
 
-/** Matches `src/foo/bar.py`, optionally with `:12` or `:12-40`. */
-const SOURCE_REF_RE = /^[A-Za-z0-9_@][A-Za-z0-9_./\\-]*\.[A-Za-z0-9]+(:\d+(-\d+)?)?$/;
+/** Matches `src/foo/bar.py` or `README.md`, optionally with `:12` or `:12-40`. */
+export const SOURCE_REF_RE =
+  /^(?:[A-Za-z0-9_.@-]+\/)*[A-Za-z0-9_.@-]+\.[A-Za-z0-9]+(?::\d+(?:-\d+)?)?$/;
 
 /** README chrome that should never render as raw tags in a wiki article. */
 const HTML_CHROME_RE = /<(div|picture|source|img)\b|srcset\s*=/i;

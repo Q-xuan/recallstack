@@ -765,45 +765,39 @@ def get_source_snippet(
     end_line: int | None = None,
     db: Session = Depends(get_db_session),
 ) -> dict[str, Any]:
-    """Return a short source snippet for a repository-relative path."""
+    """Return a short source snippet for a repository-relative path.
+
+    Uses scanned file text from the last analyze (so GitHub clones work), then
+    the local working copy / clone cache. Blocked files are never served.
+    """
     store = RepositoryStore(db)
     repo = store.get_repository(repository_id)
     if not repo:
         raise api_error(404, "repository_not_found", "Repository not found")
-    if repo.source_type != "local":
-        raise api_error(400, "unsupported", "Snippet preview currently supports local repos")
 
-    from recallstack.security import (
-        is_blocked_filename,
-        normalize_repo_path,
-        validate_local_path,
+    from recallstack.learning.code_loader import (
+        missing_working_copy_message,
+        resolve_file_text,
+        slice_lines,
     )
-
-    try:
-        root = validate_local_path(repo.source_location)
-    except SecurityError as exc:
-        raise api_error(400, exc.code, exc.message) from exc
+    from recallstack.security import is_blocked_filename, normalize_repo_path
 
     rel = normalize_repo_path(path)
-    if ".." in rel.split("/"):
+    if not rel or ".." in rel.split("/") or rel.startswith("/"):
         raise api_error(400, "path_escape", "Invalid path")
-    # `path` is caller-supplied, not restricted to paths some concept cited, so
-    # the block list has to be enforced here too. Without it this endpoint hands
-    # out .env files and private keys from anywhere inside the repository.
     if is_blocked_filename(rel):
         raise api_error(403, "blocked_file", "This file cannot be previewed")
-    file_path = (root / rel).resolve()
-    try:
-        file_path.relative_to(root)
-    except ValueError as exc:
-        raise api_error(400, "path_escape", "Path escapes repository") from exc
-    if not file_path.is_file():
-        raise api_error(404, "file_not_found", "File not found")
-    text = file_path.read_text(encoding="utf-8", errors="replace")
-    lines = text.splitlines()
-    s = max(1, start_line or 1)
-    e = min(len(lines), end_line or (s + 40))
-    snippet = "\n".join(lines[s - 1 : e])
+
+    version = store.get_latest_version(repository_id)
+    text = resolve_file_text(
+        source_type=repo.source_type,
+        source_location=repo.source_location,
+        rel_path=rel,
+        version_id=version.id if version else None,
+    )
+    if text is None:
+        raise api_error(404, "file_not_found", missing_working_copy_message())
+    snippet, s, e = slice_lines(text, start_line, end_line)
     return {
         "path": rel,
         "start_line": s,

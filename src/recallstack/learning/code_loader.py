@@ -1,15 +1,34 @@
-"""Safely load source snippets for hints and evidence UI (local repos only)."""
+"""Load source snippets for the wiki peek and learning hints.
+
+Prefers scanned file text persisted at analyze time so GitHub/cloned
+repos can still expand citations. Falls back to the local working copy
+or the GitHub clone cache. Secrets are never served.
+"""
 
 from __future__ import annotations
 
+import json
+import logging
 from pathlib import Path
 from typing import Any
 
+from recallstack.learning.i18n import t
 from recallstack.security import (
     is_blocked_filename,
     normalize_repo_path,
     validate_local_path,
 )
+
+logger = logging.getLogger(__name__)
+
+_VERSION_FILES_DIR = Path("data") / "version_files"
+
+
+def missing_working_copy_message() -> str:
+    return t(
+        "This file is not in the scanned working copy.",
+        "找不到工作副本里的这个文件",
+    )
 
 
 def resolve_local_repo_root(source_location: str) -> Path | None:
@@ -18,6 +37,111 @@ def resolve_local_repo_root(source_location: str) -> Path | None:
         return validate_local_path(source_location)
     except Exception:  # noqa: BLE001 — treat any security/path error as unavailable
         return None
+
+
+def version_files_path(version_id: str) -> Path:
+    return _VERSION_FILES_DIR / f"{version_id}.json"
+
+
+def save_version_file_texts(version_id: str, files: dict[str, str]) -> None:
+    """Persist scanned file texts keyed by repo-relative path."""
+    _VERSION_FILES_DIR.mkdir(parents=True, exist_ok=True)
+    clean: dict[str, str] = {}
+    for raw_path, text in files.items():
+        path = normalize_repo_path(raw_path)
+        if not path or not text or is_blocked_filename(path):
+            continue
+        if ".." in path.split("/") or path.startswith("/"):
+            continue
+        clean[path] = text
+    version_files_path(version_id).write_text(
+        json.dumps(clean, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def load_version_file_texts(version_id: str) -> dict[str, str]:
+    path = version_files_path(version_id)
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(k): str(v) for k, v in data.items() if isinstance(k, str) and isinstance(v, str)}
+
+
+def _read_under(root: Path, rel: str) -> str | None:
+    if not root.is_dir():
+        return None
+    root = root.resolve()
+    file_path = (root / rel).resolve()
+    try:
+        file_path.relative_to(root)
+    except ValueError:
+        return None
+    if not file_path.is_file():
+        return None
+    try:
+        return file_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+def _github_clone_root(source_location: str) -> Path | None:
+    try:
+        from repowiki.ingest.github import cached_clone_path
+
+        return cached_clone_path(source_location)
+    except Exception:  # noqa: BLE001
+        logger.debug("github clone lookup failed for %s", source_location, exc_info=True)
+        return None
+
+
+def resolve_file_text(
+    *,
+    source_type: str,
+    source_location: str,
+    rel_path: str,
+    version_id: str | None = None,
+) -> str | None:
+    """Return full file text from scan cache, local disk, or github clone cache."""
+    rel = normalize_repo_path(rel_path)
+    if not rel or ".." in rel.split("/") or rel.startswith("/"):
+        return None
+    if is_blocked_filename(rel):
+        return None
+
+    if version_id:
+        cached = load_version_file_texts(version_id).get(rel)
+        if cached:
+            return cached
+
+    if source_type == "local":
+        root = resolve_local_repo_root(source_location)
+        if root:
+            text = _read_under(root, rel)
+            if text is not None:
+                return text
+
+    clone = _github_clone_root(source_location)
+    if clone:
+        return _read_under(clone, rel)
+    return None
+
+
+def slice_lines(text: str, start_line: int | None, end_line: int | None) -> tuple[str, int, int]:
+    lines = text.splitlines()
+    if not lines:
+        return "", 1, 1
+    s = max(1, start_line or 1)
+    s = min(s, len(lines))
+    e = min(len(lines), end_line or (s + 40))
+    e = max(e, s)
+    snippet = "\n".join(lines[s - 1 : e])
+    return snippet, s, e
 
 
 def load_code_lookup(

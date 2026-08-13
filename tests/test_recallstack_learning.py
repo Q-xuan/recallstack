@@ -120,6 +120,32 @@ def test_learning_path_ordering():
     order = [n.concept_slug for n in path.nodes]
     assert order.index("project-goal") < order.index("application-entry")
     assert order.index("application-entry") < order.index("data-persistence")
+    assert all(n.reason and "Ordered by prerequisites" not in n.reason for n in path.nodes)
+    assert "folder tree" in path.description or "不靠目录" in path.description
+
+
+def test_learning_path_excludes_file_inventory_filler():
+    concepts = [
+        ConceptDraft(slug="project-goal", title="项目目标", importance=1.0),
+        ConceptDraft(slug="application-entry", title="应用入口", importance=0.9),
+        ConceptDraft(slug="module-readme-md", title="模块：README.md", importance=0.8),
+        ConceptDraft(slug="module-cargo-toml", title="模块: Cargo.toml", importance=0.8),
+        ConceptDraft(slug="focus-init-py", title="聚焦：__init__.py", importance=0.7),
+        ConceptDraft(slug="file-package-json", title="Key file: package.json", importance=0.6),
+        ConceptDraft(slug="data-persistence", title="持久化", importance=0.5),
+    ]
+    path = PathBuilder().build(concepts)
+    slugs = [n.concept_slug for n in path.nodes]
+    assert "project-goal" in slugs
+    assert "application-entry" in slugs
+    assert "data-persistence" in slugs
+    assert "module-readme-md" not in slugs
+    assert "module-cargo-toml" not in slugs
+    assert "focus-init-py" not in slugs
+    assert "file-package-json" not in slugs
+    assert len(slugs) <= 8
+    goal = next(n for n in path.nodes if n.concept_slug == "project-goal")
+    assert "两句话" in goal.reason or "two sentences" in goal.reason.lower()
 
 
 def test_hint_level_increments_and_no_skip():
