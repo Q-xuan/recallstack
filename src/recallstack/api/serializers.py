@@ -28,6 +28,7 @@ from recallstack.domain.schemas import (
 from recallstack.learning.i18n import content_lang
 from recallstack.learning.learning_contract import (
     CORE_PATH_CAP,
+    drop_duplicate_entry_slug,
     is_filler_slug_title,
     is_web_filler_path_slug,
     pass_gate,
@@ -237,12 +238,25 @@ def wiki_out(
     )
 
 
-def path_out(path: LearningPath) -> LearningPathOut:
+def path_out(
+    path: LearningPath,
+    file_texts: dict[str, str] | None = None,
+) -> LearningPathOut:
     """GET-upgrade the learning path: rank, filter fillers, rebuild worksheets.
 
     Concept wiki pages are untouched. Refresh is enough when source_references
-    already exist; re-scan only if refs are empty or point at the wrong file.
+    already exist and the scan store still has the file text (so a ``:1`` chip
+    can be resolved to ``start_turn``). Re-scan only if refs are empty or
+    point at the wrong file.
     """
+    if file_texts is None:
+        version_id = getattr(path, "repository_version_id", None)
+        if version_id:
+            from recallstack.learning.code_loader import load_version_file_texts
+
+            file_texts = load_version_file_texts(version_id)
+    file_texts = file_texts or {}
+
     candidates: list[tuple[int, str, object, object]] = []
     for n in path.nodes or []:
         concept = getattr(n, "concept", None)
@@ -256,6 +270,10 @@ def path_out(path: LearningPath) -> LearningPathOut:
         ):
             continue
         candidates.append((path_rank(slug), slug or "", n, concept))
+    selected_slugs = {item[1] for item in candidates}
+    candidates = [
+        item for item in candidates if not drop_duplicate_entry_slug(item[1], selected_slugs)
+    ]
     candidates.sort(key=lambda item: (item[0], item[1]))
 
     nodes: list[LearningPathNodeOut] = []
@@ -269,9 +287,11 @@ def path_out(path: LearningPath) -> LearningPathOut:
                 reason=step_task_for_slug(slug, title) if slug else (n.reason or ""),
                 concept=concept_out(concept) if concept else None,
                 principles=path_principles(concept) if concept else "",
-                evidence_chip=path_evidence_chip(concept) if concept else None,
+                evidence_chip=path_evidence_chip(concept, file_texts=file_texts)
+                if concept
+                else None,
                 pass_gate=pass_gate(concept) if concept else "",
-                worksheet=path_worksheet(concept) if concept else "",
+                worksheet=path_worksheet(concept, file_texts=file_texts) if concept else "",
             )
         )
     return LearningPathOut(

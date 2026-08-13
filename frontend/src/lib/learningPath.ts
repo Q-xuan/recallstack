@@ -190,7 +190,11 @@ export function corePathNodes<
     if (isWebFiller(slug, wikiId)) return false;
     return true;
   });
-  const ranked = [...filtered].sort((a, b) => {
+  const slugs = new Set(filtered.map((n) => n.concept?.slug || ""));
+  const deduped = slugs.has("entry-and-boot")
+    ? filtered.filter((n) => n.concept?.slug !== "application-entry")
+    : filtered;
+  const ranked = [...deduped].sort((a, b) => {
     const sa = a.concept?.slug || "";
     const sb = b.concept?.slug || "";
     const d = pathRank(sa) - pathRank(sb);

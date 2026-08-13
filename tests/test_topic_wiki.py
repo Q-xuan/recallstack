@@ -153,7 +153,9 @@ def test_grok_learning_path_is_topics_not_web_app_syllabus():
     assert "request-routing" not in path_slugs
     assert any(s not in {"project-goal", "getting-started"} for s in path_slugs)
     if "entry-and-boot" in path_slugs and "agent-loop" in path_slugs:
-        assert path_slugs.index("entry-and-boot") < path_slugs.index("agent-loop")
+        assert path_slugs[0] == "project-goal"
+        assert path_slugs[1] == "entry-and-boot"
+        assert path_slugs[2] == "agent-loop"
     if "agent-loop" in path_slugs:
         assert path_slugs.index("project-goal") < path_slugs.index("agent-loop")
         crate_leaves = [s for s in path_slugs if s in {"acp-protocol", "pty-control", "codebase-graph", "headless-modes"}]

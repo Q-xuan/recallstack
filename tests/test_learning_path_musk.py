@@ -80,6 +80,12 @@ def test_filler_slugs_excluded_from_path():
             wiki_page_id="topics/entry-and-boot",
         ),
         ConceptDraft(
+            slug="application-entry",
+            title="应用入口",
+            importance=0.94,
+            wiki_page_id="topics/application-entry",
+        ),
+        ConceptDraft(
             slug="agent-loop",
             title="Agent Loop",
             importance=0.9,
@@ -135,8 +141,8 @@ def test_filler_slugs_excluded_from_path():
     assert not is_core_path_concept(next(c for c in concepts if c.slug == "request-routing"))
     path = PathBuilder().build(concepts)
     slugs = [n.concept_slug for n in path.nodes]
-    assert slugs[0] == "project-goal"
-    assert slugs.index("entry-and-boot") < slugs.index("agent-loop")
+    assert slugs[:3] == ["project-goal", "entry-and-boot", "agent-loop"]
+    assert "application-entry" not in slugs
     assert slugs.index("agent-loop") < slugs.index("tool-system")
     assert "caching" not in slugs
     assert "request-routing" not in slugs
@@ -268,10 +274,9 @@ def test_path_out_rebuilds_worksheet_on_get(monkeypatch):
     )
     out = path_out(path)
     slugs = [n.concept.slug for n in out.nodes if n.concept]
-    assert slugs[0] == "project-goal"
+    assert slugs[:3] == ["project-goal", "entry-and-boot", "agent-loop"]
     assert "caching" not in slugs
     assert "request-routing" not in slugs
-    assert slugs.index("entry-and-boot") < slugs.index("agent-loop")
     loop_node = next(n for n in out.nodes if n.concept and n.concept.slug == "agent-loop")
     assert loop_node.reason.startswith("打开证据")
     assert "不变量" in loop_node.principles
@@ -294,3 +299,89 @@ def test_step_task_is_action_not_了解模块(monkeypatch):
     assert "了解" not in task
     assert "打开" in task
     assert "start_turn" in task
+
+
+_APP_RS_STUCK_AT_LINE_1 = """\
+mod pager;
+pub struct App {
+    pager: Pager,
+}
+
+impl App {
+    pub fn new() -> Self {
+        Self { pager: Pager::new() }
+    }
+
+    pub fn start_turn(&mut self) {
+        self.call_model();
+    }
+}
+"""
+
+
+def test_evidence_chip_resolves_symbol_line_from_stored_file(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    draft = ConceptDraft(
+        slug="agent-loop",
+        title="Agent Loop",
+        wiki_page_id="topics/agent-loop",
+        source_references=[
+            SourceReference(path="crates/tui/src/app.rs", start_line=1),
+        ],
+    )
+    stuck = path_evidence_chip(draft)
+    assert stuck is not None
+    assert stuck.endswith("start_turn")
+    assert ":1 " in stuck
+
+    texts = {"crates/tui/src/app.rs": _APP_RS_STUCK_AT_LINE_1}
+    chip = path_evidence_chip(draft, file_texts=texts)
+    assert chip == "crates/tui/src/app.rs:11 start_turn"
+    assert ":1 " not in chip
+    worksheet = path_worksheet(draft, file_texts=texts)
+    assert "`crates/tui/src/app.rs:11 start_turn`" in worksheet
+    assert worksheet.count("## 只看这一处证据") == 1
+
+
+def test_path_out_get_upgrade_resolves_line_from_scan_store(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    loop = SimpleNamespace(
+        id="c-loop",
+        repository_id="r",
+        repository_version_id="v",
+        slug="agent-loop",
+        title="Agent Loop",
+        description="",
+        difficulty=2,
+        importance=0.9,
+        source_references=[{"path": "crates/tui/src/app.rs", "start_line": 1}],
+        content_hash="",
+        stale=False,
+        why_learn="",
+        estimated_minutes=15,
+        wiki_page_id="topics/agent-loop",
+    )
+    path = SimpleNamespace(
+        id="p1",
+        repository_version_id="v",
+        title="路径",
+        description="",
+        estimated_minutes=10,
+        nodes=[
+            SimpleNamespace(
+                id="n1",
+                concept_id="c-loop",
+                position=1,
+                reason="old",
+                concept=loop,
+            )
+        ],
+    )
+    out = path_out(path, file_texts={"crates/tui/src/app.rs": _APP_RS_STUCK_AT_LINE_1})
+    node = out.nodes[0]
+    assert node.evidence_chip == "crates/tui/src/app.rs:11 start_turn"
+    assert "`crates/tui/src/app.rs:11 start_turn`" in node.worksheet
+    assert ":1 start_turn" not in node.worksheet
+    assert "## 本步要你干什么" not in upgrade_legacy_concept_markdown(
+        node.worksheet, slug="agent-loop", title="Agent Loop"
+    )

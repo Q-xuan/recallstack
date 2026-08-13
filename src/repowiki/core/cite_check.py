@@ -101,15 +101,7 @@ class CiteIndex:
 
     def line_of_symbol(self, path: str, symbol: str) -> int:
         """First source line of ``symbol`` in ``path``, else 0."""
-        text = self.contents.get(path) or ""
-        name = (symbol or "").strip()
-        if not text or len(name) < 2:
-            return 0
-        pat = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(name) + r"(?![A-Za-z0-9_])")
-        for i, line in enumerate(text.splitlines(), 1):
-            if pat.search(line):
-                return i
-        return 0
+        return line_of_symbol_in_text(self.contents.get(path) or "", symbol)
 
 
 @dataclass
@@ -383,6 +375,21 @@ def _clamp_citation(cite: Citation, index: CiteIndex) -> Citation | None:
         cite.end_line = 0
     cite.note = sanitize_text(cite.note, index)
     return cite
+
+
+def line_of_symbol_in_text(text: str, symbol: str) -> int:
+    """First source line of ``symbol`` in ``text``, else 0.
+
+    Same word-boundary scan cite-check uses when a citation is stuck at line 1.
+    """
+    name = (symbol or "").strip()
+    if not text or len(name) < 2:
+        return 0
+    pat = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(name) + r"(?![A-Za-z0-9_])")
+    for i, line in enumerate(text.splitlines(), 1):
+        if pat.search(line):
+            return i
+    return 0
 
 
 def _normalize_path(path: str) -> str:

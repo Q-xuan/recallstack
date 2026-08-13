@@ -7,6 +7,7 @@ from typing import Any
 
 from recallstack.domain.schemas import ConceptDraft, SourceReference
 from recallstack.learning.i18n import t
+from repowiki.core.cite_check import line_of_symbol_in_text
 
 # Kept as step-task templates only. Do NOT use this as the default learning
 # path for every repo — that was a generic web-app syllabus.
@@ -222,6 +223,11 @@ def is_web_filler_path_slug(slug: str, wiki_page_id: str | None = None) -> bool:
 def path_rank(slug: str) -> int:
     """Lower is earlier: trunk, then branches, then leaves."""
     return _PATH_RANK.get(slug or "", 80)
+
+
+def drop_duplicate_entry_slug(slug: str, selected_slugs: set[str]) -> bool:
+    """``application-entry`` is the same trunk slot as ``entry-and-boot``."""
+    return slug == "application-entry" and "entry-and-boot" in selected_slugs
 
 
 def is_core_path_concept(concept: ConceptDraft) -> bool:
@@ -654,36 +660,93 @@ def _pick_hint_ref(refs: list[SourceReference], suffixes: tuple[str, ...]) -> So
     return None
 
 
-def path_evidence_chip(concept: Any) -> str | None:
+def _best_real_line_ref(refs: list[SourceReference]) -> SourceReference | None:
+    scored: list[tuple[int, int, SourceReference]] = []
+    for ref in refs:
+        line = ref.start_line or 0
+        if line <= 1:
+            continue
+        real_sym = 1 if (ref.symbol and not _is_dummy_symbol(ref.symbol)) else 0
+        scored.append((real_sym, line, ref))
+    if not scored:
+        return None
+    scored.sort(key=lambda item: (-item[0], -item[1]))
+    return scored[0][2]
+
+
+def _file_text_for(file_texts: dict[str, str] | None, path: str) -> str:
+    if not file_texts or not path:
+        return ""
+    key = path.replace("\\", "/")
+    if key in file_texts:
+        return file_texts[key]
+    matches = [p for p in file_texts if p.endswith("/" + key) or p == key]
+    if len(matches) == 1:
+        return file_texts[matches[0]]
+    return ""
+
+
+def _resolve_symbol_line(
+    path: str,
+    line: int,
+    symbol: str | None,
+    file_texts: dict[str, str] | None,
+) -> int:
+    """If the chip is stuck at :1, look up ``symbol`` in the scan store."""
+    start = int(line) if line else 1
+    name = (symbol or "").strip()
+    if start > 1 or not name or _is_dummy_symbol(name):
+        return start
+    found = line_of_symbol_in_text(_file_text_for(file_texts, path), name)
+    return found if found > 1 else start
+
+
+def path_evidence_chip(
+    concept: Any,
+    file_texts: dict[str, str] | None = None,
+) -> str | None:
     """Exactly one ``path:line Symbol`` chip that proves the principle."""
     slug = getattr(concept, "slug", "") or ""
     refs = _source_refs_of(concept)
     hint = _EVIDENCE_HINTS.get(slug)
-    if hint:
-        suffixes, symbol = hint
-        picked = _pick_hint_ref(refs, suffixes)
-        if picked is not None:
-            return _format_path_chip(picked.path, picked.start_line or 1, symbol or picked.symbol)
-    for ref in refs:
-        if _is_dummy_symbol(ref.symbol or ""):
-            continue
-        if ref.start_line and ref.symbol:
-            return _format_path_chip(ref.path, ref.start_line, ref.symbol)
-    for ref in refs:
-        if ref.start_line:
-            return _format_path_chip(ref.path, ref.start_line, ref.symbol)
-    if refs:
-        return _format_path_chip(refs[0].path, refs[0].start_line or 1, refs[0].symbol)
-    return None
+    suffixes, hint_sym = hint if hint else ((), "")
+    picked = _pick_hint_ref(refs, suffixes) if suffixes else None
+    if picked is None:
+        picked = _best_real_line_ref(refs)
+    if picked is None and refs:
+        picked = refs[0]
+    if picked is None:
+        return None
+
+    symbol = ""
+    if picked.symbol and not _is_dummy_symbol(picked.symbol):
+        symbol = picked.symbol.strip()
+    if hint_sym and not _is_dummy_symbol(hint_sym):
+        symbol = hint_sym
+    line = _resolve_symbol_line(
+        picked.path, picked.start_line or 1, symbol, file_texts
+    )
+    if line <= 1:
+        alt = _best_real_line_ref(refs)
+        if alt is not None and (alt.start_line or 0) > 1:
+            alt_sym = symbol
+            if alt.symbol and not _is_dummy_symbol(alt.symbol):
+                alt_sym = alt.symbol.strip() or alt_sym
+            return _format_path_chip(alt.path, alt.start_line or 1, alt_sym)
+    return _format_path_chip(picked.path, line, symbol)
 
 
-def path_worksheet(concept: Any, project_name: str = "") -> str:
+def path_worksheet(
+    concept: Any,
+    project_name: str = "",
+    file_texts: dict[str, str] | None = None,
+) -> str:
     """Learning-path page only. Never mixed into the reading wiki."""
     title = getattr(concept, "title", None) or getattr(concept, "slug", "") or ""
     slug = getattr(concept, "slug", "") or ""
     task = step_task_for_slug(slug, title)
     principles = path_principles(concept, project_name)
-    chip = path_evidence_chip(concept)
+    chip = path_evidence_chip(concept, file_texts=file_texts)
     gate = pass_gate(concept)
     evidence_body = (
         f"`{chip}`"

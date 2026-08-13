@@ -10,6 +10,7 @@ from recallstack.domain.schemas import (
 from recallstack.learning.i18n import t
 from recallstack.learning.learning_contract import (
     CORE_PATH_CAP,
+    drop_duplicate_entry_slug,
     is_core_path_concept,
     is_filler_concept,
     path_mission,
@@ -35,6 +36,8 @@ class PathBuilder:
             selected = list(concepts)
 
         selected.sort(key=lambda c: (path_rank(c.slug), -c.importance, c.slug))
+        slugs = {c.slug for c in selected}
+        selected = [c for c in selected if not drop_duplicate_entry_slug(c.slug, slugs)]
         selected = selected[:CORE_PATH_CAP]
 
         nodes: list[LearningPathNodeDraft] = []
