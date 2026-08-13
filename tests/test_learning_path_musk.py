@@ -1,0 +1,296 @@
+"""First-principles learning-path worksheet (Musk rubric), not the reading wiki."""
+
+from __future__ import annotations
+
+import re
+from types import SimpleNamespace
+
+from recallstack.api.serializers import path_out
+from recallstack.domain.schemas import ConceptDraft, SourceReference
+from recallstack.learning.learning_contract import (
+    is_core_path_concept,
+    path_evidence_chip,
+    path_rank,
+    path_worksheet,
+    step_task_for_slug,
+    upgrade_legacy_concept_markdown,
+)
+from recallstack.learning.path_builder import PathBuilder
+from recallstack.learning.wiki_generator import append_concept_pages
+from repowiki.core.wiki_builder import Wiki
+
+_PATH_CHIP_RE = re.compile(
+    r"`((?:[A-Za-z0-9_.@-]+/)*[A-Za-z0-9_.@-]+\.[A-Za-z0-9]+)(?::\d+(?:-\d+)?)?(?:\s+[^`]+)?`"
+)
+
+
+def _loop_draft() -> ConceptDraft:
+    return ConceptDraft(
+        slug="agent-loop",
+        title="Agent Loop",
+        description="一轮对话。",
+        wiki_page_id="topics/agent-loop",
+        source_references=[
+            SourceReference(
+                path="crates/tui/src/app.rs",
+                start_line=142,
+                symbol="start_turn",
+            ),
+            SourceReference(path="crates/agent/src/loop.rs", start_line=1, symbol="agent_loop"),
+        ],
+    )
+
+
+def test_path_worksheet_has_four_headings_and_one_chip(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    text = path_worksheet(_loop_draft())
+    for heading in ("## 本步要你干什么", "## 先回到原理", "## 只看这一处证据", "## 过关"):
+        assert heading in text
+    assert "## 架构图" not in text
+    assert "## 核心子系统" not in text
+    assert "```mermaid" not in text
+    assert "您" not in text
+    assert "点击展开" not in text
+    assert "了解模块" not in text
+    assert "start_turn 之后调模型" in text
+    assert "不变量" in text
+    chips = _PATH_CHIP_RE.findall(text)
+    assert len(chips) == 1
+    chip = path_evidence_chip(_loop_draft())
+    assert chip == "crates/tui/src/app.rs:142 start_turn"
+    assert f"`{chip}`" in text
+    assert "调模型" in text.split("## 过关", 1)[1]
+
+
+def test_path_rank_trunk_before_leaves():
+    assert path_rank("project-goal") < path_rank("entry-and-boot")
+    assert path_rank("entry-and-boot") < path_rank("agent-loop")
+    assert path_rank("agent-loop") < path_rank("tool-system")
+    assert path_rank("tool-system") < path_rank("acp-protocol")
+    assert path_rank("agent-loop") < path_rank("codebase-graph")
+
+
+def test_filler_slugs_excluded_from_path():
+    concepts = [
+        ConceptDraft(slug="project-goal", title="项目目标", importance=1.0),
+        ConceptDraft(
+            slug="entry-and-boot",
+            title="入口",
+            importance=0.95,
+            wiki_page_id="topics/entry-and-boot",
+        ),
+        ConceptDraft(
+            slug="agent-loop",
+            title="Agent Loop",
+            importance=0.9,
+            wiki_page_id="topics/agent-loop",
+        ),
+        ConceptDraft(slug="caching", title="缓存", importance=0.99),
+        ConceptDraft(slug="request-routing", title="请求路由", importance=0.99),
+        ConceptDraft(slug="module-foo", title="模块：foo", importance=0.8),
+        ConceptDraft(
+            slug="acp-protocol",
+            title="ACP",
+            importance=0.4,
+            wiki_page_id="topics/acp-protocol",
+        ),
+        ConceptDraft(
+            slug="codebase-graph",
+            title="图谱",
+            importance=0.4,
+            wiki_page_id="topics/codebase-graph",
+        ),
+        ConceptDraft(
+            slug="pty-control",
+            title="PTY",
+            importance=0.4,
+            wiki_page_id="topics/pty-control",
+        ),
+        ConceptDraft(
+            slug="headless-modes",
+            title="Headless",
+            importance=0.4,
+            wiki_page_id="topics/headless-modes",
+        ),
+        ConceptDraft(
+            slug="tool-system",
+            title="工具",
+            importance=0.85,
+            wiki_page_id="topics/tool-system",
+        ),
+        ConceptDraft(
+            slug="terminal-ui",
+            title="TUI",
+            importance=0.8,
+            wiki_page_id="topics/terminal-ui",
+        ),
+        ConceptDraft(
+            slug="context-assembly",
+            title="上下文",
+            importance=0.75,
+            wiki_page_id="topics/context-assembly",
+        ),
+    ]
+    assert not is_core_path_concept(next(c for c in concepts if c.slug == "caching"))
+    assert not is_core_path_concept(next(c for c in concepts if c.slug == "request-routing"))
+    path = PathBuilder().build(concepts)
+    slugs = [n.concept_slug for n in path.nodes]
+    assert slugs[0] == "project-goal"
+    assert slugs.index("entry-and-boot") < slugs.index("agent-loop")
+    assert slugs.index("agent-loop") < slugs.index("tool-system")
+    assert "caching" not in slugs
+    assert "request-routing" not in slugs
+    assert "module-foo" not in slugs
+    assert len(slugs) <= 8
+    assert "agent-loop" in slugs
+    assert slugs.index("agent-loop") < 4
+
+
+def test_concept_wiki_pages_stay_handbook(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    wiki = Wiki(project_name="grok-study", pages=[], sidebar=[])
+    draft = _loop_draft()
+    page = append_concept_pages(wiki, [draft]).get_page("concepts/agent-loop")
+    assert page is not None
+    assert "## 它是什么" in page.content
+    assert "## 它在系统里的位置" in page.content
+    assert "## 本步要你干什么" not in page.content
+    assert "## 先回到原理" not in page.content
+    assert "## 只看这一处证据" not in page.content
+    assert "## 过关" not in page.content
+    assert "start_turn 之后调模型" not in page.content
+
+
+def test_upgrade_legacy_concept_markdown_still_strips_path_homework(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    mixed = path_worksheet(_loop_draft())
+    upgraded = upgrade_legacy_concept_markdown(mixed, slug="agent-loop", title="Agent Loop")
+    assert "## 本步要你干什么" not in upgraded
+    assert "## 过关" not in upgraded
+    assert "## 只看这一处证据" not in upgraded
+    assert "## 先回到原理" not in upgraded
+    assert "## 它是什么" in upgraded or "## 它在系统里的位置" in upgraded
+
+
+def test_path_out_rebuilds_worksheet_on_get(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+
+    def concept(**kw):
+        base = dict(
+            id="c1",
+            repository_id="r",
+            repository_version_id="v",
+            slug="agent-loop",
+            title="Agent Loop",
+            description="old handbook",
+            difficulty=2,
+            importance=0.9,
+            source_references=[
+                {
+                    "path": "crates/tui/src/app.rs",
+                    "start_line": 142,
+                    "symbol": "start_turn",
+                }
+            ],
+            content_hash="",
+            stale=False,
+            why_learn="",
+            estimated_minutes=15,
+            wiki_page_id="topics/agent-loop",
+        )
+        base.update(kw)
+        return SimpleNamespace(**base)
+
+    loop = concept()
+    cache = concept(
+        id="c2",
+        slug="caching",
+        title="缓存",
+        source_references=[],
+        wiki_page_id=None,
+        importance=0.99,
+    )
+    routing = concept(
+        id="c3",
+        slug="request-routing",
+        title="请求路由",
+        source_references=[],
+        wiki_page_id=None,
+    )
+    crate = concept(
+        id="c4",
+        slug="codebase-graph",
+        title="图谱",
+        wiki_page_id="topics/codebase-graph",
+        source_references=[{"path": "crates/code-graph/src/main.rs", "start_line": 1}],
+        importance=0.2,
+    )
+    boot = concept(
+        id="c5",
+        slug="entry-and-boot",
+        title="入口与启动",
+        wiki_page_id="topics/entry-and-boot",
+        source_references=[{"path": "bin/grok.rs", "start_line": 1, "symbol": "main"}],
+        importance=0.95,
+    )
+    goal = concept(
+        id="c0",
+        slug="project-goal",
+        title="项目目标",
+        wiki_page_id="index",
+        source_references=[{"path": "README.md", "start_line": 1}],
+        importance=1.0,
+    )
+
+    def node(cid, conc, pos):
+        return SimpleNamespace(
+            id=f"n-{cid}",
+            concept_id=cid,
+            position=pos,
+            reason="Ordered by prerequisites and importance",
+            concept=conc,
+        )
+
+    path = SimpleNamespace(
+        id="p1",
+        repository_version_id="v",
+        title="旧路径",
+        description="状态存在哪",
+        estimated_minutes=40,
+        nodes=[
+            node("c2", cache, 1),
+            node("c4", crate, 2),
+            node("c1", loop, 3),
+            node("c3", routing, 4),
+            node("c5", boot, 5),
+            node("c0", goal, 6),
+        ],
+    )
+    out = path_out(path)
+    slugs = [n.concept.slug for n in out.nodes if n.concept]
+    assert slugs[0] == "project-goal"
+    assert "caching" not in slugs
+    assert "request-routing" not in slugs
+    assert slugs.index("entry-and-boot") < slugs.index("agent-loop")
+    loop_node = next(n for n in out.nodes if n.concept and n.concept.slug == "agent-loop")
+    assert loop_node.reason.startswith("打开证据")
+    assert "不变量" in loop_node.principles
+    assert loop_node.evidence_chip == "crates/tui/src/app.rs:142 start_turn"
+    assert "调模型" in loop_node.pass_gate
+    ws = loop_node.worksheet
+    assert "## 本步要你干什么" in ws
+    assert "## 先回到原理" in ws
+    assert "## 只看这一处证据" in ws
+    assert "## 过关" in ws
+    assert ws.count("`crates/tui/src/app.rs:142 start_turn`") == 1
+    assert "架构图" not in ws
+    assert "核心子系统" not in ws
+    assert "先看进程怎么进" in out.description
+
+
+def test_step_task_is_action_not_了解模块(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    task = step_task_for_slug("agent-loop", "Agent Loop")
+    assert "了解" not in task
+    assert "打开" in task
+    assert "start_turn" in task

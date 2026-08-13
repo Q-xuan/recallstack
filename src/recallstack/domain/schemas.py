@@ -245,6 +245,10 @@ class LearningPathNodeOut(BaseModel):
     position: int
     reason: str
     concept: ConceptOut | None = None
+    principles: str = ""
+    evidence_chip: str | None = None
+    pass_gate: str = ""
+    worksheet: str = ""
 
 
 class LearningPathOut(BaseModel):

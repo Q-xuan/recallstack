@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
-from recallstack.domain.schemas import ConceptDraft
+from recallstack.domain.schemas import ConceptDraft, SourceReference
 from recallstack.learning.i18n import t
 
 # Kept as step-task templates only. Do NOT use this as the default learning
@@ -39,6 +40,58 @@ _GENERIC_REASON_RE = re.compile(
 )
 
 CORE_PATH_CAP = 8
+
+# Generic web-app syllabus. Fine as optional *topics* when the repo actually
+# has that system; never a default path node (Jake: not caching / routing fillers).
+_WEB_FILLER_SLUGS = frozenset(
+    {
+        "caching",
+        "request-routing",
+        "authentication",
+        "data-persistence",
+        "error-handling",
+        "background-tasks",
+        "data-model",
+        "business-logic",
+        "persistence",
+        "request-lifecycle",
+        "observability",
+        "auth-and-identity",
+    }
+)
+
+# Trunk → big branches → leaves. First steps: process entry, then how a turn runs.
+_PATH_TRUNK: tuple[str, ...] = (
+    "project-goal",
+    "entry-and-boot",
+    "application-entry",
+    "agent-loop",
+    "call-flow",
+    "runtime-loop",
+    "tool-system",
+    "terminal-ui",
+    "tui-pager",
+    "context-assembly",
+    "agent-runtime",
+    "session-lifecycle",
+    "conversation-store",
+)
+_PATH_RANK = {slug: i for i, slug in enumerate(_PATH_TRUNK)}
+
+# (path suffixes tried in order, symbol that proves the invariant)
+_EVIDENCE_HINTS: dict[str, tuple[tuple[str, ...], str]] = {
+    "agent-loop": (("tui/src/app.rs", "loop.rs", "agent.rs", "runtime.rs"), "start_turn"),
+    "call-flow": (("tui/src/app.rs", "loop.rs"), "start_turn"),
+    "runtime-loop": (("tui/src/app.rs", "loop.rs"), "start_turn"),
+    "entry-and-boot": (("bin/grok.rs", "grok.rs", "main.rs", "main.py"), "main"),
+    "application-entry": (("bin/grok.rs", "grok.rs", "main.rs", "main.py", "main.go"), "main"),
+    "tool-system": (("tool_bridge.rs", "tools/src/lib.rs"), "ToolBridge"),
+    "terminal-ui": (("pager.rs", "pager/src", "tui/src/pager.rs"), "Pager"),
+    "tui-pager": (("pager.rs", "pager/src", "tui/src/pager.rs"), "Pager"),
+    "context-assembly": (("conversation_util.rs", "context.rs"), "replace_or_insert_system_head"),
+    "agent-runtime": (("runtime.rs", "agent.rs"), "AgentRuntime"),
+    "project-goal": (("README.md", "readme.md"), ""),
+}
 
 _SOURCE_CHIP_RE = re.compile(
     r"(?i)^[\w./\-]+(?:\.[A-Za-z0-9]+)+(?::\d+(?:-\d+)?)?$"
@@ -131,12 +184,10 @@ _FLOW_SLUGS = {
 
 def path_mission() -> str:
     return t(
-        "When you finish this path you should be able to explain, in your own words "
-        "and without leaning on the folder tree: what problem this repo solves, where "
-        "the process starts, how a request moves, where state lives, and what happens "
-        "on failure.",
-        "走完这条路径，你要能不靠目录、用自己的话讲清「这个仓库解决什么问题、"
-        "进程从哪启动、请求怎么走、状态存在哪、失败时怎么办」。",
+        "Walk the trunk first: how the process starts, how one turn runs, then tools "
+        "and UI. At each step ask only: if this layer vanished, could the system still work?",
+        "先看进程怎么进，再看一轮对话怎么转，最后才看工具和界面。"
+        "每一步只问：这一层不存在，系统还能不能工作。",
     )
 
 
@@ -159,11 +210,28 @@ def is_filler_concept(concept: ConceptDraft) -> bool:
     return is_filler_slug_title(concept.slug, concept.title)
 
 
+def is_web_filler_path_slug(slug: str, wiki_page_id: str | None = None) -> bool:
+    """Drop generic-web syllabus nodes unless they are a real `topics/` page."""
+    if (slug or "") not in _WEB_FILLER_SLUGS:
+        return False
+    if (wiki_page_id or "").startswith("topics/"):
+        return False
+    return True
+
+
+def path_rank(slug: str) -> int:
+    """Lower is earlier: trunk, then branches, then leaves."""
+    return _PATH_RANK.get(slug or "", 80)
+
+
 def is_core_path_concept(concept: ConceptDraft) -> bool:
     """Path nodes are real concepts from this repo, not folder inventory."""
     if is_filler_concept(concept):
         return False
     if concept.slug == "getting-started":
+        return False
+    wiki_id = getattr(concept, "wiki_page_id", None)
+    if is_web_filler_path_slug(concept.slug, wiki_id):
         return False
     return True
 
@@ -176,12 +244,48 @@ def step_task_for_slug(slug: str, title: str = "") -> str:
     """Concrete action for this step. Stored on the path node as ``reason``."""
     tasks = {
         "project-goal": t(
-            "Write two sentences: who this repo is for, what problem it solves, and what it explicitly does not do.",
-            "用两句话写出这个仓库为谁、解决什么、明确不做什么。",
+            "In one sentence: after the user hits Enter in the terminal, which three layers (entry, one turn, model call) must exist for an answer to come back?",
+            "用一句话说清：用户在终端里回车之后，系统靠哪三层（入口、一轮循环、模型调用）才能答上来。",
+        ),
+        "entry-and-boot": t(
+            "Open the grok binary entry and name the first runtime constructed after the process starts.",
+            "打开 grok 二进制入口，指出进程启动后第一个被构造的运行时是什么。",
         ),
         "application-entry": t(
-            "Open the entrypoint and name the first three calls after the process starts.",
-            "点开入口文件，说出进程启动后最先调用的三步。",
+            "Open the entrypoint and name the first three calls after the process starts — not a crate name.",
+            "打开入口文件，指出进程启动后最先调用的三步（不是某个 crate 的名字）。",
+        ),
+        "agent-loop": t(
+            "Open the evidence and point to who calls the model after start_turn (not tools first).",
+            "打开证据，指出谁在 start_turn 之后调模型（不是先跑工具）。",
+        ),
+        "call-flow": t(
+            "Follow one turn: name who runs between input entering the turn and the model being called.",
+            "顺着一轮对话，指出输入进 turn 之后到模型被调用之间经过谁。",
+        ),
+        "runtime-loop": t(
+            "Open the evidence and point to who calls the model after start_turn (not tools first).",
+            "打开证据，指出谁在 start_turn 之后调模型（不是先跑工具）。",
+        ),
+        "tool-system": t(
+            "Open ToolBridge and point to who dispatches a tool call by name after the model returns it.",
+            "打开 ToolBridge，指出模型给出 tool call 之后谁按名字执行。",
+        ),
+        "terminal-ui": t(
+            "Open Pager and point to which buffer streaming model output is written into.",
+            "打开 Pager，指出模型流式输出时字写进哪一块缓冲区。",
+        ),
+        "tui-pager": t(
+            "Open Pager and point to which buffer streaming model output is written into.",
+            "打开 Pager，指出模型流式输出时字写进哪一块缓冲区。",
+        ),
+        "context-assembly": t(
+            "Open replace_or_insert_system_head and say whether the system head is written at the window head or appended after the user message.",
+            "打开 replace_or_insert_system_head，指出系统头是写进窗口头还是拼在用户消息后面。",
+        ),
+        "agent-runtime": t(
+            "Open the runtime type and point to what it owns that the turn loop cannot construct by itself.",
+            "打开运行时类型，指出一轮循环自己构造不了、必须由它持有的是什么。",
         ),
         "configuration": t(
             "Find where config enters runtime and name one behaviour it changes.",
@@ -215,10 +319,6 @@ def step_task_for_slug(slug: str, title: str = "") -> str:
             "Open one test and say which behaviour it is locking down.",
             "打开一个测试，说出它锁住的是哪段行为。",
         ),
-        "call-flow": t(
-            "Follow one call from entry to a side effect; name the functions in order.",
-            "顺着一次调用从入口走到副作用，按顺序列出函数。",
-        ),
         "module-boundaries": t(
             "Name two modules and the one responsibility that must not leak across them.",
             "指出两个模块，以及绝不能漏过去的那条职责边界。",
@@ -228,8 +328,8 @@ def step_task_for_slug(slug: str, title: str = "") -> str:
         return tasks[slug]
     shown = title or slug
     return t(
-        f"Open the evidence for `{shown}` and explain, in your own words, why this layer must exist.",
-        f"打开「{shown}」的证据，用自己的话讲清这一层为什么必须存在。",
+        f"Open the evidence and point to the step `{shown}` must perform on a real call — not a directory name.",
+        f"打开证据，指出「{shown}」在一次真实调用里必须发生的那一步（不要用目录名回答）。",
     )
 
 
@@ -316,6 +416,304 @@ def first_principles(concept: ConceptDraft, project_name: str) -> str:
         f"如果「{concept.title}」这一层消失，用户能察觉的哪段行为会坏？"
         "从证据回答，不要从目录名回答。",
     )
+
+
+def path_principles(concept: Any, project_name: str = "") -> str:
+    """2–5 sentences of invariants for the path worksheet. Not a file list."""
+    slug = getattr(concept, "slug", "") or ""
+    title = getattr(concept, "title", "") or slug
+    name = project_name or title
+    texts = {
+        "project-goal": t(
+            f"{name} is a product you run, not a pile of crates. "
+            "A binary, one turn, and a model call have to exist or nothing answers. "
+            "Invariant: no entry, no turn, no model call — no product.",
+            f"{name} 首先是一个能跑起来的产品，不是一组可以随便拆开的 crate。"
+            "有入口、有一轮循环、有模型调用，用户才能得到回答。"
+            "不变量：没有入口、没有一轮、没有模型调用，产品就不存在。",
+        ),
+        "entry-and-boot": t(
+            "A process starts at one function. TUI, agent, and tool bridge are constructed after that, not before. "
+            "If boot first compiles protobuf or warms an unrelated crate, the first keystroke has no receiver. "
+            "Invariant: grok binary starts → runtime is assembled → then the turn loop.",
+            "进程必须从某一个入口函数开始跑，TUI、Agent、工具桥才能被构造出来。"
+            "入口不是某一个 crate，而是二进制真正执行的那一行。"
+            "若入口先去编 protobuf 或初始化无关子系统，用户对着终端发的第一句话没有接收者。"
+            "不变量：grok 二进制启动 → 装配运行时 → 才进入对话循环。",
+        ),
+        "application-entry": t(
+            "Without an entrypoint there is no process: nothing is wired, nothing runs. "
+            "The rest of the graph exists only because something called it. "
+            "Invariant: process starts at the entry → it constructs what it owns → then the main loop.",
+            "没有入口就没有进程：没有装配，也就没有运行。"
+            "其余模块只因为被入口调用才存在。"
+            "不变量：进程从入口进来 → 装配自己负责的对象 → 再把控制权交给主循环。",
+        ),
+        "agent-loop": t(
+            "A turn is valid only if user input is taken into the current turn and the model is called first. "
+            "Tool calls happen after the model returns; they cannot run first. "
+            "If start_turn ran tools before the model, the turn would be a script, not a conversation. "
+            "Invariant: input enters the turn → the model is called → tool calls run and write back.",
+            "一轮对话能成立，只有一件事必须发生：用户的输入被收进当前 turn 之后，模型先被调用。"
+            "工具调用是模型返回之后的事，不能倒过来。"
+            "若 start_turn 之后先跑工具再问模型，这一轮就没有「模型决定」，只有「脚本执行」。"
+            "不变量：输入进 turn → 模型被调用 → 如有 tool calls 再执行写回。",
+        ),
+        "call-flow": t(
+            "A system is the sequence of calls, not the set of files. "
+            "One turn must run from input to model call in order. "
+            "Invariant: input enters the turn → the model is called → side effects follow.",
+            "系统是调用的顺序，不是文件的集合。"
+            "一轮必须从输入走到模型调用，顺序不能反。"
+            "不变量：输入进 turn → 模型被调用 → 副作用在后面。",
+        ),
+        "runtime-loop": t(
+            "A turn is valid only if user input is taken into the current turn and the model is called first. "
+            "Tool calls happen after the model returns. "
+            "Invariant: input enters the turn → the model is called → tool calls run and write back.",
+            "一轮对话能成立，只有一件事必须发生：输入进 turn 之后，模型先被调用。"
+            "工具调用是模型返回之后的事。"
+            "不变量：输入进 turn → 模型被调用 → 如有 tool calls 再执行写回。",
+        ),
+        "tool-system": t(
+            "The model cannot touch disk or a shell. It can only emit a named tool call; execution stays on this side of the bridge. "
+            "Without the bridge, a function call the model returned has nobody to run it. "
+            "Invariant: model emits a tool call → the bridge dispatches by name → the result is written back for the model.",
+            "模型不能自己碰磁盘或 shell。它只能发出带名字的 tool call；执行权必须在桥的这一侧。"
+            "若没有桥，模型返回的函数调用没有人跑，对话就会停在「想做」而不是「做完」。"
+            "不变量：模型输出 tool call → 桥按名字分发 → 结果写回再交给模型。",
+        ),
+        "terminal-ui": t(
+            "While the model streams tokens, the terminal must have one place that paints the increment. "
+            "Otherwise the user sees a blank screen or a full redraw. Pager is that canvas. "
+            "Invariant: a model delta arrives → it is written into the pager → the terminal shows it.",
+            "模型流式吐字时，终端必须有一个地方把增量画出来，否则用户看见的是空白或整段刷新。"
+            "Pager 就是这块画布。"
+            "不变量：模型 delta 到达 → 写入 pager → 终端可见。",
+        ),
+        "tui-pager": t(
+            "While the model streams tokens, the terminal must have one place that paints the increment. "
+            "Pager is that canvas. "
+            "Invariant: a model delta arrives → it is written into the pager → the terminal shows it.",
+            "模型流式吐字时，终端必须有一个地方把增量画出来。"
+            "Pager 就是这块画布。"
+            "不变量：模型 delta 到达 → 写入 pager → 终端可见。",
+        ),
+        "context-assembly": t(
+            "Before each model call the context window must already hold the system head. "
+            "The system head is a rule, not chat history. "
+            "If a new rule cannot be written at the window head, the model answers under the old rule. "
+            "Invariant: assemble context → system head sits at the window head → then send this turn.",
+            "每轮问模型之前，上下文窗口里必须先有系统头。"
+            "系统头不是聊天记录，是规则。"
+            "若新规则不能写进窗口头部，模型按旧规则回答。"
+            "不变量：组上下文 → 系统头在窗口头上 → 再发本轮消息。",
+        ),
+        "agent-runtime": t(
+            "The turn loop needs a runtime that already holds tools, context, and session. "
+            "The loop cannot construct those from a keystroke. "
+            "Invariant: runtime owns the long-lived pieces → the loop only drives one turn.",
+            "一轮循环需要一个已经持有工具、上下文和会话的运行时。"
+            "循环不能靠一次按键把这些东西现造出来。"
+            "不变量：运行时持有长寿命对象 → 循环只负责推一轮。",
+        ),
+    }
+    if slug in texts:
+        return texts[slug]
+    return t(
+        f"If `{title}` vanished, a user-visible behaviour would break. "
+        "Name the invariant that must stay true for a real call to complete — not a folder name.",
+        f"如果「{title}」这一层消失，用户能察觉的行为会坏。"
+        "说出一次真实调用要完成时必须成立的那句话，不要用目录名回答。",
+    )
+
+
+def pass_gate(concept: Any) -> str:
+    """One checkable gate. Not a homework dump."""
+    slug = getattr(concept, "slug", "") or ""
+    title = getattr(concept, "title", "") or slug
+    gates = {
+        "project-goal": t(
+            "One sentence: if this product left the terminal loop, could it still do what it claims?",
+            "一句话：这个产品离开终端循环还能不能完成它声称的事？",
+        ),
+        "entry-and-boot": t(
+            "In the entry function, which appears first — TUI or application state? Point to that line.",
+            "入口函数里，TUI 和应用状态谁先出现？指出那一行。",
+        ),
+        "application-entry": t(
+            "If the entry file were empty, what would fail to start? Name that object.",
+            "如果入口文件是空的，什么将无法启动？说出那个对象。",
+        ),
+        "agent-loop": t(
+            "If you swapped 'call the model' and 'run tools', would this still be a conversation? Answer from the call order after start_turn.",
+            "若把「调模型」和「跑工具」对调，这一轮还会是对话吗？用 start_turn 后的调用顺序回答。",
+        ),
+        "call-flow": t(
+            "If you swapped 'call the model' and 'run tools', would this still be a conversation? Answer from the call order after start_turn.",
+            "若把「调模型」和「跑工具」对调，这一轮还会是对话吗？用 start_turn 后的调用顺序回答。",
+        ),
+        "runtime-loop": t(
+            "If you swapped 'call the model' and 'run tools', would this still be a conversation? Answer from the call order after start_turn.",
+            "若把「调模型」和「跑工具」对调，这一轮还会是对话吗？用 start_turn 后的调用顺序回答。",
+        ),
+        "tool-system": t(
+            "When the model returns an unknown tool name, does the bridge drop it, error, or call the model again? Point to the dispatch.",
+            "模型返回一个不存在的工具名时，桥是丢弃、报错，还是继续调模型？指出分发处。",
+        ),
+        "terminal-ui": t(
+            "When a streaming delta arrives, is the whole page redrawn or is it written into the pager? Point to that site.",
+            "流式 delta 到达时，是整页重绘还是写入 pager？指出那一处。",
+        ),
+        "tui-pager": t(
+            "When a streaming delta arrives, is the whole page redrawn or is it written into the pager? Point to that site.",
+            "流式 delta 到达时，是整页重绘还是写入 pager？指出那一处。",
+        ),
+        "context-assembly": t(
+            "When the system head updates, is the old head replaced or appended? Name the function.",
+            "系统头更新时，旧头是被替换还是追加？指出函数名。",
+        ),
+        "agent-runtime": t(
+            "If the runtime were empty, which object would the turn loop fail to find? Name it.",
+            "如果运行时是空的，一轮循环会找不到哪个对象？说出名字。",
+        ),
+    }
+    if slug in gates:
+        return gates[slug]
+    return t(
+        f"Point to the one path:line on this step that proves `{title}` must exist, and say what breaks if that line is gone.",
+        f"指出本步那一处 path:line，证明「{title}」必须存在，并说出删掉那一行会坏什么。",
+    )
+
+
+def _is_dummy_symbol(name: str) -> bool:
+    n = (name or "").strip().strip("`")
+    if not n:
+        return True
+    if "/" in n or "\\" in n:
+        return True
+    if n.endswith((".rs", ".py", ".ts", ".js", ".go", ".toml", ".md")):
+        return True
+    return n.lower() in {"lib.rs", "main.rs", "mod.rs", "src", "crates", "packages", "apps", "root"}
+
+
+def _source_refs_of(concept: Any) -> list[SourceReference]:
+    raw = getattr(concept, "source_references", None) or []
+    out: list[SourceReference] = []
+    for item in raw:
+        if isinstance(item, SourceReference):
+            out.append(item)
+            continue
+        path = ""
+        start = end = symbol = commit = None
+        if isinstance(item, dict):
+            path = (item.get("path") or "").strip()
+            start = item.get("start_line")
+            end = item.get("end_line")
+            symbol = item.get("symbol")
+            commit = item.get("commit_sha")
+        else:
+            path = (getattr(item, "path", None) or "").strip()
+            start = getattr(item, "start_line", None)
+            end = getattr(item, "end_line", None)
+            symbol = getattr(item, "symbol", None)
+            commit = getattr(item, "commit_sha", None)
+        if not path:
+            continue
+        try:
+            out.append(
+                SourceReference(
+                    path=path,
+                    start_line=start,
+                    end_line=end,
+                    symbol=symbol,
+                    commit_sha=commit,
+                )
+            )
+        except ValueError:
+            continue
+    return out
+
+
+def _format_path_chip(path: str, line: int, symbol: str | None) -> str:
+    normalized = path.replace("\\", "/")
+    loc = f"{normalized}:{int(line) if line else 1}"
+    sym = (symbol or "").strip()
+    if sym and not _is_dummy_symbol(sym):
+        return f"{loc} {sym}"
+    return loc
+
+
+def _pick_hint_ref(refs: list[SourceReference], suffixes: tuple[str, ...]) -> SourceReference | None:
+    for suffix in suffixes:
+        suffix = suffix.replace("\\", "/")
+        for ref in refs:
+            path = ref.path.replace("\\", "/")
+            if path.endswith(suffix) or suffix in path:
+                return ref
+    return None
+
+
+def path_evidence_chip(concept: Any) -> str | None:
+    """Exactly one ``path:line Symbol`` chip that proves the principle."""
+    slug = getattr(concept, "slug", "") or ""
+    refs = _source_refs_of(concept)
+    hint = _EVIDENCE_HINTS.get(slug)
+    if hint:
+        suffixes, symbol = hint
+        picked = _pick_hint_ref(refs, suffixes)
+        if picked is not None:
+            return _format_path_chip(picked.path, picked.start_line or 1, symbol or picked.symbol)
+    for ref in refs:
+        if _is_dummy_symbol(ref.symbol or ""):
+            continue
+        if ref.start_line and ref.symbol:
+            return _format_path_chip(ref.path, ref.start_line, ref.symbol)
+    for ref in refs:
+        if ref.start_line:
+            return _format_path_chip(ref.path, ref.start_line, ref.symbol)
+    if refs:
+        return _format_path_chip(refs[0].path, refs[0].start_line or 1, refs[0].symbol)
+    return None
+
+
+def path_worksheet(concept: Any, project_name: str = "") -> str:
+    """Learning-path page only. Never mixed into the reading wiki."""
+    title = getattr(concept, "title", None) or getattr(concept, "slug", "") or ""
+    slug = getattr(concept, "slug", "") or ""
+    task = step_task_for_slug(slug, title)
+    principles = path_principles(concept, project_name)
+    chip = path_evidence_chip(concept)
+    gate = pass_gate(concept)
+    evidence_body = (
+        f"`{chip}`"
+        if chip
+        else t(
+            "This step has no source line. Pass by stating the invariant in one sentence.",
+            "这一步不靠源码行，过关看你能不能一句话讲清不变量。",
+        )
+    )
+    parts = [
+        f"# {title}",
+        "",
+        f"## {t('What this step asks of you', '本步要你干什么')}",
+        "",
+        task,
+        "",
+        f"## {t('Back to first principles', '先回到原理')}",
+        "",
+        principles,
+        "",
+        f"## {t('Look at this evidence only', '只看这一处证据')}",
+        "",
+        evidence_body,
+        "",
+        f"## {t('Pass', '过关')}",
+        "",
+        gate,
+        "",
+    ]
+    return "\n".join(parts)
 
 
 def pass_questions(concept: ConceptDraft) -> str:

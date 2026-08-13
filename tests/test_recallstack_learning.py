@@ -118,14 +118,15 @@ def test_learning_path_ordering():
         ConceptDraft(slug="testing-structure", title="Tests", importance=0.4, prerequisites=["project-goal"]),
         ConceptDraft(slug="application-entry", title="Entry", importance=0.9, prerequisites=["project-goal"]),
         ConceptDraft(slug="project-goal", title="Goal", importance=1.0, prerequisites=[]),
-        ConceptDraft(slug="data-persistence", title="DB", importance=0.7, prerequisites=["application-entry"]),
+        ConceptDraft(slug="call-flow", title="Flow", importance=0.7, prerequisites=["application-entry"]),
     ]
     path = PathBuilder().build(concepts)
     order = [n.concept_slug for n in path.nodes]
     assert order.index("project-goal") < order.index("application-entry")
-    assert order.index("application-entry") < order.index("data-persistence")
+    assert order.index("application-entry") < order.index("call-flow")
+    assert order.index("call-flow") < order.index("testing-structure")
     assert all(n.reason and "Ordered by prerequisites" not in n.reason for n in path.nodes)
-    assert "folder tree" in path.description or "不靠目录" in path.description
+    assert "Walk the trunk" in path.description or "进程怎么进" in path.description
 
 
 def test_learning_path_excludes_file_inventory_filler():
@@ -136,20 +137,24 @@ def test_learning_path_excludes_file_inventory_filler():
         ConceptDraft(slug="module-cargo-toml", title="模块: Cargo.toml", importance=0.8),
         ConceptDraft(slug="focus-init-py", title="聚焦：__init__.py", importance=0.7),
         ConceptDraft(slug="file-package-json", title="Key file: package.json", importance=0.6),
-        ConceptDraft(slug="data-persistence", title="持久化", importance=0.5),
+        ConceptDraft(slug="call-flow", title="调用链", importance=0.5),
+        ConceptDraft(slug="caching", title="缓存", importance=0.9),
+        ConceptDraft(slug="request-routing", title="请求路由", importance=0.9),
     ]
     path = PathBuilder().build(concepts)
     slugs = [n.concept_slug for n in path.nodes]
     assert "project-goal" in slugs
     assert "application-entry" in slugs
-    assert "data-persistence" in slugs
+    assert "call-flow" in slugs
     assert "module-readme-md" not in slugs
     assert "module-cargo-toml" not in slugs
     assert "focus-init-py" not in slugs
     assert "file-package-json" not in slugs
+    assert "caching" not in slugs
+    assert "request-routing" not in slugs
     assert len(slugs) <= 8
     goal = next(n for n in path.nodes if n.concept_slug == "project-goal")
-    assert "两句话" in goal.reason or "two sentences" in goal.reason.lower()
+    assert "一句话" in goal.reason or "one sentence" in goal.reason.lower()
 
 
 def test_hint_level_increments_and_no_skip():

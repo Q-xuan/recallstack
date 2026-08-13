@@ -29,7 +29,13 @@ from recallstack.learning.i18n import content_lang
 from recallstack.learning.learning_contract import (
     CORE_PATH_CAP,
     is_filler_slug_title,
+    is_web_filler_path_slug,
+    pass_gate,
+    path_evidence_chip,
     path_mission,
+    path_principles,
+    path_rank,
+    path_worksheet,
     step_task_for_slug,
     upgrade_legacy_concept_markdown,
     wiki_prose_excerpt,
@@ -232,17 +238,29 @@ def wiki_out(
 
 
 def path_out(path: LearningPath) -> LearningPathOut:
-    nodes: list[LearningPathNodeOut] = []
+    """GET-upgrade the learning path: rank, filter fillers, rebuild worksheets.
+
+    Concept wiki pages are untouched. Refresh is enough when source_references
+    already exist; re-scan only if refs are empty or point at the wrong file.
+    """
+    candidates: list[tuple[int, str, object, object]] = []
     for n in path.nodes or []:
         concept = getattr(n, "concept", None)
         slug = concept.slug if concept else ""
         title = concept.title if concept else ""
+        wiki_id = getattr(concept, "wiki_page_id", None) if concept else None
         if is_filler_slug_title(slug, title):
             continue
-        if is_generic_web_slug(slug) and not (
-            (getattr(concept, "wiki_page_id", None) or "").startswith("topics/")
+        if is_web_filler_path_slug(slug, wiki_id) or (
+            is_generic_web_slug(slug) and not (wiki_id or "").startswith("topics/")
         ):
             continue
+        candidates.append((path_rank(slug), slug or "", n, concept))
+    candidates.sort(key=lambda item: (item[0], item[1]))
+
+    nodes: list[LearningPathNodeOut] = []
+    for _rank, slug, n, concept in candidates[:CORE_PATH_CAP]:
+        title = concept.title if concept else ""
         nodes.append(
             LearningPathNodeOut(
                 id=n.id,
@@ -250,10 +268,12 @@ def path_out(path: LearningPath) -> LearningPathOut:
                 position=len(nodes) + 1,
                 reason=step_task_for_slug(slug, title) if slug else (n.reason or ""),
                 concept=concept_out(concept) if concept else None,
+                principles=path_principles(concept) if concept else "",
+                evidence_chip=path_evidence_chip(concept) if concept else None,
+                pass_gate=pass_gate(concept) if concept else "",
+                worksheet=path_worksheet(concept) if concept else "",
             )
         )
-        if len(nodes) >= CORE_PATH_CAP:
-            break
     return LearningPathOut(
         id=path.id,
         repository_version_id=path.repository_version_id,

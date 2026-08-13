@@ -147,10 +147,18 @@ def test_grok_learning_path_is_topics_not_web_app_syllabus():
     path = PathBuilder().build(concepts)
     path_slugs = [n.concept_slug for n in path.nodes]
     assert "project-goal" in path_slugs
+    assert path_slugs[0] == "project-goal"
     assert "caching" not in path_slugs
     assert "authentication" not in path_slugs
     assert "request-routing" not in path_slugs
     assert any(s not in {"project-goal", "getting-started"} for s in path_slugs)
+    if "entry-and-boot" in path_slugs and "agent-loop" in path_slugs:
+        assert path_slugs.index("entry-and-boot") < path_slugs.index("agent-loop")
+    if "agent-loop" in path_slugs:
+        assert path_slugs.index("project-goal") < path_slugs.index("agent-loop")
+        crate_leaves = [s for s in path_slugs if s in {"acp-protocol", "pty-control", "codebase-graph", "headless-modes"}]
+        for leaf in crate_leaves:
+            assert path_slugs.index("agent-loop") < path_slugs.index(leaf)
 
 
 def test_grok_deterministic_topics_are_zread_systems_not_web_app():

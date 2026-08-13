@@ -334,12 +334,15 @@ def test_learning_path_api_omits_filler_and_states_mission(client: TestClient, m
     path = client.get(f"/api/recallstack/repositories/{repo_id}/learning-path")
     assert path.status_code == 200, path.text
     body = path.json()
-    assert "走完这条路径" in body["description"]
+    assert "先看进程怎么进" in body["description"] or "Walk the trunk" in body["description"]
     slugs = [n["concept"]["slug"] for n in body["nodes"] if n.get("concept")]
     titles = [n["concept"]["title"] for n in body["nodes"] if n.get("concept")]
     assert all(not s.startswith(("module-", "focus-", "file-")) for s in slugs)
     assert all("README.md" not in t and "Cargo.toml" not in t for t in titles)
-    assert any("两句话" in (n.get("reason") or "") for n in body["nodes"])
+    assert any("一句话" in (n.get("reason") or "") or "one sentence" in (n.get("reason") or "").lower() for n in body["nodes"])
+    assert all(n.get("worksheet") for n in body["nodes"])
+    worksheet = body["nodes"][0]["worksheet"]
+    assert "## 本步要你干什么" in worksheet or "## What this step asks of you" in worksheet
 
 
 def test_wiki_get_upgrades_legacy_concept_markdown(client: TestClient, monkeypatch):

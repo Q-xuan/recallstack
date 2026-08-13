@@ -164,6 +164,10 @@ export interface LearningPathNode {
   position: number;
   reason: string;
   concept?: Concept | null;
+  principles?: string;
+  evidence_chip?: string | null;
+  pass_gate?: string;
+  worksheet?: string;
 }
 
 export interface LearningPath {

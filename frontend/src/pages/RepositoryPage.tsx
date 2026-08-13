@@ -245,13 +245,33 @@ export default function RepositoryPage() {
 
   const flatPages = useMemo(() => (wiki ? flattenSidebar(wiki.sidebar) : []), [wiki]);
 
+  const learnNodes = useMemo(() => (path ? corePathNodes(path.nodes) : []), [path]);
+
+  const currentPathNode = useMemo(() => {
+    if (!currentPage) return null;
+    return learnNodes.find((n) => pathPageId(n) === currentPage.id) || null;
+  }, [learnNodes, currentPage]);
+
   const { prevPage, nextPage } = useMemo(() => {
+    if (mode === "learn" && learnNodes.length) {
+      const i = learnNodes.findIndex((n) => pathPageId(n) === currentPage?.id);
+      const prev = i > 0 ? learnNodes[i - 1] : null;
+      const next = i >= 0 && i < learnNodes.length - 1 ? learnNodes[i + 1] : null;
+      return {
+        prevPage: prev
+          ? { page_id: pathPageId(prev), title: prev.concept?.title || prev.concept_id }
+          : null,
+        nextPage: next
+          ? { page_id: pathPageId(next), title: next.concept?.title || next.concept_id }
+          : null,
+      };
+    }
     const i = flatPages.findIndex((p) => p.page_id === currentPage?.id);
     return {
       prevPage: i > 0 ? flatPages[i - 1] : null,
       nextPage: i >= 0 && i < flatPages.length - 1 ? flatPages[i + 1] : null,
     };
-  }, [flatPages, currentPage]);
+  }, [flatPages, currentPage, mode, learnNodes]);
 
   const conceptBySlug = useMemo(() => {
     const m: Record<string, Concept> = {};
@@ -270,14 +290,12 @@ export default function RepositoryPage() {
     return concepts.find((c) => c.wiki_page_id === currentPage.id) || null;
   }, [currentPage, concepts, conceptBySlug]);
 
-  const learnNodes = useMemo(() => (path ? corePathNodes(path.nodes) : []), [path]);
-
   const currentStepTask = useMemo(() => {
+    if (currentPathNode?.worksheet) return "";
+    if (currentPathNode?.reason) return currentPathNode.reason;
     if (!boundConcept) return "";
-    const node = learnNodes.find((n) => n.concept?.slug === boundConcept.slug);
-    if (node?.reason) return node.reason;
     return stepTask(t, boundConcept.slug, boundConcept.title);
-  }, [boundConcept, learnNodes, t]);
+  }, [boundConcept, currentPathNode, t]);
 
   const ready = Boolean(wiki && wiki.pages.length > 0);
 
@@ -638,7 +656,7 @@ export default function RepositoryPage() {
                                 onClick={() => openPage(pageId)}
                                 className="rs-btn rs-btn-secondary h-8 px-3 text-[12px] mt-3"
                               >
-                                {t("打开词条 →", "Open concept →")}
+                                {t("开始这一步 →", "Start this step →")}
                               </button>
                             )}
                           </div>
@@ -682,8 +700,16 @@ export default function RepositoryPage() {
                   )}
 
                   <WikiContent
-                    content={currentPage.content}
-                    title={currentPage.title}
+                    content={
+                      mode === "learn" && currentPathNode?.worksheet
+                        ? currentPathNode.worksheet
+                        : currentPage.content
+                    }
+                    title={
+                      mode === "learn" && currentPathNode?.concept?.title
+                        ? currentPathNode.concept.title
+                        : currentPage.title
+                    }
                     repositoryId={id}
                     onNavigatePage={openPage}
                     onTocChange={setToc}
