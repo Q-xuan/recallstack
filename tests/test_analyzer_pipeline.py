@@ -327,7 +327,7 @@ def test_zh_no_llm_fallback_is_handbook_not_inventory(tmp_path):
     assert "Heaviest modules by PageRank" not in wiki.architecture.description
     assert "目录" in wiki.architecture.description
     assert wiki.architecture.architecture_type == "codebase-modules"
-    assert any(tip.term == "PageRank" for tip in wiki.architecture.term_tips)
+    assert not any(tip.term == "PageRank" for tip in wiki.architecture.term_tips)
     graph = DependencyGraph.build_from_project(project)
     pages = WikiBuilder().build(project, wiki, graph, language="zh")
     arch = pages.get_page("architecture").content
@@ -335,9 +335,9 @@ def test_zh_no_llm_fallback_is_handbook_not_inventory(tmp_path):
     assert "**Type:**" not in arch
     assert "codebase-modules" in arch
     assert "## 链路里的角色" in arch or "这篇文档讲" in arch
-    assert "## 术语小贴士" in arch
+    assert "PageRank" not in arch or "Heaviest modules by PageRank" not in arch
     assert "Heaviest modules by PageRank" not in arch
     for page in pages.pages:
         if page.id.startswith("modules/"):
             assert "Module containing" not in page.content
-            assert "## 术语小贴士" in page.content
+            assert "虽然未直接使用" not in page.content

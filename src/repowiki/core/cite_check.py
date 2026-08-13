@@ -24,24 +24,44 @@ from repowiki.core.models import (
 _BACKTICK_CITE = re.compile(
     r"`((?:[A-Za-z0-9_.@-]+/)*[A-Za-z0-9_.@-]+\.[A-Za-z0-9]+)(?::(\d+)(?:-(\d+))?)?`"
 )
+_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_CAMEL = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
+_JUNK_TIP = re.compile(
+    r"未直接使用|仅用于文档生成|not (directly |actually )?used( in (this )?repo)?",
+    re.I,
+)
 
 
 @dataclass
 class CiteIndex:
-    """Resolved project paths and per-file line counts."""
+    """Resolved project paths, per-file line counts, and identifier tokens."""
 
     paths: set[str]
     lines: dict[str, int]
+    tokens: set[str] = field(default_factory=set)
+    blob: str = ""
 
     @classmethod
     def from_project(cls, project: ProjectContext) -> CiteIndex:
         paths: set[str] = set()
         lines: dict[str, int] = {}
+        tokens: set[str] = set()
+        blobs: list[str] = []
         for f in project.files:
             path = _normalize_path(f.path)
             paths.add(path)
             lines[path] = _line_count(f)
-        return cls(paths=paths, lines=lines)
+            _add_path_tokens(tokens, path)
+            text = f.content or f.preview or ""
+            if text:
+                blobs.append(text)
+                _add_ident_tokens(tokens, text)
+        return cls(
+            paths=paths,
+            lines=lines,
+            tokens=tokens,
+            blob="\n".join(blobs).lower(),
+        )
 
     def resolve(self, path: str) -> str | None:
         """Exact match, then unique suffix (``main.py`` → ``app/main.py``)."""
@@ -63,6 +83,18 @@ class CiteIndex:
             return line
         return 0
 
+    def has_term(self, term: str) -> bool:
+        """True when ``term`` appears as an identifier or path token in this repo."""
+        raw = (term or "").strip()
+        if len(raw) < 2:
+            return False
+        key = raw.lower()
+        if key in self.tokens:
+            return True
+        if " " in key and key in self.blob:
+            return True
+        return False
+
 
 @dataclass
 class CiteReport:
@@ -82,7 +114,16 @@ def verify_wiki_data(data: WikiData, project: ProjectContext) -> WikiData:
     data.reading_guide = verify_reading_guide(data.reading_guide, index)
     data.modules = [verify_module(m, index) for m in data.modules]
     if data.topics:
-        data.topics = [verify_module(m, index) for m in data.topics]
+        from repowiki.core.topics import is_generic_web_slug, repo_has_web_system
+
+        kept = []
+        for mod in data.topics:
+            verified = verify_module(mod, index)
+            slug = getattr(verified, "name", "") or ""
+            if is_generic_web_slug(slug) and not repo_has_web_system(index.paths, slug):
+                continue
+            kept.append(verified)
+        data.topics = kept
     if data.file_index:
         cleaned: dict[str, FileDoc] = {}
         for path, doc in data.file_index.items():
@@ -134,7 +175,7 @@ def verify_module(mod: ModuleDoc, index: CiteIndex) -> ModuleDoc:
     mod.what_it_is = [
         sanitize_text(s, index) for s in (getattr(mod, "what_it_is", None) or [])
     ]
-    _sanitize_key_types(getattr(mod, "key_types", None) or [], index)
+    mod.key_types = _sanitize_key_types(getattr(mod, "key_types", None) or [], index)
     for concept in mod.key_concepts:
         concept.explanation = sanitize_text(concept.explanation, index)
     mod.term_tips = _sanitize_term_tips(getattr(mod, "term_tips", None), index)
@@ -162,7 +203,7 @@ def verify_overview(overview: ProjectOverview, index: CiteIndex) -> ProjectOverv
     for sub in getattr(overview, "subsystems", None) or []:
         sub.role = sanitize_text(sub.role, index)
         sub.files = [p for p in (index.resolve(x) for x in sub.files) if p]
-        _sanitize_key_types(sub.key_types, index)
+        sub.key_types = _sanitize_key_types(sub.key_types, index)
     return overview
 
 
@@ -174,7 +215,9 @@ def verify_architecture(arch: ArchitectureDiagram, index: CiteIndex) -> Architec
         comp.files = [p for p in (index.resolve(x) for x in comp.files) if p]
         comp.purpose = sanitize_text(comp.purpose, index)
         comp.role = sanitize_text(getattr(comp, "role", "") or "", index)
-        _sanitize_key_types(getattr(comp, "key_types", None) or [], index)
+        comp.key_types = _sanitize_key_types(
+            getattr(comp, "key_types", None) or [], index
+        )
     arch.term_tips = _sanitize_term_tips(getattr(arch, "term_tips", None), index)
     return arch
 
@@ -216,23 +259,34 @@ def sanitize_text(text: str, index: CiteIndex) -> str:
 
 def _sanitize_term_tips(tips, index: CiteIndex):
     if not tips:
-        return tips or []
+        return []
+    kept = []
     for tip in tips:
-        tip.tip = sanitize_text(tip.tip, index)
-    return tips
+        term = (getattr(tip, "term", "") or "").strip()
+        text = getattr(tip, "tip", "") or ""
+        if not term or not index.has_term(term):
+            continue
+        if _JUNK_TIP.search(text):
+            continue
+        tip.tip = sanitize_text(text, index)
+        kept.append(tip)
+    return kept
 
 
-def _sanitize_key_types(types, index: CiteIndex) -> None:
+def _sanitize_key_types(types, index: CiteIndex) -> list:
+    """Drop types with no path, or whose path is not in the repo."""
+    kept = []
     for kt in types or []:
-        kt.role = sanitize_text(getattr(kt, "role", "") or "", index)
-        path = getattr(kt, "path", "") or ""
+        path = (getattr(kt, "path", "") or "").strip()
         if not path:
             continue
         resolved = index.resolve(path)
-        if resolved:
-            kt.path = resolved
-        elif "." in path.rsplit("/", 1)[-1]:
-            kt.path = ""
+        if not resolved:
+            continue
+        kt.path = resolved
+        kt.role = sanitize_text(getattr(kt, "role", "") or "", index)
+        kept.append(kt)
+    return kept
 
 
 def collect_invalid_paths(mod: ModuleDoc, index: CiteIndex) -> list[str]:
@@ -324,3 +378,26 @@ def _line_count(f: FileInfo) -> int:
     if not text:
         return 0
     return text.count("\n") + 1
+
+
+def _add_path_tokens(tokens: set[str], path: str) -> None:
+    for part in path.replace("\\", "/").split("/"):
+        if not part:
+            continue
+        stem = part.rsplit(".", 1)[0].lower()
+        tokens.add(stem)
+        tokens.add(part.lower())
+        for bit in re.split(r"[-_]", stem):
+            if len(bit) >= 2:
+                tokens.add(bit)
+    if "crates" in tokens:
+        tokens.add("crate")
+
+
+def _add_ident_tokens(tokens: set[str], text: str) -> None:
+    for ident in _IDENT.findall(text or ""):
+        low = ident.lower()
+        tokens.add(low)
+        for part in _CAMEL.findall(ident):
+            if len(part) >= 2:
+                tokens.add(part.lower())

@@ -140,6 +140,83 @@ def test_grok_deterministic_topics_are_zread_systems_not_web_app():
     assert "caching" not in ids
     assert "authentication" not in ids
     assert "request-routing" not in ids
+    assert "data-persistence" not in ids
+
+
+def test_merge_topics_drops_generic_web_slugs_on_grok_tree():
+    from repowiki.core.models import TopicOutline
+    from repowiki.core.topics import build_deterministic_topics, merge_topics
+
+    project = _grok_project()
+    graph = DependencyGraph.build_from_project(project)
+    base = build_deterministic_topics(project, graph, language="zh")
+    llm = [
+        TopicOutline(
+            id="caching",
+            title="缓存",
+            section="deep-dive",
+            key_files=["crates/agent/src/runtime.rs"],
+        ),
+        TopicOutline(
+            id="request-routing",
+            title="请求路由",
+            section="deep-dive",
+            key_files=["bin/grok.rs"],
+        ),
+        TopicOutline(
+            id="data-persistence",
+            title="数据持久化",
+            section="deep-dive",
+            key_files=["crates/agent/src/loop.rs"],
+        ),
+        TopicOutline(
+            id="authentication",
+            title="身份认证",
+            section="deep-dive",
+            key_files=["crates/agent/src/runtime.rs"],
+        ),
+        TopicOutline(
+            id="agent-loop",
+            title="Agent Loop",
+            section="deep-dive",
+            key_files=["crates/agent/src/loop.rs"],
+        ),
+    ]
+    merged = merge_topics(base, llm, {f.path for f in project.files})
+    ids = {t.id for t in merged}
+    assert "caching" not in ids
+    assert "request-routing" not in ids
+    assert "data-persistence" not in ids
+    assert "authentication" not in ids
+    assert "agent-loop" in ids
+
+
+def test_authentication_topic_kept_when_auth_crate_exists():
+    from repowiki.core.models import TopicOutline
+    from repowiki.core.topics import build_deterministic_topics, merge_topics
+
+    project = _grok_project()
+    project.files.append(
+        _file(
+            "crates/codegen/xai-grok-auth/src/lib.rs",
+            "pub struct GrokAuth;\n" + "pub fn f() {}\n" * 40,
+        )
+    )
+    graph = DependencyGraph.build_from_project(project)
+    base = build_deterministic_topics(project, graph, language="zh")
+    ids = {t.id for t in base}
+    assert "authentication" in ids
+    assert "caching" not in ids
+    llm = [
+        TopicOutline(
+            id="authentication",
+            title="xAI Grok Auth",
+            section="deep-dive",
+            key_files=["crates/codegen/xai-grok-auth/src/lib.rs"],
+        )
+    ]
+    merged = merge_topics(base, llm, {f.path for f in project.files})
+    assert any(t.id == "authentication" for t in merged)
 
 
 def test_rebuild_hides_legacy_module_tree():
@@ -275,3 +352,57 @@ def test_wiki_out_upgrades_emdash_source_chips(monkeypatch):
     assert "`crates/acp/src/lib.rs:12 AcpServer`" in page.content
     assert " — `" not in page.content
     assert " · " not in page.content
+
+
+def test_wiki_out_drops_thin_generic_web_topics_and_dead_links(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    thin = (
+        "# 缓存\n\n> 「缓存」在一次真实调用里做什么、缺了它哪条能力会断。\n\n"
+        "## 它是什么\n\n- 这条链路经过 `crates/agent/src/runtime.rs`。\n"
+    )
+    overview = (
+        "# grok-study\n\n"
+        "> 这篇文档讲 grok-study。读完您应能讲清边界。\n\n"
+        "细节见 [context-assembly](topics/context-assembly) "
+        "和 [Agent Loop](topics/agent-loop)。\n"
+    )
+    pages = [
+        {"id": "index", "title": "概述", "content": overview},
+        {"id": "architecture", "title": "架构概览", "content": "# 架构\n"},
+        {"id": "topics/agent-loop", "title": "Agent Loop", "content": "# loop\n`crates/agent/src/loop.rs`\n"},
+        {"id": "topics/caching", "title": "缓存", "content": thin},
+        {"id": "topics/request-routing", "title": "请求路由", "content": thin},
+        {"id": "topics/data-persistence", "title": "持久化", "content": thin},
+    ]
+    sidebar = [
+        {"title": "入门指南", "page_id": "", "children": [
+            {"title": "概述", "page_id": "index", "children": []}
+        ]},
+        {"title": "深入探索", "page_id": "", "children": [
+            {"title": "架构概览", "page_id": "architecture", "children": []},
+            {"title": "Agent Loop", "page_id": "topics/agent-loop", "children": []},
+            {"title": "缓存", "page_id": "topics/caching", "children": []},
+            {"title": "请求路由", "page_id": "topics/request-routing", "children": []},
+            {"title": "持久化", "page_id": "topics/data-persistence", "children": []},
+        ]},
+    ]
+
+    class _Version:
+        id = "ver-1"
+        wiki_pages = {
+            "project_name": "grok-study",
+            "pages": pages,
+            "sidebar": sidebar,
+        }
+
+    out = wiki_out("repo-1", _Version())
+    deep = next(item for item in out.sidebar if item.title == "深入探索")
+    child_ids = [c.page_id for c in deep.children]
+    assert "topics/agent-loop" in child_ids
+    assert "topics/caching" not in child_ids
+    assert "topics/request-routing" not in child_ids
+    assert "topics/data-persistence" not in child_ids
+    index = next(p for p in out.pages if p.id == "index")
+    assert "[Agent Loop](topics/agent-loop)" in index.content
+    assert "topics/context-assembly" not in index.content
+    assert "您" not in index.content

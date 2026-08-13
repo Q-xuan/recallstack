@@ -15,12 +15,16 @@ from repowiki.core.models import (
     Component,
     FileDoc,
     FileInfo,
+    KeyType,
     ModuleDoc,
     ProjectContext,
     ProjectOverview,
     ReadingGuide,
     ReadingStep,
     Relationship,
+    Subsystem,
+    TermTip,
+    TopicDoc,
     WikiData,
 )
 
@@ -137,3 +141,51 @@ def test_cite_check_works_without_llm_on_deterministic_content():
     )
     cleaned = verify_wiki_data(data, project)
     assert [f.path for f in cleaned.modules[0].files] == ["app/main.py"]
+
+
+def test_cite_check_drops_key_types_without_repo_path_and_foreign_term_tips():
+    project = _project()
+    data = WikiData(
+        overview=ProjectOverview(
+            name="demo",
+            subsystems=[
+                Subsystem(
+                    name="boot",
+                    key_types=[
+                        KeyType(name="Cli", role="parse flags", path=""),
+                        KeyType(name="boot", role="start", path="app/core.py"),
+                        KeyType(name="Ghost", role="nope", path="ghost/x.py"),
+                    ],
+                )
+            ],
+            term_tips=[
+                TermTip(term="PageRank", tip="虽然未直接使用 / 仅用于文档生成工具"),
+                TermTip(term="boot", tip="starts the process in this repo"),
+            ],
+        ),
+        architecture=ArchitectureDiagram(
+            architecture_type="monolith",
+            components=[
+                Component(
+                    name="app",
+                    key_types=[KeyType(name="Terminal", role="draw", path="")],
+                )
+            ],
+            term_tips=[TermTip(term="PageRank", tip="ranks files")],
+        ),
+        topics=[
+            TopicDoc(
+                name="caching",
+                title="缓存",
+                files=[FileDoc(path="app/main.py")],
+                key_types=[KeyType(name="Cache", role="memo", path="")],
+            )
+        ],
+    )
+    cleaned = verify_wiki_data(data, project)
+    names = [kt.name for kt in cleaned.overview.subsystems[0].key_types]
+    assert names == ["boot"]
+    assert [t.term for t in cleaned.overview.term_tips] == ["boot"]
+    assert cleaned.architecture.components[0].key_types == []
+    assert cleaned.architecture.term_tips == []
+    assert all(t.name != "caching" for t in cleaned.topics)

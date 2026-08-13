@@ -22,6 +22,7 @@ from repowiki.core.models import (
 from repowiki.core.modules import ROOT_NAME, group_into_modules
 from repowiki.core.wiki_builder import (
     WikiBuilder,
+    filter_unknown_wiki_links,
     upgrade_legacy_module_markdown,
     upgrade_source_chip_markdown,
 )
@@ -744,4 +745,81 @@ def test_upgrade_source_chip_markdown_rewrites_grok_emdash_line():
     assert "`crates/acp/src/lib.rs:12`" in line
     # Already-upgraded pills stay stable.
     assert upgrade_source_chip_markdown(upgraded) == upgraded
+
+
+def test_builder_strips_unknown_topic_links_and_pathless_key_types():
+    project = _project(
+        {
+            "bin/grok.rs": "fn main() {}\n",
+            "crates/agent/src/loop.rs": "pub struct Session;\n",
+        }
+    )
+    graph = DependencyGraph.build_from_project(project)
+    data = WikiData(
+        overview=ProjectOverview(
+            name="grok-study",
+            document_scope="这篇文档讲 grok-study。读完您应能讲清边界。",
+            what_it_is=[
+                "细节见 [context-assembly](topics/context-assembly)。",
+                "`Session` 在 `crates/agent/src/loop.rs:1`。",
+            ],
+            subsystems=[
+                Subsystem(
+                    name="Agent Loop",
+                    role="跑一轮对话",
+                    key_types=[
+                        KeyType(name="Cli", role="parse", path=""),
+                        KeyType(name="Terminal", role="draw"),
+                        KeyType(
+                            name="Session",
+                            role="持有本轮上下文",
+                            path="crates/agent/src/loop.rs",
+                        ),
+                    ],
+                )
+            ],
+            see_also=[
+                "architecture",
+                "topics/agent-loop",
+                "topics/context-assembly",
+                "[code-graph](topics/code-graph)",
+            ],
+        ),
+        architecture=ArchitectureDiagram(architecture_type="cli-tool"),
+        topics=[
+            TopicDoc(
+                name="agent-loop",
+                title="Agent Loop",
+                section="deep-dive",
+                files=[FileDoc(path="crates/agent/src/loop.rs")],
+            )
+        ],
+    )
+    wiki = WikiBuilder().build(project, data, graph, language="zh")
+    overview = wiki.get_page("index").content
+    assert "[Agent Loop](topics/agent-loop)" in overview
+    assert "[架构概览](architecture)" in overview
+    assert "topics/context-assembly" not in overview
+    assert "topics/code-graph" not in overview
+    assert "context-assembly" in overview  # label kept, href dropped
+    assert "`Cli`" not in overview
+    assert "`Terminal`" not in overview
+    assert "`Session`" in overview
+    assert "crates/agent/src/loop.rs" in overview
+    assert "您" not in overview
+    assert "读完你应能" in overview or "读完应能" in overview
+
+
+def test_filter_unknown_wiki_links_keeps_planned_ids():
+    text = (
+        "see [Agent Loop](topics/agent-loop) and "
+        "[context-assembly](topics/context-assembly) plus [arch](architecture)"
+    )
+    out = filter_unknown_wiki_links(
+        text, {"topics/agent-loop", "architecture", "index"}
+    )
+    assert "[Agent Loop](topics/agent-loop)" in out
+    assert "[arch](architecture)" in out
+    assert "topics/context-assembly" not in out
+    assert "context-assembly" in out
 

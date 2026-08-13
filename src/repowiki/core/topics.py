@@ -78,10 +78,14 @@ _OPTIONAL_WEB: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
     ("caching", "Caching", "缓存", ("cache", "redis")),
 )
 
+_OPTIONAL_WEB_BY_ID = {item[0]: item for item in _OPTIONAL_WEB}
+
 _GENERIC_WEB_SLUGS = {item[0] for item in _OPTIONAL_WEB} | {
     "error-handling",
     "background-tasks",
 }
+
+_PKG_ROOTS = {"crates", "packages", "apps"}
 
 TOPIC_PATH_CAP = 14
 GETTING_STARTED_ID = "getting-started"
@@ -95,6 +99,73 @@ def slugify_topic(text: str) -> str:
 
 def is_generic_web_slug(slug: str) -> bool:
     return (slug or "") in _GENERIC_WEB_SLUGS
+
+
+def web_system_names(slug: str) -> tuple[str, ...] | None:
+    """Path-segment tokens that make a generic-web slug first-class, or None."""
+    item = _OPTIONAL_WEB_BY_ID.get(slug or "")
+    return item[3] if item else None
+
+
+def first_class_system_dir(path: str, names: tuple[str, ...]) -> bool:
+    """True when a crate/directory name (not a leaf file) matches ``names``.
+
+    ``crates/xai-grok-auth/src/lib.rs`` counts for authentication; a helper
+    ``crates/agent/src/auth.rs`` does not.
+    """
+    if not path or not names:
+        return False
+    parts = [p for p in path.replace("\\", "/").split("/") if p]
+    if not parts:
+        return False
+    dirs = parts[:-1] if "." in parts[-1] else parts
+    wanted = {n.lower() for n in names}
+    candidates: list[str] = [d for d in dirs if d.lower() not in _SKIP_DIRS]
+    if parts[0].lower() in _PKG_ROOTS:
+        for d in parts[1:]:
+            if "." in d:
+                break
+            if d.lower() in _SKIP_DIRS:
+                continue
+            candidates.append(d)
+    for cand in candidates:
+        stem = cand.rsplit(".", 1)[0].lower()
+        tokens = set(re.split(r"[-_]", stem))
+        tokens.add(stem)
+        if tokens & wanted:
+            return True
+    return False
+
+
+def repo_has_web_system(paths, slug: str) -> bool:
+    """Generic web slug is allowed only when a matching crate/dir exists."""
+    names = web_system_names(slug)
+    if not names:
+        return False
+    return any(first_class_system_dir(p, names) for p in paths or [])
+
+
+def content_cites_first_class_system(content: str, names: tuple[str, ...]) -> bool:
+    for match in re.finditer(r"`([^`]+)`", content or ""):
+        path = match.group(1).split()[0].split(":")[0]
+        if first_class_system_dir(path, names):
+            return True
+    return False
+
+
+def keep_generic_web_topic_nav(page_id: str, content: str) -> bool:
+    """GET/sidebar: drop caching-style pages unless the body cites a real crate."""
+    pid = page_id or ""
+    if pid.startswith("topics/") or pid.startswith("concepts/"):
+        slug = pid.split("/", 1)[-1]
+    else:
+        return True
+    if not is_generic_web_slug(slug):
+        return True
+    names = web_system_names(slug)
+    if not names:
+        return False
+    return content_cites_first_class_system(content, names)
 
 
 def wiki_page_id_for_topic(topic_id: str) -> str:
@@ -193,18 +264,15 @@ def build_deterministic_topics(
             matched = [
                 f.path
                 for f in project.files
-                if _path_has_system(f.path, names) and f.path not in claimed
+                if first_class_system_dir(f.path, names)
             ]
-            if len(matched) < 2 and not any(_path_has_system(p, names) and "/" in p for p in matched):
-                # Need a real directory/crate, not one stray filename.
-                if not matched:
-                    continue
-                dirs = {p.split("/")[0] for p in matched if "/" in p}
-                if not dirs:
-                    continue
             if not matched:
                 continue
             key = _pick_keys(matched, rank_index, claimed, limit=5)
+            if not key:
+                # Nested crates (codegen/xai-grok-auth) may already be claimed
+                # by a parent system name; still emit the first-class topic.
+                key = _pick_keys(matched, rank_index, set(), limit=5)
             if not key:
                 continue
             topics.append(
@@ -324,6 +392,8 @@ def merge_topics(
         topic_id = slugify_topic(item.id or item.title)
         if not topic_id:
             continue
+        if is_generic_web_slug(topic_id) and not repo_has_web_system(known, topic_id):
+            continue
         files = [p for p in item.key_files if p.replace("\\", "/") in known]
         if not files:
             continue
@@ -345,6 +415,8 @@ def merge_topics(
     used = {p for t in by_id.values() for p in t.key_files}
     for item in base:
         if item.id in by_id:
+            continue
+        if is_generic_web_slug(item.id) and not repo_has_web_system(known, item.id):
             continue
         files = [p for p in item.key_files if p not in used]
         if not files and item.section == "getting-started":

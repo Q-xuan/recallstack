@@ -730,7 +730,7 @@ class Analyzer:
             if zh:
                 overview.document_scope = (
                     f"这篇文档讲 {project.name} 是什么、一次真实调用怎么走、仓库怎么拆。"
-                    "读完应能不靠目录讲清目标与边界，并指出链路上的关键类型。"
+                    "读完你应能不靠目录讲清目标与边界，并指出链路上的关键类型。"
                 )
             else:
                 overview.document_scope = (

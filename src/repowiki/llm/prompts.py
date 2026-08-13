@@ -26,8 +26,9 @@ def _lang_instruction(language: str) -> str:
             "请用专业简体中文撰写手册正文（接近 DeepWiki / zread）："
             "先讲这篇文档要让读者能讲清什么（启动 / 一次请求 / 一次会话 / 失败），"
             "再顺着一条真实调用把类型当角色写进去。"
-            "路径、crate/包名、符号、协议名保持英文原文（如 PageRank、ACP、`PtyHandle`），不要音译。"
-            "禁止翻译腔，禁止目录腔，禁止 “Heaviest modules”，禁止接口清单"
+            "用「你」不用「您」，句式用「读完应能…」，禁止翻译腔。"
+            "路径、crate/包名、符号、协议名保持英文原文（如 ACP、`PtyHandle`），不要音译。"
+            "禁止目录腔，禁止 “Heaviest modules”，禁止接口清单"
             "（入口是 lib.rs、子模块是 keys/pty/server、给 struct 列 spawn/resize/is_alive）。"
         ),
         "ja": "日本語で回答してください。",
@@ -37,7 +38,7 @@ def _lang_instruction(language: str) -> str:
 
 
 def _term_tips_field() -> str:
-    return '  "term_tips": [{"term": "PageRank", "tip": "how this repo uses it"}],\n'
+    return '  "term_tips": [{"term": "ACP", "tip": "how this repo uses it"}],\n'
 
 
 def _term_tips_rules(*, required: bool) -> str:
@@ -49,7 +50,9 @@ def _term_tips_rules(*, required: bool) -> str:
     return (
         count
         + "Each tip is how THIS repository uses the term, not a generic encyclopedia entry. "
-        "Keep `term` as the code identifier in English (PageRank, crate, ACP); write `tip` in the output language."
+        "Only terms that appear as identifiers or crate/dir names in THIS repo's source. "
+        "Never tip PageRank / wiki-pipeline jargon or say the term is unused here. "
+        "Keep `term` as the code identifier in English (ACP, crate); write `tip` in the output language."
     )
 
 
@@ -122,7 +125,9 @@ def build_outline_prompt(
                 "section is getting-started or deep-dive. Titles are human system names, "
                 "NEVER directory paths and NEVER 'Module: crates/foo'. "
                 "Do NOT invent a generic web-app syllabus (authentication, caching, "
-                "request-routing) unless those are first-class directories/crates here. "
+                "request-routing, data-persistence) unless a first-class crate/directory "
+                "is named that way (e.g. `xai-grok-auth`). A helper file named auth.rs "
+                "inside another crate does not count. "
                 "topics[].key_files MUST be real paths from the tree (2-6 per topic). "
                 "depth is one of deep, standard, brief. Mark at most a third as deep. "
                 "Do NOT emit modules[], reading_order, or emphasized_pages — those are planned locally. "
@@ -213,16 +218,18 @@ def build_overview_prompt(
                 f"{_term_tips_field()}"
                 "}\n\n"
                 "REQUIRED (DeepWiki handbook, not a README): "
-                "document_scope is the lede (what this document covers / what the reader can explain). "
+                "document_scope is the lede (what this document covers / what the reader can explain; "
+                "in 简体中文: 这篇文档讲…读完应能…, 用你不用您). "
                 "what_it_is: 3-6 characteristic sentences, each with a real `path:line` cite — "
                 "not a README paraphrase. "
                 "runtime_flow: types as roles on one real call. "
                 "mermaid_component: a mermaid flowchart of that runtime (not a crate tree). "
                 "codebase_structure: 2-8 rows from REAL paths (crates/, src/, packages/), "
                 "columns name / location / purpose — not a file dump. "
-                "subsystems: 3-8; each has role + 2-4 key_types (Type — job — path). "
-                "see_also: architecture plus planned topic titles as topics/<id> links "
-                "(e.g. 细节见 [Agent Loop](topics/agent-loop)). "
+                "subsystems: 3-8; each has role + 2-4 key_types. "
+                "Omit a key_type if `path` is missing; never invent Type names that are not in the source. "
+                "see_also: architecture plus planned topic ids only "
+                "(e.g. topics/agent-loop). Never invent topics/context-assembly or topics/code-graph. "
                 "Leave key_features empty. Do not dump a file inventory, method list, or JavaDoc. "
                 "Never write homework headings (what this step asks, 本步要你干什么, pass check). "
                 "Never list Python/JavaScript with version 未指定 unless those languages "
@@ -288,6 +295,7 @@ def build_module_prompt(
             "breaks if it disappeared. Do not repeat document_scope. "
             "description: same as purpose if you only fill one; do not dump README. "
             "key_types: 2-4 types as roles (`Type` — job on the flow — `path`). "
+            "Omit a key_type if you do not have a real path; never invent Type names. "
             "mermaid: one small flowchart of THIS subsystem on the call path. "
             "implementation_details: ONE happy-path walkthrough in prose paragraphs, with "
             "`path:line` cites and types in backticks. Control flow and state, not a file list. "
@@ -427,7 +435,7 @@ def build_architecture_prompt(
                 "graph is knowable — it is rendered at the top of 系统架构 / System architecture. "
                 "components: each is a ROLE in the flow (who calls whom), not a folder listing. "
                 "Each component MUST include 2-4 key_types (Type — job — path), not just "
-                "name — purpose — files. "
+                "name — purpose — files. Omit a key_type if `path` is missing; never invent Type names. "
                 "Keep files to 1-3 load-bearing paths per component. "
                 "components.files and citations.path MUST be real paths from the tree. "
                 "description must explain the system as a call path, not list heaviest files. "

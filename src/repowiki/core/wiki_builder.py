@@ -9,6 +9,11 @@ from repowiki.core.cite_check import format_citation
 from repowiki.core.graph import DependencyGraph
 from repowiki.core.models import ProjectContext, WikiData
 from repowiki.core.modules import ROOT_NAME
+from repowiki.core.topics import (
+    is_generic_web_slug,
+    keep_generic_web_topic_nav,
+    repo_has_web_system,
+)
 
 # Sidebar / page chrome labels. Path segments (crates, bin, .cargo) stay as
 # they are in the repo; only these structural names are translated.
@@ -156,10 +161,19 @@ class WikiBuilder:
         arch = wiki_data.architecture
         if arch.architecture_type:
             arch_title = structural_title("architecture", lang)
-            arch_md = self._build_architecture_page(arch, lang)
+            arch_md = self._build_architecture_page(
+                arch, lang, topics=wiki_data.topics
+            )
             pages.append(WikiPage(id="architecture", title=arch_title, content=arch_md, order=2))
 
-        topic_docs = [t for t in (wiki_data.topics or []) if t.section != "getting-started" and t.name != "getting-started"]
+        project_paths = [f.path for f in project.files]
+        topic_docs = [
+            t
+            for t in (wiki_data.topics or [])
+            if t.section != "getting-started"
+            and t.name != "getting-started"
+            and _keep_built_topic(t, project_paths)
+        ]
         for i, topic in enumerate(topic_docs):
             page_id = f"topics/{topic.name}"
             title = topic.title or topic.name
@@ -199,6 +213,11 @@ class WikiBuilder:
             pages.append(WikiPage(id="dependencies", title=dep_title, content=dep_md, order=301))
 
         sidebar = self._topic_sidebar(pages, wiki_data, language=lang)
+        known_ids = {p.id for p in pages}
+        for page in pages:
+            page.content = filter_unknown_wiki_links(page.content, known_ids)
+            if lang == "zh":
+                page.content = page.content.replace("您", "你")
         return Wiki(pages=pages, sidebar=sidebar, project_name=project.name)
 
     def _build_overview_page(
@@ -218,6 +237,8 @@ class WikiBuilder:
         lines.extend(chip_lines)
 
         scope = (getattr(overview, "document_scope", "") or "").strip()
+        if language == "zh" and scope:
+            scope = scope.replace("您", "你")
         lede = scope or _overview_lede(name, overview.one_liner, language)
         lines.append(f"> {lede}\n")
         if (
@@ -289,6 +310,7 @@ class WikiBuilder:
             getattr(overview, "see_also", None) or [],
             topics or [],
             language,
+            known_ids=_planned_page_ids(topics),
         )
         if see_lines:
             lines.append(f"## {structural_title('see-also', language)}\n")
@@ -327,7 +349,7 @@ class WikiBuilder:
         lines.append("")
         return "\n".join(lines)
 
-    def _build_architecture_page(self, arch, language: str = "en") -> str:
+    def _build_architecture_page(self, arch, language: str = "en", topics=None) -> str:
         title = structural_title("architecture", language)
         lines = [f"# {title}\n"]
         if language == "zh":
@@ -373,10 +395,22 @@ class WikiBuilder:
                     files = f"；证据：{cites}" if language == "zh" else f"; evidence: {cites}"
                 lines.append(f"- **{c.name}**{purpose}{files}")
                 for kt in getattr(c, "key_types", None) or []:
-                    lines.append(_key_type_line(kt))
+                    line = _key_type_line(kt)
+                    if line:
+                        lines.append(line)
             lines.append("")
 
         _append_term_tips(lines, getattr(arch, "term_tips", None), language)
+
+        see_lines = _see_also_lines(
+            [],
+            topics or [],
+            language,
+            known_ids=_planned_page_ids(topics) - {"architecture"},
+        )
+        if see_lines:
+            lines.append(f"## {structural_title('see-also', language)}\n")
+            lines.extend(see_lines)
 
         return "\n".join(lines)
 
@@ -443,8 +477,13 @@ class WikiBuilder:
             if topic.section == "getting-started" or topic.name == "getting-started":
                 continue
             pid = f"topics/{topic.name}"
-            if pid in page_ids:
-                deep.append(SidebarItem(title=topic.title or topic.name, page_id=pid))
+            if pid not in page_ids:
+                continue
+            if is_generic_web_slug(topic.name) and not keep_generic_web_topic_nav(
+                pid, next((p.content for p in pages if p.id == pid), "")
+            ):
+                continue
+            deep.append(SidebarItem(title=topic.title or topic.name, page_id=pid))
         items: list[SidebarItem] = []
         if getting:
             items.append(
@@ -521,10 +560,10 @@ class WikiBuilder:
             _append_mermaid(lines, own_mermaid)
 
         key_types = list(getattr(mod, "key_types", None) or [])
-        if key_types:
+        type_lines = [line for kt in key_types if (line := _key_type_line(kt))]
+        if type_lines:
             lines.append(f"## {structural_title('key-types', language)}\n")
-            for kt in key_types:
-                lines.append(_key_type_line(kt))
+            lines.extend(type_lines)
             lines.append("")
 
         if implementation and not _duplicates_chain_prose(implementation, chains):
@@ -682,11 +721,12 @@ def _key_type_line(kt) -> str:
     name = getattr(kt, "name", "") or ""
     role = (getattr(kt, "role", "") or "").strip()
     path = (getattr(kt, "path", "") or "").strip()
-    bits = [f"`{name}`"] if name else []
+    if not name or not path:
+        return ""
+    bits = [f"`{name}`"]
     if role:
         bits.append(role)
-    if path:
-        bits.append(f"`{path}`")
+    bits.append(f"`{path}`")
     return "- " + " — ".join(bits)
 
 
@@ -719,23 +759,70 @@ def _render_subsystems(subsystems, language: str = "en") -> list[str]:
         mermaid = (getattr(sub, "mermaid", "") or "").strip()
         _append_mermaid(lines, mermaid, max_lines=20)
         types = list(getattr(sub, "key_types", None) or [])
-        if types:
-            for kt in types:
-                lines.append(_key_type_line(kt))
+        type_lines = [line for kt in types if (line := _key_type_line(kt))]
+        if type_lines:
+            lines.extend(type_lines)
             lines.append("")
         files = list(getattr(sub, "files", None) or [])
-        if files and not types:
+        if files and not type_lines:
             cites = ", ".join(f"`{p}`" for p in files[:4])
             label = "相关源码" if language == "zh" else "Source"
             lines.append(f"{label}: {cites}\n")
     return lines
 
 
-def _see_also_lines(see_also, topics, language: str = "en") -> list[str]:
+def _planned_page_ids(topics) -> set[str]:
+    ids = {"index", "architecture", "getting-started", "reading-guide", "dependencies"}
+    for topic in topics or []:
+        tid = getattr(topic, "name", "") or getattr(topic, "id", "") or ""
+        section = getattr(topic, "section", "") or ""
+        if not tid or section == "getting-started" or tid == "getting-started":
+            continue
+        ids.add(f"topics/{tid}")
+    return ids
+
+
+def _keep_built_topic(topic, project_paths: list[str]) -> bool:
+    slug = getattr(topic, "name", "") or ""
+    if not is_generic_web_slug(slug):
+        return True
+    return repo_has_web_system(project_paths, slug)
+
+
+_MD_WIKI_LINK = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+
+
+def filter_unknown_wiki_links(text: str, known_ids: set[str]) -> str:
+    """Drop markdown hrefs that are not planned wiki page ids."""
+    if not text or not known_ids:
+        return text
+
+    def repl(match: re.Match[str]) -> str:
+        label, href = match.group(1), (match.group(2) or "").strip()
+        page_id = href.split()[0].strip("<>") if href else ""
+        if not page_id or page_id.startswith(("#", "http://", "https://", "mailto:")):
+            return match.group(0)
+        if page_id in known_ids:
+            return match.group(0)
+        return label
+
+    return _MD_WIKI_LINK.sub(repl, text)
+
+
+def _see_also_lines(
+    see_also,
+    topics,
+    language: str = "en",
+    *,
+    known_ids: set[str] | None = None,
+) -> list[str]:
     titles = {
-        (getattr(t, "name", "") or ""): (getattr(t, "title", "") or getattr(t, "name", ""))
+        (getattr(t, "name", "") or getattr(t, "id", "") or ""): (
+            getattr(t, "title", "") or getattr(t, "name", "") or getattr(t, "id", "")
+        )
         for t in topics or []
     }
+    planned = known_ids if known_ids is not None else _planned_page_ids(topics)
     arch_title = structural_title("architecture", language)
     items: list[str] = []
     seen: set[str] = set()
@@ -745,26 +832,34 @@ def _see_also_lines(see_also, topics, language: str = "en") -> list[str]:
         for t in topics:
             if getattr(t, "section", "") == "getting-started":
                 continue
-            tid = getattr(t, "name", "") or ""
+            tid = getattr(t, "name", "") or getattr(t, "id", "") or ""
             if tid:
                 raw.append(f"topics/{tid}")
     for item in raw:
         text = str(item or "").strip()
-        if not text or text in seen:
+        if not text:
             continue
-        seen.add(text)
-        if text.startswith("[") and "](" in text:
-            items.append(f"- {text}")
-            continue
-        if text in {"architecture", "架构概览"}:
-            items.append(f"- [{arch_title}](architecture)")
-            continue
-        href = text
+        href = ""
         label = text
-        if text.startswith("topics/"):
-            tid = text.split("/", 1)[-1]
-            href = f"topics/{tid}"
+        md = _MD_WIKI_LINK.search(text)
+        if md:
+            label, href = md.group(1), md.group(2).split()[0].strip("<>")
+        elif text in {"architecture", "架构概览"}:
+            href, label = "architecture", arch_title
+        elif text in {"index", "overview", "概述"}:
+            href, label = "index", structural_title("overview", language)
+        elif text.startswith("topics/"):
+            href = text.split()[0]
+            tid = href.split("/", 1)[-1]
             label = titles.get(tid) or tid
+        elif text in planned:
+            href = text
+        elif f"topics/{text}" in planned:
+            href = f"topics/{text}"
+            label = titles.get(text) or text
+        if not href or href not in planned or href in seen:
+            continue
+        seen.add(href)
         items.append(f"- [{label}]({href})")
     return items + ([""] if items else [])
 
@@ -851,7 +946,7 @@ def _overview_lede(name: str, one_liner: str, language: str) -> str:
         extra = f"（{one_liner.rstrip('。')}）" if one_liner else ""
         return (
             f"这篇文档讲 {name} 是什么、给谁用、主要能力落在哪{extra}。"
-            "读完应能不靠目录讲清目标与边界。"
+            "读完你应能不靠目录讲清目标与边界。"
         )
     extra = f" {one_liner}" if one_liner else ""
     return (
@@ -1199,10 +1294,14 @@ def rebuild_topic_sidebar(
         (p for p in pages if str(p.get("id") or "").startswith("topics/")),
         key=lambda p: str(p.get("id") or ""),
     )
+    kept_topics = 0
     for page in topic_pages:
         pid = str(page.get("id") or "")
+        if not keep_generic_web_topic_nav(pid, str(page.get("content") or "")):
+            continue
         deep.append(leaf(pid))
-    if not topic_pages:
+        kept_topics += 1
+    if kept_topics == 0:
         for page in pages:
             pid = str(page.get("id") or "")
             if not pid.startswith("concepts/"):
@@ -1241,6 +1340,25 @@ def rebuild_topic_sidebar(
             "children": module_children[:24],
         })
     return items
+
+
+def prune_generic_web_sidebar(sidebar: list, content_by_id: dict[str, str]) -> list:
+    """Drop thin caching/request-routing topic leaves from an existing nav."""
+    out: list = []
+    for item in sidebar or []:
+        if not isinstance(item, dict):
+            out.append(item)
+            continue
+        pid = str(item.get("page_id") or "")
+        children = prune_generic_web_sidebar(item.get("children") or [], content_by_id)
+        if pid.startswith(("topics/", "concepts/")) and not keep_generic_web_topic_nav(
+            pid, content_by_id.get(pid, "")
+        ):
+            continue
+        new_item = dict(item)
+        new_item["children"] = children
+        out.append(new_item)
+    return out
 
 
 def sidebar_has_topic_groups(sidebar: list) -> bool:
