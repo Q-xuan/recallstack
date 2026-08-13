@@ -295,6 +295,30 @@ def test_source_ref_re_matches_readme_span():
     assert "export function isPathLikeChip" in src
 
 
+def test_markdown_ts_normalizes_bare_mermaid():
+    from pathlib import Path
+
+    src = Path("frontend/src/lib/markdown.ts").read_text(encoding="utf-8")
+    diagram = Path("frontend/src/components/MermaidDiagram.tsx").read_text(encoding="utf-8")
+    assert "export function normalizeMermaidSource" in src
+    assert "flowchart LR" in src
+    assert "→" in src and "⟶" in src
+    assert 'replace(/[→⟶' in src
+    assert "normalizeMermaidSource(body)" in src
+    assert "flowchart|graph|sequenceDiagram|classDiagram|stateDiagram" in src
+    assert "from \"../lib/markdown\"" in diagram
+    assert "normalizeMermaidSource(code)" in diagram
+    fn = re.search(
+        r"export function normalizeMermaidSource\(code: string\): string \{[\s\S]*?\n\}",
+        src,
+    )
+    assert fn, "normalizeMermaidSource must be exported from markdown.ts"
+    body = fn.group(0)
+    assert "MERMAID_TYPE_RE.test" in body
+    assert "flowchart LR" in body
+    assert 'startsWith("%%")' in body
+
+
 def test_wiki_content_peek_hitbox_is_chip_only():
     from pathlib import Path
 

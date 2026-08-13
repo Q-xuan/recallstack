@@ -217,7 +217,7 @@ def build_overview_prompt(
                 '      "role": "what it does on the call flow",\n'
                 '      "key_types": [{"name": "start_turn", "role": "pager dispatch / start_turn", "path": "src/file.rs:12"}],\n'
                 '      "files": ["src/file.rs"],\n'
-                '      "mermaid": ""\n'
+                '      "mermaid": "flowchart LR\\n  A[Pager] --> B[Agent] --> C[Model]"\n'
                 "    }\n"
                 "  ],\n"
                 '  "see_also": ["architecture", "topics/agent-loop"],\n'
@@ -234,11 +234,16 @@ def build_overview_prompt(
                 "what_it_is: 3-6 characteristic sentences, each with a real `path:line` cite "
                 "(not a crate folder and not a path without a line). "
                 "runtime_flow: types as roles on one real call. "
-                "mermaid_component: a mermaid flowchart of that runtime (not a crate tree). "
+                "mermaid_component: a mermaid flowchart of that runtime (not a crate tree); "
+                "first line MUST be flowchart LR / flowchart TD / sequenceDiagram "
+                "(never a bare `A --> B` with no diagram type). "
                 "codebase_structure: 2-8 rows from REAL paths (crates/, src/, packages/), "
                 "columns name / location / purpose — not a file dump. "
                 "subsystems: 3-8. Each row MUST be a real Type, one-line duty, and one "
                 "`path:line Symbol` key_type — not an empty heading. "
+                "Each subsystem mermaid MUST start with `flowchart LR` or `sequenceDiagram`; "
+                "prefer 3-6 labeled nodes; labels ≤ ~12 CJK characters; "
+                "no one-edge toy graphs that omit the type. "
                 "Name Agent Loop (pager dispatch / start_turn), never 'Agent Loop 与上下文装配'. "
                 "Terminal UI / TUI MUST cite pager types (Pager / TuiPager), not an empty section. "
                 "Omit a key_type if `path` is missing; never invent Type names that are not in the source. "
@@ -317,6 +322,8 @@ def build_module_prompt(
             "key_types: 2-4 types as roles (`Type` — job on the flow — `path`). "
             "Omit a key_type if you do not have a real path; never invent Type names. "
             "mermaid: one small flowchart of THIS subsystem on the call path. "
+            "First line MUST be flowchart LR or sequenceDiagram; never a bare "
+            "`A --> B` with no diagram type. Prefer 3-6 labeled nodes. "
             "Node labels ≤ ~12 CJK characters (or ~24 ASCII), complete phrases, "
             "no trailing incomplete verbs (合并为 / 调用 cut mid-word). "
             "implementation_details: ONE happy-path walkthrough in prose paragraphs, with "
@@ -352,7 +359,8 @@ def build_module_prompt(
             "(English: user input → assemble session/prompt → model call → parse tool calls → "
             "run tools → write results back → call model again / stop). "
             "call_chains and implementation_details must walk that loop (下一轮 / observe / 工具调用). "
-            "mermaid is REQUIRED: a flowchart of THAT loop, not System[0] alignment. "
+            "mermaid is REQUIRED: a flowchart of THAT loop starting with flowchart LR, "
+            "not System[0] alignment. "
             "FORBIDDEN as the spine/lede of this page: replace_or_insert_system_head, "
             "PromptContext-as-the-loop, traceparent injection, ChatStateActor System head. "
             "Those belong on topics/context-assembly, at most a short aside here. "

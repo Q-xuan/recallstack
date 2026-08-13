@@ -38,6 +38,23 @@ export function sourceRefValue(raw: string): string {
   return match?.[1] || trimmed;
 }
 
+const MERMAID_TYPE_RE =
+  /^(?:flowchart|graph|sequenceDiagram|classDiagram|stateDiagram(?:-v2)?|erDiagram|gantt|pie|gitGraph|mindmap|timeline)\b/i;
+
+/** Wrap typeless mermaid (`A --> B`) and normalize unicode arrows before parse. */
+export function normalizeMermaidSource(code: string): string {
+  let text = (code || "").replace(/\r\n/g, "\n").trim();
+  if (!text) return text;
+  text = text.replace(/[→⟶⇒➔➜➝➞⟹]/g, "-->");
+  const firstReal =
+    text
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line && !line.startsWith("%%")) ?? "";
+  if (firstReal && MERMAID_TYPE_RE.test(firstReal)) return text;
+  return `flowchart LR\n${text}`;
+}
+
 /** README chrome that should never render as raw tags in a wiki article. */
 const HTML_CHROME_RE = /<(div|picture|source|img)\b|srcset\s*=/i;
 
@@ -423,7 +440,7 @@ export function renderMarkdown(md: string): RenderedMarkdown {
       if (body) {
         blocks.push(
           lang === "mermaid"
-            ? { kind: "mermaid", code: body }
+            ? { kind: "mermaid", code: normalizeMermaidSource(body) }
             : { kind: "code", lang: lang || "text", code: body },
         );
       }

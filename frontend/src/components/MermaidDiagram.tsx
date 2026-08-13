@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import mermaid from "mermaid";
 import { useT } from "../lib/i18n";
+import { normalizeMermaidSource } from "../lib/markdown";
 import { readTheme } from "../lib/theme";
 
 mermaid.initialize({ startOnLoad: false, theme: "default" });
@@ -38,8 +39,9 @@ export default function MermaidDiagram({ code }: Props) {
       themeVariables: { fontFamily: "inherit" },
     });
     const id = `mermaid-${++mermaidId}`;
+    const source = normalizeMermaidSource(code);
     mermaid
-      .render(id, code)
+      .render(id, source)
       .then(({ svg }) => {
         if (cancelled) return;
         setSvg(svg);
@@ -69,7 +71,7 @@ export default function MermaidDiagram({ code }: Props) {
     return (
       <div className="rs-diagram-error">
         <p>{t("图表渲染失败：", "Diagram failed to render: ")}{error}</p>
-        <pre>{code}</pre>
+        <pre>{normalizeMermaidSource(code)}</pre>
       </div>
     );
   }

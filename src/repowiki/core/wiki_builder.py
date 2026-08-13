@@ -765,7 +765,7 @@ class WikiBuilder:
 
 
 def _append_mermaid(lines: list[str], mermaid: str, *, max_lines: int = 40) -> None:
-    text = (mermaid or "").strip()
+    text = normalize_mermaid_source(mermaid)
     if not text:
         return
     if text.count("\n") > max_lines:
@@ -991,6 +991,7 @@ def upgrade_wiki_page_content(
     content = upgrade_source_chip_markdown(content)
     content = upgrade_key_type_chip_markdown(content)
     content = fill_key_type_chip_lines(content)
+    content = upgrade_mermaid_fences(content)
     content = shorten_mermaid_node_labels(content)
     content = strip_reading_wiki_homework(content, page_id=page_id)
     content = upgrade_architecture_loop_wording(content)
@@ -1217,6 +1218,12 @@ _MERMAID_NODE_RE = re.compile(
     r'(?P<pre>\b[A-Za-z][\w-]*\s*)(?P<open>\[(?:")?)(?P<label>[^\]"\n]+)(?P<close>"?\])'
 )
 _INCOMPLETE_TRAIL_RE = re.compile(r"(然后|后将|并把|并将|为|把|从)$")
+_MERMAID_TYPE_RE = re.compile(
+    r"^(?:flowchart|graph|sequenceDiagram|classDiagram|stateDiagram(?:-v2)?|"
+    r"erDiagram|gantt|pie|gitGraph|mindmap|timeline)\b",
+    re.I,
+)
+_UNICODE_ARROW_RE = re.compile(r"[→⟶⇒➔➜➝➞⟹]")
 
 
 def _parse_file_pill(inner: str) -> tuple[str, str, str]:
@@ -1295,6 +1302,43 @@ def _strip_incomplete_mermaid_trail(text: str) -> str:
     while cleaned and _INCOMPLETE_TRAIL_RE.search(cleaned):
         cleaned = _INCOMPLETE_TRAIL_RE.sub("", cleaned).rstrip()
     return cleaned
+
+
+def normalize_mermaid_source(code: str) -> str:
+    """Make a mermaid fence body parseable: ASCII arrows + a diagram type.
+
+    Bare ``A --> B`` / ``A → B`` has no type; Mermaid then fails with
+    ``No diagram type detected``. Wrap those as ``flowchart LR`` unless the
+    first real line is already a known type keyword.
+    """
+    text = (code or "").replace("\r\n", "\n").strip()
+    if not text:
+        return text
+    text = _UNICODE_ARROW_RE.sub("-->", text)
+    first_real = ""
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("%%"):
+            continue
+        first_real = stripped
+        break
+    if first_real and _MERMAID_TYPE_RE.match(first_real):
+        return text
+    return f"flowchart LR\n{text}"
+
+
+def upgrade_mermaid_fences(content: str) -> str:
+    """GET: rewrite typeless ```mermaid fences so persisted overview diagrams render."""
+    if not content or "```mermaid" not in content:
+        return content
+
+    def fence_repl(match: re.Match[str]) -> str:
+        body = normalize_mermaid_source(match.group(1))
+        if not body:
+            return match.group(0)
+        return f"```mermaid\n{body}\n```"
+
+    return _MERMAID_FENCE_RE.sub(fence_repl, content)
 
 
 def clip_mermaid_label(text: str) -> str:

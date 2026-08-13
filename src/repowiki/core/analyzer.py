@@ -1155,8 +1155,12 @@ def _coerce_mermaid(raw) -> str:
     if not raw:
         return ""
     if isinstance(raw, list):
-        return "\n".join(str(x) for x in raw if str(x).strip())
-    return str(raw)
+        text = "\n".join(str(x) for x in raw if str(x).strip())
+    else:
+        text = str(raw)
+    from repowiki.core.wiki_builder import normalize_mermaid_source
+
+    return normalize_mermaid_source(text)
 
 
 def _coerce_what_it_is(raw) -> list[str]:

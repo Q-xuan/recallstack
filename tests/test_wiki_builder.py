@@ -29,11 +29,13 @@ from repowiki.core.wiki_builder import (
     cap_directory_sidebar,
     fill_key_type_chip_lines,
     filter_unknown_wiki_links,
+    normalize_mermaid_source,
     shorten_mermaid_node_labels,
     strip_reading_wiki_homework,
     upgrade_architecture_loop_wording,
     upgrade_key_type_chip_markdown,
     upgrade_legacy_module_markdown,
+    upgrade_mermaid_fences,
     upgrade_source_chip_markdown,
     upgrade_wiki_page_content,
 )
@@ -1033,6 +1035,104 @@ def test_strip_reading_guide_homework_and_practice_concepts():
     )
     assert "可练习概念" not in via_get
     assert "本步要你干什么" not in via_get
+
+
+def test_normalize_mermaid_wraps_bare_arrows():
+    out = normalize_mermaid_source("Pager --> Terminal")
+    assert out.startswith("flowchart LR")
+    assert "Pager --> Terminal" in out
+    chained = normalize_mermaid_source("Agent --> AgentClient --> Model")
+    assert chained.startswith("flowchart LR")
+    assert "Agent --> AgentClient --> Model" in chained
+
+
+def test_normalize_mermaid_unicode_arrows_to_ascii():
+    out = normalize_mermaid_source("Pager → Terminal")
+    assert "→" not in out
+    assert "⟶" not in out
+    assert "Pager --> Terminal" in out
+    assert out.startswith("flowchart LR")
+    long_arrow = normalize_mermaid_source("A ⟶ B")
+    assert "A --> B" in long_arrow
+    assert "⟶" not in long_arrow
+
+
+def test_normalize_mermaid_does_not_wrap_typed_diagrams():
+    flow = "flowchart TD\n  A --> B"
+    assert normalize_mermaid_source(flow) == flow
+    seq = "sequenceDiagram\n  A->>B: hi"
+    assert normalize_mermaid_source(seq) == seq
+    graph = "graph LR\n  X --> Y"
+    assert normalize_mermaid_source(graph) == graph
+    commented = "%% init\nflowchart LR\n  A --> B"
+    assert normalize_mermaid_source(commented) == commented
+    already = normalize_mermaid_source("Pager --> Terminal")
+    assert normalize_mermaid_source(already) == already
+
+
+def test_upgrade_wiki_rewrites_bare_mermaid_fences():
+    md = (
+        "## 核心子系统\n\n"
+        "### Terminal UI\n\n"
+        "```mermaid\n"
+        "Pager → Terminal\n"
+        "```\n\n"
+        "### Agent Loop\n\n"
+        "```mermaid\n"
+        "Agent --> AgentClient --> Model\n"
+        "```\n"
+    )
+    via_fences = upgrade_mermaid_fences(md)
+    via_get = upgrade_wiki_page_content(md, {"index"}, language="zh", page_id="index")
+    for fixed in (via_fences, via_get):
+        assert "flowchart LR" in fixed
+        assert "Pager --> Terminal" in fixed
+        assert "Agent --> AgentClient --> Model" in fixed
+        assert "→" not in fixed
+        bodies = re.findall(r"```mermaid\n(.*?)```", fixed, flags=re.S)
+        assert bodies
+        for body in bodies:
+            first = next(line.strip() for line in body.splitlines() if line.strip())
+            assert first.startswith("flowchart LR")
+
+
+def test_overview_subsystem_mermaid_wraps_bare_arrows_at_generate_time():
+    project = _project({"src/pager.rs": "struct Pager {}\n" + _FILLER})
+    graph = DependencyGraph.build_from_project(project)
+    data = WikiData(
+        overview=ProjectOverview(
+            name="fixture",
+            document_scope="这篇文档讲子系统图。",
+            what_it_is=["Pager 在 `src/pager.rs:1` 画终端。"],
+            subsystems=[
+                Subsystem(
+                    name="Terminal UI",
+                    role="把输出画到终端",
+                    key_types=[
+                        KeyType(name="Pager", role="画屏", path="src/pager.rs:1"),
+                    ],
+                    mermaid="Pager → Terminal",
+                )
+            ],
+        )
+    )
+    wiki = WikiBuilder().build(project, data, graph, language="zh")
+    content = wiki.get_page("index").content
+    assert "```mermaid" in content
+    assert "flowchart LR" in content
+    assert "Pager --> Terminal" in content
+    assert "Pager → Terminal" not in content
+
+
+def test_coerce_mermaid_wraps_bare_arrows_at_generate_time():
+    from repowiki.core.analyzer import _coerce_mermaid
+
+    out = _coerce_mermaid("Pager → Terminal")
+    assert out.startswith("flowchart LR")
+    assert "Pager --> Terminal" in out
+    assert "→" not in out
+    typed = _coerce_mermaid("sequenceDiagram\n  A->>B: hi")
+    assert typed.startswith("sequenceDiagram")
 
 
 def test_shorten_mermaid_node_labels_clips_incomplete_cjk_verbs():

@@ -91,6 +91,9 @@ def test_zh_prompts_ask_for_handbook_prose_and_term_tips():
     assert "codebase_structure" in overview_user
     assert "subsystems" in overview_user
     assert "mermaid_component" in overview_user
+    assert "flowchart LR" in overview_user
+    assert "sequenceDiagram" in overview_user
+    assert "no diagram type" in overview_user
     assert "file inventory" in overview_user
     assert "key_features" in overview_user
     assert "本步要你干什么" in overview[0]["content"]
@@ -119,6 +122,8 @@ def test_zh_prompts_ask_for_handbook_prose_and_term_tips():
     assert "Heaviest modules" in user
     assert "call_chains: REQUIRED" in user
     assert "Omit files[].key_symbols" in user
+    assert "flowchart LR or sequenceDiagram" in user
+    assert "never a bare" in user
     standard = build_module_prompt("app", "src", "demo", "zh", depth="standard")
     assert "Walkthrough + at least one call_chain" in standard[-1]["content"]
     assert "key_symbols\": [{\"name\": \"func_name\"" not in standard[-1]["content"]
@@ -139,6 +144,7 @@ def test_zh_prompts_ask_for_handbook_prose_and_term_tips():
     assert "执行工具" in loop_user
     assert "再调模型" in loop_user
     assert "mermaid is REQUIRED" in loop_user
+    assert "starting with flowchart LR" in loop_user
     assert "下一轮" in loop_user
     assert "observe" in loop_user
     assert "工具调用" in loop_user

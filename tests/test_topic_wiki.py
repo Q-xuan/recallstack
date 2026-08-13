@@ -882,3 +882,43 @@ def test_wiki_out_fills_key_type_line_and_strips_guide_homework(monkeypatch):
     assert "## 步骤 1: 渲染" in guide_page.content
 
 
+def test_wiki_out_wraps_bare_overview_mermaid():
+    class _Version:
+        id = "ver-1"
+        wiki_pages = {
+            "project_name": "grok-study",
+            "pages": [
+                {
+                    "id": "index",
+                    "title": "概述",
+                    "content": (
+                        "# grok-study\n\n"
+                        "## 核心子系统\n\n"
+                        "### Terminal UI\n\n"
+                        "```mermaid\n"
+                        "Pager → Terminal\n"
+                        "```\n\n"
+                        "### Agent Loop\n\n"
+                        "```mermaid\n"
+                        "Agent --> AgentClient --> Model\n"
+                        "```\n"
+                    ),
+                },
+            ],
+            "sidebar": [
+                {
+                    "title": "入门指南",
+                    "page_id": "",
+                    "children": [{"title": "概述", "page_id": "index", "children": []}],
+                }
+            ],
+        }
+
+    out = wiki_out("repo-1", _Version())
+    content = out.pages[0].content
+    assert "flowchart LR" in content
+    assert "Pager --> Terminal" in content
+    assert "Agent --> AgentClient --> Model" in content
+    assert "→" not in content
+
+
