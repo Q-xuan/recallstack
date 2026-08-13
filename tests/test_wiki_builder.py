@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+import re
+
 from repowiki.core.graph import DependencyGraph
 from repowiki.core.models import (
     ArchitectureDiagram,
@@ -23,7 +27,10 @@ from repowiki.core.modules import ROOT_NAME, group_into_modules
 from repowiki.core.wiki_builder import (
     WikiBuilder,
     cap_directory_sidebar,
+    fill_key_type_chip_lines,
     filter_unknown_wiki_links,
+    shorten_mermaid_node_labels,
+    strip_reading_wiki_homework,
     upgrade_architecture_loop_wording,
     upgrade_key_type_chip_markdown,
     upgrade_legacy_module_markdown,
@@ -987,6 +994,68 @@ def test_upgrade_key_type_chip_and_agentloop_wording():
     assert "AgentLoop" not in combined
 
 
+def test_fill_key_type_chip_lines_from_evidence_does_not_invent_line_one():
+    md = (
+        "## 关键类型\n\n"
+        "- StreamingMarkdownRenderer — 流式渲染 — "
+        "`crates/markdown/src/lib.rs StreamingMarkdownRenderer`\n"
+        "- GhostType — 无证据 — `crates/ghost/src/lib.rs GhostType`\n\n"
+        "## 源码证据\n\n"
+        "- `crates/markdown/src/lib.rs:40 StreamingMarkdownRenderer`\n"
+        "- `crates/other/src/lib.rs:1 Other`\n"
+    )
+    filled = fill_key_type_chip_lines(md)
+    assert (
+        "`crates/markdown/src/lib.rs:40 StreamingMarkdownRenderer`" in filled
+    )
+    assert "`crates/ghost/src/lib.rs GhostType`" in filled
+    assert "`crates/ghost/src/lib.rs:1 GhostType`" not in filled
+    via_get = upgrade_wiki_page_content(md, {"index"}, language="zh")
+    assert "`crates/markdown/src/lib.rs:40 StreamingMarkdownRenderer`" in via_get
+    assert ":1 GhostType`" not in via_get
+
+
+def test_strip_reading_guide_homework_and_practice_concepts():
+    md = (
+        "# 导读\n\n"
+        "这是仓库的阅读剧本。每一步对应一个可练习概念：先读证据，再做回忆。\n\n"
+        "## 可练习概念\n\n"
+        "- Agent Loop\n\n"
+        "## 步骤 1: Agent Loop (~10 min)\n\n"
+        "跟一次调用。\n"
+    )
+    stripped = strip_reading_wiki_homework(md, page_id="reading-guide")
+    assert "可练习概念" not in stripped
+    assert "## 步骤 1: Agent Loop" in stripped
+    assert "再跟一次调用" in stripped
+    via_get = upgrade_wiki_page_content(
+        md, {"reading-guide", "topics/agent-loop"}, language="zh", page_id="reading-guide"
+    )
+    assert "可练习概念" not in via_get
+    assert "本步要你干什么" not in via_get
+
+
+def test_shorten_mermaid_node_labels_clips_incomplete_cjk_verbs():
+    md = (
+        "## 一次调用怎么走\n\n"
+        "```mermaid\n"
+        "flowchart TD\n"
+        '  A["合并为"]\n'
+        '  B["调用"]\n'
+        '  C["把用户输入交给模型再合并为下一轮调用"]\n'
+        "  A --> B --> C\n"
+        "```\n"
+    )
+    fixed = shorten_mermaid_node_labels(md)
+    assert 'A["合并"]' in fixed
+    assert "合并为" not in re.search(r'A\["([^"]+)"\]', fixed).group(1)
+    assert 'B["调用"]' in fixed
+    label_c = re.search(r'C\["([^"]+)"\]', fixed).group(1)
+    assert len(label_c) <= 12
+    assert not label_c.endswith(("为", "把", "从"))
+
+
+
 def test_directory_sidebar_is_capped():
     children = [
         {"title": f"crate-{i}", "page_id": f"modules/crates/c{i}", "children": []}
@@ -1023,7 +1092,7 @@ def test_directory_sidebar_excludes_cargo_and_ranks_product_crates():
         {
             "id": "index",
             "title": "概述",
-            "content": "`crates/xai-grok-pager` `crates/xai-grok-agent`",
+            "content": "`crates/xai-grok-pager` runs the TUI.\n",
         },
         {"id": "modules/.cargo", "title": ".cargo", "content": ""},
         {"id": "modules/bin", "title": "bin", "content": ""},

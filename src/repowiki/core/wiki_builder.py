@@ -990,6 +990,9 @@ def upgrade_wiki_page_content(
         return content
     content = upgrade_source_chip_markdown(content)
     content = upgrade_key_type_chip_markdown(content)
+    content = fill_key_type_chip_lines(content)
+    content = shorten_mermaid_node_labels(content)
+    content = strip_reading_wiki_homework(content, page_id=page_id)
     content = upgrade_architecture_loop_wording(content)
     content = filter_unknown_wiki_links(content, known_ids)
     if language == "zh" or "您" in content or "阅读后" in content:
@@ -1192,6 +1195,180 @@ def upgrade_key_type_chip_markdown(content: str) -> str:
     return _KEY_TYPE_TRIPLE_RE.sub(repl, content)
 
 
+_FILE_PILL_RE = re.compile(
+    r"^([A-Za-z0-9_./\-]+?\.[A-Za-z0-9]+)(?::(\d+)(?:-\d+)?)?(?:[ \t]+(.+))?$"
+)
+_KEY_TYPE_HEADING_RE = re.compile(
+    r"(?im)^#{2,3}[ \t]+(关键类型|核心子系统|Key types|Core subsystems)\b"
+)
+_READING_HOMEWORK_HEADINGS = {
+    "本步要你干什么",
+    "What this step asks of you",
+    "过关",
+    "Pass",
+    "自测",
+    "Self-check",
+    "可练习概念",
+    "Practice concept",
+    "Practice concepts",
+}
+_MERMAID_FENCE_RE = re.compile(r"(?ms)^```mermaid\n(.*?)```")
+_MERMAID_NODE_RE = re.compile(
+    r'(?P<pre>\b[A-Za-z][\w-]*\s*)(?P<open>\[(?:")?)(?P<label>[^\]"\n]+)(?P<close>"?\])'
+)
+_INCOMPLETE_TRAIL_RE = re.compile(r"(然后|后将|并把|并将|为|把|从)$")
+
+
+def _parse_file_pill(inner: str) -> tuple[str, str, str]:
+    """Return (path, line, symbol) from a chip pill body."""
+    text = (inner or "").strip()
+    match = _FILE_PILL_RE.match(text)
+    if not match:
+        return "", "", ""
+    return (
+        (match.group(1) or "").strip(),
+        (match.group(2) or "").strip(),
+        (match.group(3) or "").strip(),
+    )
+
+
+def _collect_pill_lines(content: str) -> dict[tuple[str, str], str]:
+    """Map (path, symbol) and (path, '') to a cited line number on this page."""
+    known: dict[tuple[str, str], str] = {}
+    for match in re.finditer(r"`([^`]+)`", content or ""):
+        path, line, symbol = _parse_file_pill(match.group(1))
+        if not path or not line:
+            continue
+        known.setdefault((path, symbol), line)
+        known.setdefault((path, ""), line)
+    return known
+
+
+def fill_key_type_chip_lines(content: str) -> str:
+    """GET: add `:line` to 关键类型 `` `path Symbol` `` pills when the page already cites it.
+
+    Does not invent `:1` unless that line is already cited for the same symbol.
+    """
+    if not content or "`" not in content:
+        return content
+    known = _collect_pill_lines(content)
+    if not known:
+        return content
+
+    def rewrite_section(section: str) -> str:
+        def pill_repl(match: re.Match[str]) -> str:
+            inner = match.group(1)
+            path, line, symbol = _parse_file_pill(inner)
+            if not path or line or not symbol:
+                return match.group(0)
+            found = known.get((path, symbol))
+            if not found:
+                found = known.get((path, ""))
+                if found == "1":
+                    found = ""
+            if not found:
+                return match.group(0)
+            return f"`{path}:{found} {symbol}`"
+
+        return re.sub(r"`([^`]+)`", pill_repl, section)
+
+    parts = re.split(r"(?m)(?=^## )", content)
+    out: list[str] = []
+    for part in parts:
+        first, _, _rest = part.partition("\n")
+        if _KEY_TYPE_HEADING_RE.match(first):
+            out.append(rewrite_section(part))
+        else:
+            out.append(part)
+    return "".join(out)
+
+
+def _mostly_cjk(text: str) -> bool:
+    if not text:
+        return False
+    cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
+    return cjk * 2 >= len(text)
+
+
+def _strip_incomplete_mermaid_trail(text: str) -> str:
+    cleaned = (text or "").strip()
+    while cleaned and _INCOMPLETE_TRAIL_RE.search(cleaned):
+        cleaned = _INCOMPLETE_TRAIL_RE.sub("", cleaned).rstrip()
+    return cleaned
+
+
+def clip_mermaid_label(text: str) -> str:
+    """Keep mermaid node text short and complete (GET + generate)."""
+    cleaned = _MERMAID_LABEL_RE.sub(" ", text or "")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        return ""
+    cap = 12 if _mostly_cjk(cleaned) else 24
+    if len(cleaned) > cap:
+        chunk = cleaned[:cap]
+        cut = -1
+        for sep in (" ", "、", "，", "；", "/", "-"):
+            idx = chunk.rfind(sep)
+            if idx >= max(2, cap // 3):
+                cut = max(cut, idx)
+        cleaned = chunk[:cut] if cut > 0 else chunk
+    return _strip_incomplete_mermaid_trail(cleaned)
+
+
+def shorten_mermaid_node_labels(content: str) -> str:
+    """GET: clip mermaid node labels so they are not cut mid-verb."""
+    if not content or "```mermaid" not in content:
+        return content
+
+    def fence_repl(match: re.Match[str]) -> str:
+        body = match.group(1)
+
+        def node_repl(node: re.Match[str]) -> str:
+            label = clip_mermaid_label(node.group("label"))
+            if not label:
+                return node.group(0)
+            return f'{node.group("pre")}{node.group("open")}{label}{node.group("close")}'
+
+        body = _MERMAID_NODE_RE.sub(node_repl, body)
+        return f"```mermaid\n{body}```"
+
+    return _MERMAID_FENCE_RE.sub(fence_repl, content)
+
+
+def strip_reading_wiki_homework(content: str, *, page_id: str = "") -> str:
+    """Drop homework headings / 可练习概念 from reading wiki. Learning path keeps them."""
+    if not content:
+        return content
+    lead, sections = _split_markdown_sections(content)
+    kept: list[tuple[str, str]] = []
+    for heading, body in sections:
+        title = heading.strip()
+        if title in _READING_HOMEWORK_HEADINGS or title.startswith("可练习"):
+            continue
+        kept.append((heading, body))
+    if len(kept) != len(sections):
+        parts = [lead.rstrip()]
+        for heading, body in kept:
+            parts.append(f"## {heading}\n{body}".rstrip())
+        content = "\n\n".join(p for p in parts if p).rstrip() + "\n"
+    if page_id == "reading-guide" or "可练习概念" in content or "practice concept" in content.lower():
+        content = content.replace(
+            "每一步对应一个可练习概念：先读证据，再做回忆。",
+            "每一步对应一个系统：先读证据，再跟一次调用。",
+        )
+        content = content.replace(
+            "Each step maps to a practice concept: read evidence, then recall.",
+            "Each step maps to a system: read evidence, then follow one call.",
+        )
+        content = content.replace("可练习概念", "系统")
+        content = re.sub(
+            r"(?i)practice concepts?",
+            "system",
+            content,
+        )
+    return content
+
+
 def upgrade_architecture_loop_wording(content: str) -> str:
     """GET: invented AgentLoop / cli-tool lede / leftover assembly title."""
     if not content:
@@ -1381,13 +1558,12 @@ def mermaid_from_call_chain(chain) -> str:
 
 
 def _safe_mermaid_label(text: str) -> str:
-    cleaned = _MERMAID_LABEL_RE.sub(" ", text)
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-    if len(cleaned) > 64:
-        cleaned = cleaned[:64].rsplit(" ", 1)[0]
-    if len(cleaned) < 8:
+    cleaned = clip_mermaid_label(text)
+    if not cleaned:
         return ""
-    return cleaned
+    if _mostly_cjk(cleaned):
+        return cleaned if len(cleaned) >= 2 else ""
+    return cleaned if len(cleaned) >= 4 else ""
 
 
 def _walkthrough_blob(mod) -> str:
@@ -1617,8 +1793,10 @@ def _module_dir_sort_key(
     product = 0
     if any(tok in low for tok in _DIR_PRODUCT_TOKS):
         product = 8
-    if "grok-agent" in low or low.endswith("-agent"):
-        product = max(product, 6)
+    if "pager" in low:
+        product = max(product, 12)
+    if "grok-agent" in low or low.rstrip("/").endswith("xai-grok-agent"):
+        product = max(product, 11)
     pr = (ranks or {}).get(path, 0.0)
     return (-hits, -product, -pr, path)
 

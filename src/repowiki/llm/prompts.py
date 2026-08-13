@@ -317,6 +317,8 @@ def build_module_prompt(
             "key_types: 2-4 types as roles (`Type` — job on the flow — `path`). "
             "Omit a key_type if you do not have a real path; never invent Type names. "
             "mermaid: one small flowchart of THIS subsystem on the call path. "
+            "Node labels ≤ ~12 CJK characters (or ~24 ASCII), complete phrases, "
+            "no trailing incomplete verbs (合并为 / 调用 cut mid-word). "
             "implementation_details: ONE happy-path walkthrough in prose paragraphs, with "
             "`path:line` cites and types in backticks. Control flow and state, not a file list. "
             "call_chains: REQUIRED, 1-3 named flows. Each step is "
@@ -356,7 +358,8 @@ def build_module_prompt(
             "Those belong on topics/context-assembly, at most a short aside here. "
             "Cite production model-call / ToolBridge sites, not tests/. "
             "Do NOT invent types named AgentLoop or HooksSystem. "
-            "Mermaid node labels must be complete words (no truncated 'Cont' / 'Sess' / 'ToolB'). "
+            "Mermaid node labels must be complete words (no truncated 'Cont' / 'Sess' / 'ToolB'), "
+            "≤ ~12 CJK characters, no trailing incomplete verbs. "
         )
     if "tool-system" in tid or "工具层" in tid:
         extra_rules += (

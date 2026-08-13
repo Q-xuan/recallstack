@@ -821,3 +821,64 @@ def test_wiki_out_drops_pty_glossary_stub_for_failed_topic():
     combined = "\n".join(p.content for p in out.pages)
     assert "伪终端：字节在进程与控制器之间流动" not in combined
 
+
+def test_wiki_out_fills_key_type_line_and_strips_guide_homework(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    topic = (
+        "# Markdown 渲染\n\n"
+        "## 关键类型\n\n"
+        "- StreamingMarkdownRenderer — 流式渲染 — "
+        "`crates/markdown/src/lib.rs StreamingMarkdownRenderer`\n\n"
+        "## 源码证据\n\n"
+        "- `crates/markdown/src/lib.rs:40 StreamingMarkdownRenderer`\n"
+    )
+    guide = (
+        "# 导读\n\n"
+        "这是仓库的阅读剧本。每一步对应一个可练习概念：先读证据，再做回忆。\n\n"
+        "## 可练习概念\n\n- Markdown\n\n"
+        "## 步骤 1: 渲染 (~10 min)\n\n跟一次调用。\n"
+    )
+
+    class _Version:
+        id = "ver-1"
+        wiki_pages = {
+            "project_name": "grok-study",
+            "pages": [
+                {"id": "index", "title": "概述", "content": "# grok-study\n"},
+                {
+                    "id": "topics/markdown-rendering",
+                    "title": "Markdown 渲染",
+                    "content": topic,
+                },
+                {"id": "reading-guide", "title": "导读", "content": guide},
+            ],
+            "sidebar": [
+                {
+                    "title": "入门指南",
+                    "page_id": "",
+                    "children": [{"title": "概述", "page_id": "index", "children": []}],
+                },
+                {
+                    "title": "深入探索",
+                    "page_id": "",
+                    "children": [
+                        {
+                            "title": "Markdown 渲染",
+                            "page_id": "topics/markdown-rendering",
+                            "children": [],
+                        }
+                    ],
+                },
+            ],
+        }
+
+    out = wiki_out("repo-1", _Version())
+    md = next(p for p in out.pages if p.id == "topics/markdown-rendering")
+    assert "`crates/markdown/src/lib.rs:40 StreamingMarkdownRenderer`" in md.content
+    assert "`crates/markdown/src/lib.rs StreamingMarkdownRenderer`" not in md.content
+    guide_page = next(p for p in out.pages if p.id == "reading-guide")
+    assert "可练习概念" not in guide_page.content
+    assert "再跟一次调用" in guide_page.content
+    assert "## 步骤 1: 渲染" in guide_page.content
+
+
