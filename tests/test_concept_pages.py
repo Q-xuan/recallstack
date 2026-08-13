@@ -275,6 +275,7 @@ def test_source_ref_re_matches_readme_span():
     regex = re.compile(match.group(1))
     assert regex.fullmatch("README.md:1-48")
     assert regex.fullmatch("README.md")
+    assert regex.fullmatch("Cargo.toml")
     assert regex.fullmatch("app/main.py:12-40")
     assert regex.fullmatch("crates/foo/src/lib.rs:1")
     assert regex.fullmatch("bin/grok.rs:1 Agent")
@@ -289,4 +290,21 @@ def test_source_ref_re_matches_readme_span():
     assert fn, "sourceRefValue must be exported"
     assert "SOURCE_REF_RE.exec" in fn.group(0)
     assert "match?.[1]" in fn.group(0)
+    assert "rs-related-source" in src
+    assert "data-md-block=\"related-source\"" in src
+    assert "export function isPathLikeChip" in src
+
+
+def test_wiki_content_peek_hitbox_is_chip_only():
+    from pathlib import Path
+
+    wiki = Path("frontend/src/components/WikiContent.tsx").read_text(encoding="utf-8")
+    css = Path("frontend/src/index.css").read_text(encoding="utf-8")
+    assert "chipFromEvent" in wiki
+    assert ".rs-ref[data-ref]" in wiki
+    assert "p:has(.rs-ref)" not in css
+    assert ".rs-related-source" in css
+    assert "flex: 0 0 auto" in css
+    assert "display: flex" in css
+    assert "flex-wrap: wrap" in css
 

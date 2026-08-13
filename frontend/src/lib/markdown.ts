@@ -73,6 +73,48 @@ export function slugify(text: string): string {
   return base || "section";
 }
 
+/** File-like chip even when SOURCE_REF_RE misses a trailing spaced symbol. */
+export function isPathLikeChip(content: string): boolean {
+  const trimmed = (content || "").trim();
+  if (!trimmed) return false;
+  if (SOURCE_REF_RE.test(trimmed)) return true;
+  return /^(?:\.[A-Za-z0-9_.@-]+\/)*[A-Za-z0-9_.@-]+\.[A-Za-z0-9]+(?::\d+(?:-\d+)?)?(?:\s+\S+)?$/.test(
+    trimmed,
+  );
+}
+
+function renderCodeChip(content: string): string {
+  const trimmed = content.trim();
+  const refMatch = SOURCE_REF_RE.exec(trimmed);
+  const isRef = Boolean(refMatch) || isPathLikeChip(trimmed);
+  const dataRef = isRef ? sourceRefValue(trimmed) : "";
+  const attrs = isRef
+    ? ` class="rs-ref" data-ref="${escapeHtml(dataRef)}" role="button" tabindex="0"`
+    : "";
+  const inner =
+    isRef && refMatch?.[2]
+      ? `${escapeHtml(refMatch[1])}<span class="rs-ref-sym">${escapeHtml(refMatch[2])}</span>`
+      : escapeHtml(trimmed);
+  return `<code${attrs}>${inner}</code>`;
+}
+
+function renderRelatedSourceLine(line: string): string {
+  const label = /Related source/i.test(line) ? "Related source:" : "相关源码:";
+  const rest = line.replace(/^\s*\*\*(?:相关源码|Related source):\*\*\s*/, "");
+  const chips: string[] = [];
+  const chipRe = /(`+)([\s\S]*?)\1/g;
+  let match: RegExpExecArray | null;
+  while ((match = chipRe.exec(rest))) {
+    chips.push(renderCodeChip(match[2]));
+  }
+  return (
+    `<p class="rs-related-source" data-md-block="related-source">` +
+    `<span class="rs-related-source-label">${escapeHtml(label)}</span>` +
+    chips.join("") +
+    `</p>`
+  );
+}
+
 /**
  * Render inline markdown.
  *
@@ -83,17 +125,7 @@ function renderInline(src: string): string {
   const spans: string[] = [];
   // \u0000 cannot appear in the source and survives HTML escaping untouched.
   let text = src.replace(/(`+)([\s\S]*?)\1/g, (_, _ticks, body: string) => {
-    const content = body.trim();
-    const refMatch = SOURCE_REF_RE.exec(content);
-    const isRef = Boolean(refMatch);
-    const dataRef = isRef ? sourceRefValue(content) : "";
-    const attrs = isRef
-      ? ` class="rs-ref" data-ref="${escapeHtml(dataRef)}" role="button" tabindex="0"`
-      : "";
-    const inner = isRef && refMatch?.[2]
-      ? `${escapeHtml(refMatch[1])}<span class="rs-ref-sym">${escapeHtml(refMatch[2])}</span>`
-      : escapeHtml(content);
-    spans.push(`<code${attrs}>${inner}</code>`);
+    spans.push(renderCodeChip(body));
     return `\u0000${spans.length - 1}\u0000`;
   });
 
@@ -399,9 +431,8 @@ export function renderMarkdown(md: string): RenderedMarkdown {
     }
     if (RELATED_SOURCE_LINE_RE.test(lines[i])) {
       flush();
-      buffer.push(lines[i]);
+      blocks.push({ kind: "html", html: renderRelatedSourceLine(lines[i]) });
       i += 1;
-      flush();
       continue;
     }
     buffer.push(lines[i]);

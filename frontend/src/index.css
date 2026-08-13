@@ -1011,13 +1011,45 @@ html[lang="zh-CN"] .rs-wiki-nav-group {
   word-break: break-word;
 }
 
-/* Clickable `path:line` citations — the wiki's claim-to-evidence link. */
+/* 相关源码 row: label + pills. Wrap the row, never each chip as a block. */
+.rs-related-source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  align-content: flex-start;
+  gap: 0.35rem 0.45rem;
+  margin: 0.85rem 0;
+}
+
+.rs-related-source-label {
+  flex: 0 0 auto;
+  font-weight: 650;
+  color: var(--rs-ink);
+  margin-right: 0.1rem;
+}
+
+.rs-related-source > code:not(.rs-ref) {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  white-space: nowrap;
+  width: auto;
+  max-width: 100%;
+  border-color: var(--rs-accent);
+  background: var(--rs-accent-soft);
+  color: var(--rs-accent);
+}
+
+/* Clickable `path:line` citations — hitbox is the pill, not the row. */
 .rs-ref {
   cursor: pointer;
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   flex-wrap: nowrap;
   white-space: nowrap;
+  width: auto;
+  max-width: 100%;
   word-break: keep-all;
   border-color: var(--rs-accent) !important;
   background: var(--rs-accent-soft) !important;
@@ -1031,13 +1063,6 @@ html[lang="zh-CN"] .rs-wiki-nav-group {
   border-left: 1px solid color-mix(in srgb, currentColor 32%, transparent);
   color: var(--rs-muted, color-mix(in srgb, currentColor 62%, transparent));
   font-weight: 500;
-}
-
-.rs-prose p:has(.rs-ref) {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.35rem 0.5rem;
 }
 
 .rs-ref:hover {

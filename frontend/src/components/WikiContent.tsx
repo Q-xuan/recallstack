@@ -84,8 +84,22 @@ export default function WikiContent({
     const root = ref.current;
     if (!root) return;
 
+    function chipFromEvent(target: EventTarget | null): HTMLElement | null {
+      if (!(target instanceof Element)) return null;
+      const refEl = target.closest(".rs-ref[data-ref]") as HTMLElement | null;
+      if (!refEl || !root.contains(refEl)) return null;
+      // Hitbox is the pill only — never the wrapping p / li / related-source row.
+      if (refEl.matches("p, li, ul, ol, td, blockquote, [data-md-block], .rs-related-source")) {
+        return null;
+      }
+      return refEl;
+    }
+
     function openPeek(refEl: HTMLElement, value: string) {
-      const host = (refEl.closest("li, p, td, blockquote") as HTMLElement | null) ?? refEl;
+      const host =
+        (refEl.closest(
+          "[data-md-block], .rs-related-source, li, p, td, blockquote",
+        ) as HTMLElement | null) ?? refEl;
       const slot = document.createElement("div");
       slot.dataset.peekSlot = "";
       host.after(slot);
@@ -104,8 +118,8 @@ export default function WikiContent({
     function handleClick(e: MouseEvent) {
       const target = e.target as HTMLElement;
 
-      const refEl = target.closest?.("[data-ref]") as HTMLElement | null;
-      if (refEl && root.contains(refEl)) {
+      const refEl = chipFromEvent(target);
+      if (refEl) {
         e.preventDefault();
         e.stopPropagation();
         togglePeek(refEl);
@@ -130,9 +144,8 @@ export default function WikiContent({
 
     function handleKey(e: KeyboardEvent) {
       if (e.key !== "Enter" && e.key !== " ") return;
-      const target = e.target as HTMLElement;
-      const refEl = target.closest?.("[data-ref]") as HTMLElement | null;
-      if (!refEl || !root.contains(refEl)) return;
+      const refEl = chipFromEvent(e.target);
+      if (!refEl) return;
       e.preventDefault();
       togglePeek(refEl);
     }
