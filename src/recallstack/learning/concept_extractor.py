@@ -18,11 +18,123 @@ from repowiki.core.graph import DependencyGraph
 from repowiki.core.models import ProjectContext
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
+_HTML_BLOCK_RE = re.compile(
+    r"<(picture|div|table|center)\b[^>]*>.*?</\1\s*>",
+    re.I | re.S,
+)
+_SELF_CLOSING_RE = re.compile(r"<(img|br|hr|source|meta|link)\b[^>]*/?>", re.I)
+_TAG_RE = re.compile(r"<[^>]+>")
+_HTML_OPEN_RE = re.compile(
+    r"</?(div|picture|source|img|table|thead|tbody|tr|td|th|center)\b",
+    re.I,
+)
+_BLOCK_OPEN_RE = re.compile(r"<(div|picture|table|center)\b", re.I)
+_BLOCK_CLOSE_RE = re.compile(r"</(div|picture|table|center)\s*>", re.I)
+_BADGE_LINE_RE = re.compile(r"^\s*(\[!\[[^\]]*\]\([^)]+\)\]\([^)]+\)\s*)+$")
+_LOGO_IMAGE_RE = re.compile(r"^!\[.*logo.*\]\(", re.I)
 
 
 def slugify(text: str) -> str:
     s = _SLUG_RE.sub("-", text.lower()).strip("-")
     return s or "concept"
+
+
+def readme_prose_excerpt(
+    text: str,
+    *,
+    max_paragraphs: int = 3,
+    max_chars: int = 1200,
+) -> str:
+    """First 1–3 prose markdown paragraphs from a README. Never returns HTML.
+
+    Skips ``<picture>`` / centered logo / badge chrome. Headings like ``# Title``
+    are kept. Empty string means “nothing usable” — callers should fall back to
+    a generic one-liner rather than pasting raw README HTML.
+    """
+    if not (text or "").strip():
+        return ""
+
+    raw = text.replace("\r\n", "\n")
+    raw = _HTML_COMMENT_RE.sub("", raw)
+    prev = None
+    while prev != raw:
+        prev = raw
+        raw = _HTML_BLOCK_RE.sub("\n", raw)
+        raw = _SELF_CLOSING_RE.sub("", raw)
+
+    kept_lines: list[str] = []
+    skipping_html = False
+    for line in raw.split("\n"):
+        stripped = line.strip()
+        low = stripped.lower()
+        if skipping_html:
+            if _BLOCK_CLOSE_RE.search(low):
+                skipping_html = False
+            elif stripped.startswith("#") and "<" not in stripped:
+                skipping_html = False
+                kept_lines.append(stripped)
+            continue
+        if (
+            _HTML_OPEN_RE.search(stripped)
+            or "srcset=" in low
+            or 'align="center"' in low
+            or "align='center'" in low
+        ):
+            if _BLOCK_OPEN_RE.search(stripped) and not _BLOCK_CLOSE_RE.search(low):
+                skipping_html = True
+            continue
+        if _BADGE_LINE_RE.match(stripped) or (
+            stripped.startswith("[![") and stripped.endswith(")")
+        ):
+            continue
+        if _LOGO_IMAGE_RE.match(stripped):
+            continue
+        if stripped.startswith("<") and ">" in stripped and not stripped.startswith("<http"):
+            continue
+        cleaned = _TAG_RE.sub("", line).strip()
+        if "<" in cleaned:
+            continue
+        kept_lines.append(cleaned)
+
+    paragraphs: list[str] = []
+    buf: list[str] = []
+
+    def flush() -> None:
+        if not buf:
+            return
+        para = " ".join(buf).strip()
+        buf.clear()
+        if para:
+            paragraphs.append(para)
+
+    for line in kept_lines:
+        if not line:
+            flush()
+            continue
+        buf.append(line)
+    flush()
+
+    usable: list[str] = []
+    for para in paragraphs:
+        if len(para) < 4:
+            continue
+        if para.startswith("[!"):
+            continue
+        if not re.search(r"[A-Za-z\u4e00-\u9fff]", para):
+            continue
+        usable.append(para)
+        if len(usable) >= max_paragraphs:
+            break
+
+    excerpt = "\n\n".join(usable).strip()
+    if len(excerpt) > max_chars:
+        excerpt = excerpt[: max_chars - 1].rsplit(" ", 1)[0].rstrip() + "…"
+    if "<" in excerpt:
+        return ""
+    if not re.search(r"[A-Za-z\u4e00-\u9fff]", excerpt):
+        return ""
+    return excerpt
 
 
 def content_hash_for(parts: list[str]) -> str:
@@ -419,13 +531,17 @@ class ConceptExtractor:
         return None
 
     def _project_goal_desc(self, project: ProjectContext, readme: str | None) -> str:
-        if readme:
-            for f in project.files:
-                if f.path == readme and (f.preview or f.content):
-                    text = (f.preview or f.content).strip().splitlines()
-                    snippet = " ".join(text[:8])[:400]
-                    return f"{project.name}：{snippet}"
-        return t(f"{project.name}: goals, capability boundaries, and primary usage.", f"{project.name} 代码仓库的目标、能力边界与主要使用方式。")
+        fallback = t(
+            f"{project.name}: goals, capability boundaries, and primary usage.",
+            f"{project.name} 代码仓库的目标、能力边界与主要使用方式。",
+        )
+        if not readme:
+            return fallback
+        for f in project.files:
+            if f.path == readme and (f.preview or f.content):
+                excerpt = readme_prose_excerpt(f.preview or f.content or "")
+                return excerpt or fallback
+        return fallback
 
     def _refs(
         self,

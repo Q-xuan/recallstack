@@ -30,6 +30,13 @@ export interface RenderedMarkdown {
 /** Matches `src/foo/bar.py`, optionally with `:12` or `:12-40`. */
 const SOURCE_REF_RE = /^[A-Za-z0-9_@][A-Za-z0-9_./\\-]*\.[A-Za-z0-9]+(:\d+(-\d+)?)?$/;
 
+/** README chrome that should never render as raw tags in a wiki article. */
+const HTML_CHROME_RE = /<(div|picture|source|img)\b|srcset\s*=/i;
+
+export function isHtmlChrome(text: string): boolean {
+  return HTML_CHROME_RE.test(text);
+}
+
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})\s*([^\s`]*)\s*$/;
 const HEADING_RE = /^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
 const HR_RE = /^ {0,3}([-*_])(\s*\1){2,}\s*$/;
@@ -285,7 +292,10 @@ function renderSegment(md: string, toc: TocEntry[], usedIds: Set<string>): strin
         quoted.push(BLOCKQUOTE_RE.exec(lines[i])![1]);
         i += 1;
       }
-      out.push(`<blockquote>${renderInline(quoted.join(" "))}</blockquote>`);
+      const joined = quoted.join(" ");
+      if (!isHtmlChrome(joined)) {
+        out.push(`<blockquote>${renderInline(joined)}</blockquote>`);
+      }
       continue;
     }
 
@@ -316,10 +326,19 @@ function renderSegment(md: string, toc: TocEntry[], usedIds: Set<string>): strin
       !UL_RE.test(lines[i]) &&
       !OL_RE.test(lines[i])
     ) {
+      if (isHtmlChrome(lines[i])) {
+        i += 1;
+        continue;
+      }
       para.push(lines[i].trim());
       i += 1;
     }
-    if (para.length) out.push(`<p>${renderInline(para.join(" "))}</p>`);
+    if (para.length) {
+      const joined = para.join(" ");
+      if (!isHtmlChrome(joined)) {
+        out.push(`<p>${renderInline(joined)}</p>`);
+      }
+    }
   }
 
   return out.join("\n");

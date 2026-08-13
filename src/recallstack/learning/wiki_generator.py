@@ -6,11 +6,13 @@ LLM-enhanced WikiData is optional; deterministic pages always exist.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from typing import Any
 
-from recallstack.domain.schemas import ConceptDraft
+from recallstack.domain.schemas import ConceptDraft, ConceptTermTip
+from recallstack.learning.concept_extractor import readme_prose_excerpt
 from recallstack.learning.i18n import content_lang, t
 from repowiki.core.graph import DependencyGraph
 from repowiki.core.models import (
@@ -27,6 +29,8 @@ from repowiki.core.models import (
 )
 from repowiki.core.modules import ROOT_NAME, group_into_modules
 from repowiki.core.wiki_builder import Wiki, WikiBuilder, WikiPage
+
+logger = logging.getLogger(__name__)
 
 
 def _generic_term_tips() -> list[TermTip]:
@@ -65,8 +69,9 @@ def build_deterministic_wiki_data(
     readme = next((f for f in project.files if f.path.lower() in {"readme.md", "readme"}), None)
     description = ""
     if readme and (readme.content or readme.preview):
-        text = (readme.content or readme.preview or "").strip()
-        description = text[:1200]
+        description = readme_prose_excerpt(
+            readme.content or readme.preview or "", max_paragraphs=3, max_chars=1200
+        )
 
     ranked = graph.rank_files()
     top_files = [p for p, _ in ranked[:12]]
@@ -230,12 +235,173 @@ def _format_ref(ref: Any) -> str:
     return loc
 
 
+def _is_html_dump(text: str) -> bool:
+    if not text or not text.strip():
+        return True
+    low = text.lower()
+    return bool(
+        "<div" in low
+        or "<picture" in low
+        or "<source" in low
+        or "srcset=" in low
+        or re.search(r"</?(img|table|center)\b", low)
+    )
+
+
+def _clean_concept_body(text: str) -> str:
+    if not text or _is_html_dump(text):
+        return ""
+    if "<" in text:
+        stripped = re.sub(r"<[^>]+>", "", text).strip()
+        if not stripped or _is_html_dump(stripped):
+            return ""
+        return stripped
+    return text.strip()
+
+
+def _not_this_for(concept: ConceptDraft) -> list[str]:
+    if concept.not_this:
+        return [item.strip() for item in concept.not_this if item and item.strip()][:5]
+    slug = concept.slug
+    if slug == "project-goal":
+        return [
+            t(
+                "Not a dump of every file in the repository.",
+                "不是把仓库里每个文件列一遍。",
+            ),
+            t(
+                "Not a substitute for reading the entrypoints.",
+                "不能替代去读入口文件（entrypoint）。",
+            ),
+        ]
+    if slug == "application-entry":
+        return [
+            t(
+                "Not the whole architecture — only where the process starts.",
+                "不是整份架构说明，只讲进程从哪启动。",
+            ),
+            t(
+                "Not configuration or persistence, unless the entrypoint wires them in.",
+                "不是配置或持久化本身，除非入口把它们接上。",
+            ),
+        ]
+    return []
+
+
+def _tips_for_concept(concept: ConceptDraft) -> list[TermTip]:
+    if concept.term_tips:
+        return [TermTip(term=tip.term, tip=tip.tip) for tip in concept.term_tips if tip.term]
+    generic = _generic_term_tips()
+    blob = f"{concept.slug} {concept.title} {concept.description} {concept.why_learn}".lower()
+    if concept.slug == "project-goal":
+        return generic
+    picked: list[TermTip] = []
+    by_term = {tip.term.lower(): tip for tip in generic}
+    if "entry" in concept.slug or "入口" in concept.title:
+        picked.append(by_term["entrypoint"])
+    if any(key in blob for key in ("crate", "cargo", "rust")):
+        picked.append(by_term["crate"])
+    if any(key in blob for key in ("pagerank", "module-", "依赖", "graph")):
+        picked.append(by_term["pagerank"])
+    if "acp" in blob:
+        picked.append(
+            TermTip(
+                term="ACP",
+                tip=t(
+                    "Agent Communication Protocol in this repo — keep the acronym in English.",
+                    "本仓库里的 Agent Communication Protocol；缩写保持英文 ACP。",
+                ),
+            )
+        )
+    # unique by term, stable order
+    seen: set[str] = set()
+    out: list[TermTip] = []
+    for tip in picked:
+        key = tip.term.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(tip)
+    return out
+
+
+def _role_heading(concept: ConceptDraft) -> str:
+    if concept.slug == "project-goal":
+        return t("## What this repo does\n", "## 这份仓库做什么\n")
+    return t("## Responsibility and boundaries\n", "## 职责与边界\n")
+
+
+def _role_body(concept: ConceptDraft, project_name: str) -> str:
+    body = _clean_concept_body(concept.description)
+    why = (concept.why_learn or "").strip()
+    if body and why and body == why:
+        body = ""
+    if body:
+        return body
+    name = project_name or concept.title
+    if concept.slug == "project-goal":
+        return t(
+            f"{name} solves a specific problem for its users. This page states the goal "
+            "and capability boundary; how the implementation is wired belongs on the "
+            "entrypoint and module pages.",
+            f"{name} 用来解决一类具体问题、给特定读者用。"
+            "本页讲目标与能力边界；实现怎么串，放到入口和模块词条。",
+        )
+    return t(
+        f"`{concept.title}` is a responsibility boundary in this repo. Read the evidence "
+        "below to see what it owns and who it collaborates with.",
+        f"「{concept.title}」是本仓库里的一块职责边界。先看它负责什么、不负责什么，"
+        "再顺着下面的源码证据读实现。",
+    )
+
+
+def _self_check(concept: ConceptDraft) -> str:
+    title = concept.title
+    if concept.slug == "project-goal":
+        return t(
+            f"1. In one sentence, who is `{title}` for and what problem does it solve?\n"
+            "2. Name one thing this repo is NOT responsible for\n"
+            "3. Point to the README or an entrypoint that supports that claim\n",
+            f"1. 用一句话说清「{title}」给谁用、解决什么问题\n"
+            "2. 举一件这个仓库明确不负责的事\n"
+            "3. 指出 README 或入口文件里支撑该判断的证据\n",
+        )
+    if concept.slug == "application-entry":
+        return t(
+            f"1. Name the entrypoint file for `{title}` and what it calls first\n"
+            "2. What does the entrypoint own vs. what it only wires in?\n"
+            "3. Point to one source location on this page that shows the boot path\n",
+            f"1. 指出「{title}」对应的入口文件，以及它首先调用了什么\n"
+            "2. 入口自己负责什么，只是装配进来的又是什么？\n"
+            "3. 在本页源码证据里指出一处能看出启动路径的位置\n",
+        )
+    return t(
+        f"1. In your own words, what does `{title}` own — and where does that stop?\n"
+        "2. Point to at least one source evidence path on this page\n"
+        "3. Name one prerequisite or follow-on concept that changes if this boundary moves\n",
+        f"1. 用自己的话说明「{title}」负责什么、边界停在哪里\n"
+        "2. 指出本页至少一处源码证据（路径即可）\n"
+        "3. 如果这条边界移动，会影响到哪条先修或后续概念？\n",
+    )
+
+
+def _append_term_tips_md(lines: list[str], tips: list[TermTip]) -> None:
+    if not tips:
+        return
+    lines.append(t("## Term tips\n", "## 术语小贴士\n"))
+    for tip in tips:
+        if tip.tip:
+            lines.append(f"> **{tip.term}** — {tip.tip}")
+        else:
+            lines.append(f"> **{tip.term}**")
+    lines.append("")
+
+
 def append_concept_pages(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
     """Attach concept wiki pages so learning objects live inside the wiki tree.
 
-    Concept pages are wiki articles first: evidence and cross-links come before
-    the self-check, and prerequisites/dependents are real links so the concept
-    graph is navigable by reading alone.
+    Handbook layout: title, one-line why, meta, role/boundaries, not-this,
+    term tips, evidence, cross-links, then a concept-specific self-check.
     """
     if not concepts:
         return wiki
@@ -243,7 +409,6 @@ def append_concept_pages(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
     from repowiki.core.wiki_builder import SidebarItem
 
     title_by_slug = {c.slug: c.title for c in concepts}
-    # Invert prerequisites once so each page can show what it unlocks.
     dependents: dict[str, list[str]] = {}
     for c in concepts:
         for pre in c.prerequisites:
@@ -257,20 +422,33 @@ def append_concept_pages(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
     for i, c in enumerate(concepts):
         page_id = f"concepts/{c.slug}"
         minutes = c.estimated_minutes or 10
+        why = (c.why_learn or "").strip()
         lines = [
             f"# {c.title}\n",
-            f"> {c.why_learn or c.description}\n",
+        ]
+        if why:
+            lines.append(f"> {why}\n")
+        lines.append(
             t(
                 f"**Difficulty** {c.difficulty}/5 · **Reading time** ~{minutes} min · "
                 f"**Importance** {c.importance:.2f}\n",
                 f"**难度** {c.difficulty}/5 · **阅读时长** 约 {minutes} 分钟 · "
                 f"**重要度** {c.importance:.2f}\n",
-            ),
-            f"{c.description}\n",
-            t("## Why this matters\n", "## 为什么重要\n"),
-            f"{c.why_learn or t('Understanding this concept builds a mental model of the main flow.', '理解该概念有助于建立仓库主流程心智模型。')}\n",
-            t("## Source evidence\n", "## 源码证据\n"),
-        ]
+            )
+        )
+        lines.append(_role_heading(c))
+        lines.append(f"{_role_body(c, wiki.project_name)}\n")
+
+        not_this = _not_this_for(c)
+        if not_this:
+            lines.append(t("## What this is not\n", "## 不是什么\n"))
+            for item in not_this:
+                lines.append(f"- {item}")
+            lines.append("")
+
+        _append_term_tips_md(lines, _tips_for_concept(c))
+
+        lines.append(t("## Source evidence\n", "## 源码证据\n"))
         if c.source_references:
             for ref in c.source_references[:8]:
                 symbol = f" — `{ref.symbol}`" if ref.symbol else ""
@@ -301,14 +479,7 @@ def append_concept_pages(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
         lines.extend(
             [
                 t("## Self-check\n", "## 自测\n"),
-                t(
-                    "1. Explain the responsibility boundary in your own words\n"
-                    "2. Point to at least one source evidence location\n"
-                    "3. Relate it to prerequisite concepts\n",
-                    "1. 用自己的话说明这个概念的职责边界\n"
-                    "2. 指出至少一处源码证据\n"
-                    "3. 说明它与先修概念的关系\n",
-                ),
+                _self_check(c),
             ]
         )
         wiki.pages.append(
@@ -352,6 +523,117 @@ def link_reading_guide(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
     return wiki
 
 
+def _select_concepts_to_enrich(concepts: list[ConceptDraft], *, limit: int = 6) -> list[ConceptDraft]:
+    selected: list[ConceptDraft] = []
+    goal = next((c for c in concepts if c.slug == "project-goal"), None)
+    if goal:
+        selected.append(goal)
+    rest = sorted(
+        (c for c in concepts if c.slug != "project-goal"),
+        key=lambda c: -c.importance,
+    )
+    for item in rest:
+        if len(selected) >= limit:
+            break
+        selected.append(item)
+    return selected
+
+
+async def _enrich_top_concepts(llm: Any, concepts: list[ConceptDraft], project: ProjectContext) -> None:
+    """Rewrite project-goal + top concepts. Never raises to the caller."""
+    from repowiki.llm.prompts import extract_json
+
+    language = content_lang()
+    readme = next(
+        (f for f in project.files if f.path.lower() in {"readme.md", "readme"}),
+        None,
+    )
+    cleaned = ""
+    if readme and (readme.content or readme.preview):
+        cleaned = readme_prose_excerpt(readme.content or readme.preview or "")
+    file_list = "\n".join(f.path for f in project.files[:40])
+    targets = _select_concepts_to_enrich(concepts)
+    for concept in targets:
+        try:
+            raw = await llm.complete(
+                _concept_enrich_messages(concept, cleaned, file_list, language, project.name),
+                max_tokens=1024,
+                response_format={"type": "json_object"},
+            )
+            data = extract_json(raw)
+            if not isinstance(data, dict):
+                continue
+            desc = str(data.get("description") or "").strip()
+            if desc and not _is_html_dump(desc):
+                concept.description = desc
+            why = str(data.get("why_learn") or "").strip()
+            if why and not _is_html_dump(why):
+                concept.why_learn = why
+            not_this = data.get("not_this") or []
+            if isinstance(not_this, list):
+                concept.not_this = [
+                    str(item).strip() for item in not_this if str(item).strip()
+                ][:5]
+            tips_raw = data.get("term_tips") or []
+            tips: list[ConceptTermTip] = []
+            if isinstance(tips_raw, list):
+                for item in tips_raw:
+                    if isinstance(item, dict) and item.get("term"):
+                        tips.append(
+                            ConceptTermTip(
+                                term=str(item["term"]).strip(),
+                                tip=str(item.get("tip") or "").strip(),
+                            )
+                        )
+            if tips:
+                concept.term_tips = tips[:8]
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("concept enrich failed for %s: %s", concept.slug, exc)
+
+
+def _concept_enrich_messages(
+    concept: ConceptDraft,
+    cleaned_readme: str,
+    file_list: str,
+    language: str,
+    project_name: str,
+) -> list[dict]:
+    from repowiki.llm.prompts import _json_instruction, _lang_instruction
+
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You write a short handbook entry for one learning concept in a codebase wiki. "
+                "Be specific to THIS repository. No HTML. No file inventory. "
+                f"{_lang_instruction(language)}"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Project: {project_name}\n"
+                f"Concept: {concept.title} (slug {concept.slug})\n"
+                f"Current description: {(concept.description or '')[:800]}\n"
+                f"Current why_learn: {concept.why_learn or '(none)'}\n\n"
+                f"## Cleaned README excerpt\n{cleaned_readme or '(none)'}\n\n"
+                f"## Files (sample)\n{file_list or '(none)'}\n\n"
+                "Return JSON:\n"
+                "{\n"
+                '  "description": "2-4 sentences: what it is for, who uses it, capability boundary",\n'
+                '  "why_learn": "one sentence",\n'
+                '  "not_this": ["common confusion 1"],\n'
+                '  "term_tips": [{"term": "PageRank", "tip": "how THIS repo uses it"}]\n'
+                "}\n"
+                "not_this: 1-3 bullets of what this concept is NOT. "
+                "term_tips: 2-5 repo-specific jargon tips; keep `term` in English. "
+                "Do not invent file paths.\n\n"
+                f"{_json_instruction(language)}"
+            ),
+        },
+    ]
+
+
 async def build_llm_enriched_wiki_data(
     project: ProjectContext,
     graph: DependencyGraph,
@@ -388,6 +670,11 @@ async def build_llm_enriched_wiki_data(
         llm_wd = await analyzer.analyze(project, on_progress=on_progress)
     finally:
         await cache.close()
+
+    try:
+        await _enrich_top_concepts(llm, concepts, project)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("concept enrich skipped: %s", exc)
 
     det_wd = build_deterministic_wiki_data(project, graph, concepts)
     return WikiData(

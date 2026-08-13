@@ -37,6 +37,13 @@ class Rubric(BaseModel):
     maximum_score: float = 1.0
 
 
+class ConceptTermTip(BaseModel):
+    """Repo-specific jargon on a learning concept page (术语小贴士)."""
+
+    term: str
+    tip: str = ""
+
+
 class ConceptDraft(BaseModel):
     slug: str
     title: str
@@ -47,6 +54,8 @@ class ConceptDraft(BaseModel):
     estimated_minutes: int = 15
     source_references: list[SourceReference] = Field(default_factory=list)
     prerequisites: list[str] = Field(default_factory=list)  # slugs
+    not_this: list[str] = Field(default_factory=list)
+    term_tips: list[ConceptTermTip] = Field(default_factory=list)
 
 
 class ConceptGenerationResult(BaseModel):
