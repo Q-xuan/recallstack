@@ -301,6 +301,17 @@ def test_unrecognized_progress_lines_pass_through():
     assert AnalyzeRepositoryService._localize_progress("Something new") == "Something new"
 
 
+def test_multipass_progress_lines_are_localized(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    from recallstack.application.analyze_repository import AnalyzeRepositoryService
+
+    loc = AnalyzeRepositoryService._localize_progress
+    assert loc("Outlining wiki...") == "正在规划 Wiki 大纲"
+    assert loc("Writing 4 modules...") == "正在撰写 4 个模块"
+    assert loc("Wrote module 2/4") == "已撰写模块 2/4"
+    assert loc("Verifying citations...") == "正在核验引用"
+
+
 def test_starting_a_phase_clears_the_previous_detail():
     """Otherwise a stale module counter sits under the next phase's label."""
     from recallstack.application.analyze_repository import AnalyzeRepositoryService

@@ -1,5 +1,12 @@
 from repowiki.core.graph import DependencyGraph
-from repowiki.core.models import FileInfo, ModuleDoc, ProjectContext, WikiData
+from repowiki.core.models import (
+    CallChain,
+    Citation,
+    FileInfo,
+    ModuleDoc,
+    ProjectContext,
+    WikiData,
+)
 from repowiki.core.modules import group_into_modules
 from repowiki.core.wiki_builder import WikiBuilder
 
@@ -68,3 +75,47 @@ def test_module_sidebar_nests_by_path():
     assert app.page_id == ""  # intermediate directory, no page of its own
     assert [c.title for c in app.children] == ["api", "services"]
     assert {c.page_id for c in app.children} == {"modules/app/api", "modules/app/services"}
+
+
+def test_module_page_renders_deep_sections_when_present():
+    project = _project({"app/main.py": "def main():\n    return 1\n"})
+    graph = DependencyGraph.build_from_project(project)
+    data = WikiData(
+        modules=[
+            ModuleDoc(
+                name="app",
+                purpose="entry",
+                description="The process starts here.",
+                implementation_details="main() returns 1.",
+                call_chains=[
+                    CallChain(
+                        name="boot",
+                        description="process start",
+                        steps=["main() runs"],
+                        files=["app/main.py"],
+                    )
+                ],
+                edge_cases=["main has no arguments"],
+                citations=[Citation(path="app/main.py", start_line=1, symbol="main")],
+            )
+        ]
+    )
+    wiki = WikiBuilder().build(project, data, graph)
+    content = wiki.get_page("modules/app").content
+    assert "## Implementation" in content
+    assert "main() returns 1." in content
+    assert "## Key Call Chains" in content
+    assert "### boot" in content
+    assert "## Edge Cases" in content
+    assert "## Source Evidence" in content
+    assert "`app/main.py:1`" in content
+
+
+def test_module_page_omits_empty_deep_sections():
+    wiki, names = _build(_project({"solo/thing.py": "x = 1\n"}))
+    assert names == ["solo"]
+    content = wiki.get_page("modules/solo").content
+    assert "## Implementation" not in content
+    assert "## Key Call Chains" not in content
+    assert "## Edge Cases" not in content
+    assert "## Source Evidence" not in content

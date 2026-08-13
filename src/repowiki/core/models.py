@@ -34,6 +34,29 @@ class ProjectContext(BaseModel):
 # --- LLM analysis output models ---
 
 
+class Citation(BaseModel):
+    """A source claim: path, optional line range, optional symbol.
+
+    Rendered as ``path:start-end`` so the wiki UI can open an inline peek.
+    Invalid paths are stripped in the citation-verification pass.
+    """
+
+    path: str
+    start_line: int = 0
+    end_line: int = 0
+    symbol: str = ""
+    note: str = ""
+
+
+class CallChain(BaseModel):
+    """A named runtime/read-order path through the module."""
+
+    name: str
+    description: str = ""
+    steps: list[str] = Field(default_factory=list)
+    files: list[str] = Field(default_factory=list)
+
+
 class TechItem(BaseModel):
     name: str
     category: str = ""  # language, framework, database, etc.
@@ -47,6 +70,7 @@ class ProjectOverview(BaseModel):
     tech_stack: list[TechItem] = Field(default_factory=list)
     setup_instructions: list[str] = Field(default_factory=list)
     key_features: list[str] = Field(default_factory=list)
+    citations: list[Citation] = Field(default_factory=list)
 
 
 class Symbol(BaseModel):
@@ -80,6 +104,44 @@ class ModuleDoc(BaseModel):
     files: list[FileDoc] = Field(default_factory=list)
     relationships: list[Relationship] = Field(default_factory=list)
     key_concepts: list[Concept] = Field(default_factory=list)
+    # Optional DeepWiki-style longform. Older cached JSON without these
+    # fields still parses; the wiki builder omits empty sections.
+    implementation_details: str = ""
+    call_chains: list[CallChain] = Field(default_factory=list)
+    edge_cases: list[str] = Field(default_factory=list)
+    citations: list[Citation] = Field(default_factory=list)
+
+
+class ModuleOutline(BaseModel):
+    """Per-module writing plan produced by the outline pass."""
+
+    name: str
+    priority: int = 0  # higher = write deeper
+    depth: str = "standard"  # deep | standard | brief
+    sections: list[str] = Field(default_factory=list)
+    key_files: list[str] = Field(default_factory=list)
+    key_symbols: list[str] = Field(default_factory=list)
+    notes: str = ""
+
+
+class WikiOutline(BaseModel):
+    """Structured wiki plan: what to emphasize and in what order."""
+
+    overview_focus: str = ""
+    architecture_focus: str = ""
+    emphasized_pages: list[str] = Field(default_factory=list)
+    reading_order: list[str] = Field(default_factory=list)
+    modules: list[ModuleOutline] = Field(default_factory=list)
+
+    def module_for(self, name: str) -> ModuleOutline | None:
+        for item in self.modules:
+            if item.name == name:
+                return item
+        return None
+
+    def depth_for(self, name: str) -> str:
+        item = self.module_for(name)
+        return item.depth if item else "standard"
 
 
 class Component(BaseModel):
@@ -95,6 +157,7 @@ class ArchitectureDiagram(BaseModel):
     mermaid_component: str = ""
     mermaid_sequence: str = ""
     data_flow: str = ""
+    citations: list[Citation] = Field(default_factory=list)
 
 
 class ReadingStep(BaseModel):
@@ -119,3 +182,4 @@ class WikiData(BaseModel):
     architecture: ArchitectureDiagram = Field(default_factory=ArchitectureDiagram)
     reading_guide: ReadingGuide = Field(default_factory=ReadingGuide)
     file_index: dict[str, FileDoc] = Field(default_factory=dict)
+    outline: WikiOutline | None = None

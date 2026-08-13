@@ -38,11 +38,15 @@ logger = logging.getLogger(__name__)
 # rather than to nothing.
 _PROGRESS_PHRASES: tuple[tuple[re.Pattern[str], str, str], ...] = (
     (re.compile(r"^Analyzed module (\d+)/(\d+)$"), "Analyzed module {0}/{1}", "已分析模块 {0}/{1}"),
+    (re.compile(r"^Wrote module (\d+)/(\d+)$"), "Wrote module {0}/{1}", "已撰写模块 {0}/{1}"),
     (re.compile(r"^Analyzing (\d+) modules"), "Analyzing {0} modules", "正在分析 {0} 个模块"),
+    (re.compile(r"^Writing (\d+) modules"), "Writing {0} modules", "正在撰写 {0} 个模块"),
     (re.compile(r"^Preparing file context"), "Preparing file context", "正在准备文件上下文"),
+    (re.compile(r"^Outlining wiki"), "Outlining wiki", "正在规划 Wiki 大纲"),
     (re.compile(r"^Generating project overview"), "Generating overview", "正在生成项目概览"),
     (re.compile(r"^Detecting architecture"), "Detecting architecture", "正在识别架构"),
     (re.compile(r"^Creating reading guide"), "Creating reading guide", "正在生成阅读指南"),
+    (re.compile(r"^Verifying citations"), "Verifying citations", "正在核验引用"),
     (re.compile(r"^Done!?$"), "Done", "完成"),
 )
 

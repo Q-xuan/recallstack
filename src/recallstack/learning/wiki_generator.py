@@ -354,8 +354,11 @@ def build_wiki_payload(
     Pass ``wiki_data`` to render LLM-enriched pages; leave None for the
     deterministic path.
     """
+    from repowiki.core.cite_check import verify_wiki_data
+
     if wiki_data is None:
         wiki_data = build_deterministic_wiki_data(project, graph, concepts)
+    wiki_data = verify_wiki_data(wiki_data, project)
     wiki = WikiBuilder().build(project, wiki_data, graph)
     wiki = append_concept_pages(wiki, concepts)
     wiki = link_reading_guide(wiki, concepts)

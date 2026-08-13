@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from repowiki.core.cite_check import format_citation
 from repowiki.core.graph import DependencyGraph
 from repowiki.core.models import ProjectContext, WikiData
 
@@ -117,6 +118,8 @@ class WikiBuilder:
                 lines.append(f"{i}. {step}")
             lines.append("")
 
+        _append_citations(lines, getattr(overview, "citations", None))
+
         return "\n".join(lines)
 
     def _build_architecture_page(self, arch) -> str:
@@ -145,6 +148,8 @@ class WikiBuilder:
         if arch.data_flow:
             lines.append("## Data Flow\n")
             lines.append(f"{arch.data_flow}\n")
+
+        _append_citations(lines, getattr(arch, "citations", None))
 
         return "\n".join(lines)
 
@@ -179,6 +184,33 @@ class WikiBuilder:
         if mod.description:
             lines.append(f"{mod.description}\n")
 
+        implementation = getattr(mod, "implementation_details", "") or ""
+        if implementation:
+            lines.append("## Implementation\n")
+            lines.append(f"{implementation}\n")
+
+        chains = getattr(mod, "call_chains", None) or []
+        if chains:
+            lines.append("## Key Call Chains\n")
+            for chain in chains:
+                lines.append(f"### {chain.name}\n")
+                if chain.description:
+                    lines.append(f"{chain.description}\n")
+                for i, step in enumerate(chain.steps, 1):
+                    lines.append(f"{i}. {step}")
+                if chain.steps:
+                    lines.append("")
+                if chain.files:
+                    files = ", ".join(f"`{p}`" for p in chain.files)
+                    lines.append(f"**Files:** {files}\n")
+
+        edge_cases = getattr(mod, "edge_cases", None) or []
+        if edge_cases:
+            lines.append("## Edge Cases\n")
+            for case in edge_cases:
+                lines.append(f"- {case}")
+            lines.append("")
+
         if graph is not None:
             neighbourhood = graph.module_mermaid(mod.name)
             if neighbourhood:
@@ -207,6 +239,8 @@ class WikiBuilder:
             for r in mod.relationships:
                 lines.append(f"- `{r.source}` → `{r.target}`: {r.description}")
             lines.append("")
+
+        _append_citations(lines, getattr(mod, "citations", None))
 
         return "\n".join(lines)
 
@@ -279,3 +313,19 @@ class WikiBuilder:
             lines.append("")
 
         return "\n".join(lines)
+
+
+def _append_citations(lines: list[str], citations) -> None:
+    if not citations:
+        return
+
+    lines.append("## Source Evidence\n")
+    for cite in citations:
+        loc = format_citation(cite)
+        extra = ""
+        if cite.symbol:
+            extra += f" — `{cite.symbol}`"
+        if cite.note:
+            extra += f" — {cite.note}"
+        lines.append(f"- `{loc}`{extra}")
+    lines.append("")

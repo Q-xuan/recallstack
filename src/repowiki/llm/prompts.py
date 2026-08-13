@@ -47,7 +47,72 @@ def _json_instruction(language: str = "en") -> str:
     )
 
 
-def build_overview_prompt(file_tree: str, key_files: str, language: str = "en") -> list[dict]:
+def build_outline_prompt(
+    file_tree: str,
+    module_summaries: str,
+    rankings: str,
+    entrypoints: str,
+    language: str = "en",
+) -> list[dict]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are a staff engineer planning a codebase wiki. "
+                "Produce a compact writing plan, not the wiki itself. "
+                "Prioritize entrypoints and high-PageRank files. "
+                f"{_lang_instruction(language)}"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"## File Tree\n```\n{file_tree}\n```\n\n"
+                f"## Modules\n{module_summaries}\n\n"
+                f"## File importance (PageRank)\n{rankings}\n\n"
+                f"## Entrypoints and config\n{entrypoints}\n\n"
+                "Output a wiki outline as JSON:\n"
+                "{\n"
+                '  "overview_focus": "what the overview page must explain",\n'
+                '  "architecture_focus": "what the architecture page must explain",\n'
+                '  "emphasized_pages": ["overview", "architecture", "module-name"],\n'
+                '  "reading_order": ["module-a", "module-b"],\n'
+                '  "modules": [\n'
+                "    {\n"
+                '      "name": "exact module name from the list above",\n'
+                '      "priority": 3,\n'
+                '      "depth": "deep",\n'
+                '      "sections": ["purpose", "implementation", "call_chains", "edge_cases"],\n'
+                '      "key_files": ["path/from/the/tree.py"],\n'
+                '      "key_symbols": ["ClassName", "func_name"],\n'
+                '      "notes": "what a reader must understand here"\n'
+                "    }\n"
+                "  ]\n"
+                "}\n\n"
+                "Rules: module names MUST match the Modules list exactly. "
+                "depth is one of deep, standard, brief. "
+                "Mark at most a third of modules as deep. "
+                "key_files MUST be real paths from the tree.\n\n"
+                f"{_json_instruction(language)}"
+            ),
+        },
+    ]
+
+
+def build_overview_prompt(
+    file_tree: str,
+    key_files: str,
+    language: str = "en",
+    *,
+    outline_focus: str = "",
+    emphasized: str = "",
+) -> list[dict]:
+    outline_block = ""
+    if outline_focus or emphasized:
+        outline_block = (
+            f"## Wiki outline focus\n{outline_focus or '(none)'}\n\n"
+            f"## Pages/modules to emphasize\n{emphasized or '(none)'}\n\n"
+        )
     return [
         {
             "role": "system",
@@ -56,6 +121,7 @@ def build_overview_prompt(file_tree: str, key_files: str, language: str = "en") 
                 "Be direct, specific, and concrete. "
                 "Do NOT use filler phrases like 'leveraging', 'utilizing', 'cutting-edge', "
                 "'robust', or 'comprehensive'. Just describe what things do. "
+                "Cite real file paths from the tree using backticks like `src/app.py:12`. "
                 f"{_lang_instruction(language)}"
             ),
         },
@@ -65,6 +131,7 @@ def build_overview_prompt(file_tree: str, key_files: str, language: str = "en") 
                 f"Here is the file tree and key files of a project:\n\n"
                 f"## File Tree\n```\n{file_tree}\n```\n\n"
                 f"## Key Files\n{key_files}\n\n"
+                f"{outline_block}"
                 f"Generate a project overview as JSON with this structure:\n"
                 "{\n"
                 '  "name": "project name",\n'
@@ -72,8 +139,10 @@ def build_overview_prompt(file_tree: str, key_files: str, language: str = "en") 
                 '  "description": "2-3 paragraphs explaining the project in plain language",\n'
                 '  "tech_stack": [{"name": "Python", "category": "language", "version": "3.10+"}],\n'
                 '  "setup_instructions": ["step 1", "step 2"],\n'
-                '  "key_features": ["feature 1", "feature 2"]\n'
+                '  "key_features": ["feature 1", "feature 2"],\n'
+                '  "citations": [{"path": "real/file.py", "start_line": 1, "symbol": "", "note": "why this file matters"}]\n'
                 "}\n\n"
+                "citations.path MUST be a real path from the tree. Omit citations rather than invent paths.\n\n"
                 f"{_json_instruction(language)}"
             ),
         },
@@ -85,15 +154,57 @@ def build_module_prompt(
     files_context: str,
     project_summary: str,
     language: str = "en",
+    *,
+    depth: str = "standard",
+    outline_notes: str = "",
+    key_files: list[str] | None = None,
+    key_symbols: list[str] | None = None,
+    sections: list[str] | None = None,
 ) -> list[dict]:
+    depth = depth if depth in {"deep", "standard", "brief"} else "standard"
+    focus = ""
+    if outline_notes or key_files or key_symbols or sections:
+        keys = ", ".join(f"`{p}`" for p in (key_files or [])[:8]) or "(none)"
+        symbols = ", ".join(key_symbols or []) or "(none)"
+        planned = ", ".join(sections or []) or depth
+        focus = (
+            f"Writing plan: depth={depth}; sections={planned}.\n"
+            f"Notes: {outline_notes or '(none)'}\n"
+            f"Cover these files: {keys}\n"
+            f"Cover these symbols: {symbols}\n\n"
+        )
+
+    if depth == "deep":
+        extra_rules = (
+            "This is a HIGH-IMPORTANCE module. Write longform, not a bullet inventory. "
+            "implementation_details must explain how the code actually works (control flow, "
+            "state, important branches) with backtick path:line cites like `app/main.py:7`. "
+            "call_chains must name real functions and the files they live in. "
+            "edge_cases must be concrete failure modes from the code, not generic advice. "
+        )
+        length_hint = "description: 2-4 paragraphs. implementation_details: 2-5 paragraphs."
+    elif depth == "brief":
+        extra_rules = (
+            "This is a low-priority module. Keep purpose to one sentence and description short. "
+            "Leave implementation_details, call_chains, and edge_cases empty unless something "
+            "is genuinely surprising. "
+        )
+        length_hint = "Keep the JSON compact."
+    else:
+        extra_rules = (
+            "Explain what each file does and how they connect. "
+            "Fill implementation_details and call_chains when the code makes them obvious. "
+        )
+        length_hint = "description: 1-2 paragraphs."
+
     return [
         {
             "role": "system",
             "content": (
                 "You are a senior engineer documenting your own code. "
                 "Be direct and specific. No filler. "
-                "Explain what each file does, how files relate to each other, "
-                "and what the key functions/classes are. "
+                "Only cite file paths that appear in the provided source. "
+                "Never invent paths, line numbers, or symbols. "
                 f"{_lang_instruction(language)}"
             ),
         },
@@ -103,18 +214,30 @@ def build_module_prompt(
                 f"Project: {project_summary}\n\n"
                 f"Document the '{module_name}' module. Here are its files:\n\n"
                 f"{files_context}\n\n"
+                f"{focus}"
+                f"{extra_rules}{length_hint}\n\n"
                 "Output JSON:\n"
                 "{\n"
                 f'  "name": "{module_name}",\n'
                 '  "purpose": "one sentence",\n'
                 '  "description": "detailed explanation",\n'
+                '  "implementation_details": "how it works, with `path:line` cites",\n'
+                '  "call_chains": [\n'
+                '    {"name": "boot", "description": "what this chain does", '
+                '"steps": ["main() in app/main.py calls boot()", "boot() returns status"], '
+                '"files": ["app/main.py", "app/core.py"]}\n'
+                "  ],\n"
+                '  "edge_cases": ["what happens if X is missing"],\n'
                 '  "files": [\n'
                 '    {"path": "file.py", "purpose": "what it does", '
-                '"key_symbols": [{"name": "func_name", "kind": "function", "description": "..."}]}\n'
-                '  ],\n'
+                '"key_symbols": [{"name": "func_name", "kind": "function", "line": 12, "description": "..."}]}\n'
+                "  ],\n"
                 '  "relationships": [{"source": "a.py", "target": "b.py", "description": "a imports b for..."}],\n'
-                '  "key_concepts": [{"name": "concept", "explanation": "..."}]\n'
+                '  "key_concepts": [{"name": "concept", "explanation": "..."}],\n'
+                '  "citations": [{"path": "file.py", "start_line": 12, "symbol": "func_name", "note": "why"}]\n'
                 "}\n\n"
+                "files[].path, relationships, call_chains.files, and citations.path MUST be "
+                "paths shown above. Use 0 for unknown line numbers rather than guessing.\n\n"
                 f"{_json_instruction(language)}"
             ),
         },
@@ -125,7 +248,16 @@ def build_architecture_prompt(
     file_tree: str,
     key_files: str,
     language: str = "en",
+    *,
+    outline_focus: str = "",
+    core_modules: str = "",
 ) -> list[dict]:
+    outline_block = ""
+    if outline_focus or core_modules:
+        outline_block = (
+            f"## Architecture focus\n{outline_focus or '(none)'}\n\n"
+            f"## Core modules\n{core_modules or '(none)'}\n\n"
+        )
     return [
         {
             "role": "system",
@@ -133,6 +265,7 @@ def build_architecture_prompt(
                 "You are a software architect analyzing a codebase. "
                 "Identify the architecture pattern and generate Mermaid diagrams. "
                 "Mermaid syntax must be valid. Use simple node names (no special chars). "
+                "Cite real file paths from the tree; never invent them. "
                 f"{_lang_instruction(language)}"
             ),
         },
@@ -141,17 +274,20 @@ def build_architecture_prompt(
             "content": (
                 f"## File Tree\n```\n{file_tree}\n```\n\n"
                 f"## Key Files\n{key_files}\n\n"
+                f"{outline_block}"
                 "Analyze the architecture. Output JSON:\n"
                 "{\n"
                 '  "architecture_type": "one of: monolith, client-server, microservices, library, cli-tool, framework, plugin-system, pipeline",\n'
                 '  "description": "explain the architecture in 2-3 sentences",\n'
-                '  "components": [{"name": "...", "purpose": "...", "files": ["..."]}],\n'
+                '  "components": [{"name": "...", "purpose": "...", "files": ["real/path.py"]}],\n'
                 '  "mermaid_component": "graph TD\\n  A[Component] --> B[Component]\\n  ...",\n'
                 '  "mermaid_sequence": "sequenceDiagram\\n  participant A\\n  A->>B: request\\n  ...",\n'
-                '  "data_flow": "describe the main data flow in 2-3 sentences"\n'
+                '  "data_flow": "describe the main data flow in 2-3 sentences",\n'
+                '  "citations": [{"path": "real/path.py", "start_line": 1, "note": "why this file is architectural"}]\n'
                 "}\n\n"
                 "IMPORTANT: Mermaid code must be a single string with \\n for newlines. "
                 "Use simple alphanumeric node IDs. "
+                "components.files and citations.path MUST be real paths from the tree.\n\n"
                 f"{_json_instruction(language)}"
             ),
         },
@@ -162,7 +298,12 @@ def build_reading_guide_prompt(
     rankings: str,
     module_summaries: str,
     language: str = "en",
+    *,
+    reading_order: str = "",
 ) -> list[dict]:
+    order_block = ""
+    if reading_order:
+        order_block = f"## Suggested reading order (from wiki outline)\n{reading_order}\n\n"
     return [
         {
             "role": "system",
@@ -171,6 +312,7 @@ def build_reading_guide_prompt(
                 "Create a reading guide: which files to read, in what order, and why. "
                 "Start from entry points and configuration, then core logic, then utilities. "
                 "Each step should say WHAT to look for, not just WHICH files. "
+                "Only list files that appear in the rankings or module summaries. "
                 f"{_lang_instruction(language)}"
             ),
         },
@@ -179,15 +321,52 @@ def build_reading_guide_prompt(
             "content": (
                 f"## File Importance Rankings (by PageRank)\n{rankings}\n\n"
                 f"## Module Summaries\n{module_summaries}\n\n"
+                f"{order_block}"
                 "Create a reading guide with 5-10 steps. Output JSON:\n"
                 "{\n"
                 '  "introduction": "brief intro on how to approach this codebase",\n'
                 '  "steps": [\n'
                 '    {"order": 1, "title": "step title", "files": ["file1.py", "file2.py"], '
                 '"explanation": "what to look for and why", "time_estimate": "5 min"}\n'
-                '  ],\n'
+                "  ],\n"
                 '  "tips": ["general tip 1", "general tip 2"]\n'
                 "}\n\n"
+                "steps[].files MUST be real paths from the rankings.\n\n"
+                f"{_json_instruction(language)}"
+            ),
+        },
+    ]
+
+
+def build_citation_repair_prompt(
+    module_name: str,
+    module_json: str,
+    invalid_paths: list[str],
+    valid_paths: list[str],
+    language: str = "en",
+) -> list[dict]:
+    invalid = "\n".join(f"- {p}" for p in invalid_paths[:20]) or "(none)"
+    valid = "\n".join(f"- {p}" for p in valid_paths[:40]) or "(none)"
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You repair documentation JSON so every file citation is real. "
+                "Do not invent new claims. Replace or drop bad paths only. "
+                f"{_lang_instruction(language)}"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"The '{module_name}' module doc cites files that are not in the repository.\n\n"
+                f"## Invalid paths\n{invalid}\n\n"
+                f"## Valid paths in this project\n{valid}\n\n"
+                f"## Current JSON\n{module_json}\n\n"
+                "Return the same JSON object, with invalid paths rewritten to a valid path "
+                "when the intent is obvious, otherwise removed. Keep implementation_details, "
+                "call_chains, and citations consistent with the valid path list. "
+                "Do not add new files that were not listed as valid.\n\n"
                 f"{_json_instruction(language)}"
             ),
         },
