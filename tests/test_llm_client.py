@@ -100,6 +100,15 @@ def test_zh_prompts_ask_for_handbook_prose_and_term_tips():
     assert "ROLE in the flow" in arch[-1]["content"]
     assert "key_types" in arch[-1]["content"]
     assert "homework" in arch[0]["content"]
+    assert "model BEFORE tools" in arch[-1]["content"]
+    assert "never cli-tool" in arch[-1]["content"]
+    assert "AgentLoop" in arch[-1]["content"]
+    assert "TurnRunning" in arch[-1]["content"]
+    assert "ToolBridge" in arch[-1]["content"]
+    overview_user = overview[-1]["content"]
+    assert "`path:line Symbol`" in overview_user or "path:line Symbol" in overview_user
+    assert "Agent Loop 与上下文装配" in overview_user
+    assert "Pager" in overview_user
     deep = build_module_prompt("app", "src", "demo", "zh", depth="deep")
     assert "term_tips is REQUIRED" in deep[-1]["content"]
     assert "`PtyHandle`" in deep[0]["content"]
@@ -146,6 +155,8 @@ def test_outline_prompt_splits_agent_loop_from_context_assembly():
     assert "NEVER conversation_util.rs" in user
     assert "topic id context-assembly" in user
     assert "replace_or_insert_system_head" in user
+    assert "entry-and-boot key_files MUST be the grok binary" in user
+    assert "tool-system key_files MUST include ToolBridge" in user
 
 
 def test_extract_json_recovers_truncated_topics_payload():

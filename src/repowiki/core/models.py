@@ -80,6 +80,7 @@ class KeyType(BaseModel):
     name: str
     role: str = ""
     path: str = ""
+    line: int = 0
 
 
 class CodebasePart(BaseModel):

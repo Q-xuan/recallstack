@@ -159,7 +159,12 @@ class WikiBuilder:
             pages.append(WikiPage(id="getting-started", title=gs_title, content=gs_md, order=1))
 
         arch = wiki_data.architecture
-        if arch.architecture_type:
+        if (
+            arch.architecture_type
+            or (arch.mermaid_component or "").strip()
+            or (arch.description or "").strip()
+            or arch.components
+        ):
             arch_title = structural_title("architecture", lang)
             arch_md = self._build_architecture_page(
                 arch, lang, topics=wiki_data.topics
@@ -177,6 +182,8 @@ class WikiBuilder:
         for i, topic in enumerate(topic_docs):
             page_id = f"topics/{topic.name}"
             title = topic.title or topic.name
+            if "上下文装配" in (title or "") and "Agent Loop" in (title or ""):
+                title = "Agent Loop"
             topic_md = self._build_module_page(
                 topic, graph, display_title=title, language=lang
             )
@@ -216,7 +223,7 @@ class WikiBuilder:
         known_ids = {p.id for p in pages}
         for page in pages:
             page.content = upgrade_wiki_page_content(
-                page.content, known_ids, language=lang
+                page.content, known_ids, language=lang, page_id=page.id
             )
         return Wiki(pages=pages, sidebar=sidebar, project_name=project.name)
 
@@ -322,18 +329,52 @@ class WikiBuilder:
         title = structural_title("quick-start", language)
         lines = [f"# {title}\n"]
         if language == "zh":
-            lines.append("> 这篇按 README 和仓库根上的启动说明，讲怎么把项目跑起来。\n")
+            lines.append(
+                "> 这篇按 README 和仓库根上的启动说明，讲怎么把项目跑起来。"
+                "读完应能本地跑通，再进架构和 Agent Loop。\n"
+            )
         else:
             lines.append(
-                "> This page follows the README and root setup notes so you can run the project.\n"
+                "> This page follows the README and root setup notes so you can run the project. "
+                "After that, read architecture and the Agent Loop.\n"
             )
-        if overview.description:
+        one = (getattr(overview, "one_liner", "") or "").strip()
+        if one:
+            lines.append(f"{one}\n")
+        if language == "zh":
             lines.append(f"## {structural_title('what-is', language)}\n")
-            lines.append(f"{overview.description}\n")
+            desc = (overview.description or "").strip()
+            if desc:
+                lines.append(f"{desc[:1200]}\n")
+            else:
+                lines.append("从 README 的启动步骤跑起来，确认 TUI / headless / ACP 三种模式之一能进主循环。\n")
+        else:
+            lines.append(f"## {structural_title('what-is', language)}\n")
+            desc = (overview.description or "").strip()
+            if desc:
+                lines.append(f"{desc[:1200]}\n")
+            else:
+                lines.append(
+                    "Follow the README until one of TUI / headless / ACP actually enters the main loop.\n"
+                )
+        flow = (getattr(overview, "runtime_flow", "") or "").strip()
+        if flow:
+            lines.append(f"## {structural_title('how-a-call-runs', language)}\n")
+            lines.append(f"{flow}\n")
         if overview.setup_instructions:
             lines.append(f"## {structural_title('setup', language)}\n")
             for i, step in enumerate(overview.setup_instructions, 1):
                 lines.append(f"{i}. {step}")
+            lines.append("")
+        if language == "zh":
+            lines.append("## 跑起来之后\n")
+            lines.append(f"- [{structural_title('architecture', language)}](architecture)")
+            lines.append("- [Agent Loop](topics/agent-loop)")
+            lines.append("")
+        else:
+            lines.append("## After it runs\n")
+            lines.append(f"- [{structural_title('architecture', language)}](architecture)")
+            lines.append("- [Agent Loop](topics/agent-loop)")
             lines.append("")
         paths: list[str] = []
         if topic is not None:
@@ -353,12 +394,22 @@ class WikiBuilder:
         title = structural_title("architecture", language)
         lines = [f"# {title}\n"]
         if language == "zh":
-            kind = f"（{arch.architecture_type}）" if arch.architecture_type else ""
+            kind = ""
+            if arch.architecture_type and arch.architecture_type.lower() not in {
+                "cli-tool",
+                "library",
+            }:
+                kind = f"（{arch.architecture_type}）"
             lines.append(
                 f"> 这篇文档讲系统怎么串起来{kind}。读完应能顺着一次调用指出各部分在链路上的职责。\n"
             )
         else:
-            kind = f" ({arch.architecture_type})" if arch.architecture_type else ""
+            kind = ""
+            if arch.architecture_type and arch.architecture_type.lower() not in {
+                "cli-tool",
+                "library",
+            }:
+                kind = f" ({arch.architecture_type})"
             lines.append(
                 f"> This document explains how the system is wired{kind}. "
                 "After reading you should be able to name each part as a role on one call path.\n"
@@ -504,7 +555,7 @@ class WikiBuilder:
         module_names = [m.name for m in wiki_data.modules if f"modules/{m.name}" in page_ids]
         if module_names:
             items.append(self._build_module_sidebar(module_names, language=lang))
-        return items
+        return cap_directory_sidebar(items)
 
     def _build_module_page(
         self,
@@ -718,16 +769,52 @@ def _append_mermaid(lines: list[str], mermaid: str, *, max_lines: int = 40) -> N
 
 
 def _key_type_line(kt) -> str:
-    name = getattr(kt, "name", "") or ""
+    """Type — 职责 — `` `path:line Symbol` ``. Drop dummy lib.rs / folder symbols."""
+    name = (getattr(kt, "name", "") or "").strip()
     role = (getattr(kt, "role", "") or "").strip()
     path = (getattr(kt, "path", "") or "").strip()
-    if not name or not path:
+    line = int(getattr(kt, "line", 0) or 0)
+    if not path:
         return ""
-    bits = [f"`{name}`"]
+    file_path, path_line = _split_path_line(path)
+    if not file_path:
+        return ""
+    loc_line = path_line or (str(line) if line else "")
+    loc = f"{file_path}:{loc_line}" if loc_line else file_path
+    symbol = "" if is_dummy_symbol(name) else name
+    pill = f"`{loc} {symbol}`" if symbol else f"`{loc}`"
+    if symbol and role:
+        return f"- {symbol} — {role} — {pill}"
     if role:
-        bits.append(role)
-    bits.append(f"`{path}`")
-    return "- " + " — ".join(bits)
+        return f"- {pill} — {role}"
+    if symbol:
+        return f"- {symbol} — {pill}"
+    return f"- {pill}"
+
+
+_DUMMY_SYMBOL_RE = re.compile(
+    r"^(lib\.rs|main\.rs|mod\.rs|index\.\w+|src|crates|packages|apps|root)$",
+    re.I,
+)
+
+
+def is_dummy_symbol(name: str) -> bool:
+    n = (name or "").strip().strip("`")
+    if not n:
+        return True
+    if "/" in n or "\\" in n:
+        return True
+    if n.endswith((".rs", ".py", ".ts", ".js", ".go", ".toml", ".md")):
+        return True
+    return bool(_DUMMY_SYMBOL_RE.match(n))
+
+
+def _split_path_line(path: str) -> tuple[str, str]:
+    raw = (path or "").strip().strip("`").split()[0] if (path or "").strip() else ""
+    match = re.match(r"^(.+?):(\d+)(?:-\d+)?$", raw)
+    if match:
+        return match.group(1), match.group(2)
+    return raw, ""
 
 
 def _codebase_structure_table(rows, language: str = "en") -> list[str]:
@@ -751,24 +838,28 @@ def _codebase_structure_table(rows, language: str = "en") -> list[str]:
 def _render_subsystems(subsystems, language: str = "en") -> list[str]:
     lines: list[str] = []
     for sub in subsystems:
-        name = getattr(sub, "name", "") or ""
+        name = _subsystem_display_name(getattr(sub, "name", "") or "")
         role = (getattr(sub, "role", "") or "").strip()
+        types = list(getattr(sub, "key_types", None) or [])
+        type_lines = [line for kt in types if (line := _key_type_line(kt))]
+        mermaid = (getattr(sub, "mermaid", "") or "").strip()
+        if not type_lines:
+            continue
         lines.append(f"### {name}\n")
         if role:
             lines.append(f"{role}\n")
-        mermaid = (getattr(sub, "mermaid", "") or "").strip()
         _append_mermaid(lines, mermaid, max_lines=20)
-        types = list(getattr(sub, "key_types", None) or [])
-        type_lines = [line for kt in types if (line := _key_type_line(kt))]
-        if type_lines:
-            lines.extend(type_lines)
-            lines.append("")
-        files = list(getattr(sub, "files", None) or [])
-        if files and not type_lines:
-            cites = ", ".join(f"`{p}`" for p in files[:4])
-            label = "相关源码" if language == "zh" else "Source"
-            lines.append(f"{label}: {cites}\n")
+        lines.extend(type_lines)
+        lines.append("")
     return lines
+
+
+def _subsystem_display_name(name: str) -> str:
+    text = (name or "").strip()
+    if "上下文装配" in text or "context assembly" in text.lower():
+        if "Agent Loop" in text or text.lower().startswith("agent loop"):
+            return "Agent Loop"
+    return text
 
 
 def _planned_page_ids(topics) -> set[str]:
@@ -885,16 +976,21 @@ def upgrade_wiki_page_content(
     known_ids: set[str],
     *,
     language: str = "zh",
+    page_id: str = "",
 ) -> str:
     """GET/build pass: chips, dead links, 您, pathless types, 代码图谱."""
     if not content:
         return content
     content = upgrade_source_chip_markdown(content)
+    content = upgrade_key_type_chip_markdown(content)
+    content = upgrade_architecture_loop_wording(content)
     content = filter_unknown_wiki_links(content, known_ids)
     if language == "zh" or "您" in content or "阅读后" in content:
         content = upgrade_zh_handbook_voice(content)
     content = strip_pathless_type_bullets(content)
     content = upgrade_codegraph_heading(content)
+    if page_id == "getting-started":
+        content = thicken_getting_started(content, known_ids, language=language)
     return content
 
 
@@ -975,6 +1071,8 @@ def _append_citations(lines: list[str], citations, language: str = "en") -> None
     for cite in citations:
         loc = format_citation(cite)
         symbol = (getattr(cite, "symbol", "") or "").strip()
+        if is_dummy_symbol(symbol):
+            symbol = ""
         pill = f"{loc} {symbol}".strip() if symbol else loc
         note = (getattr(cite, "note", "") or "").strip()
         if note:
@@ -992,6 +1090,8 @@ def _related_source_chip_lines(citations, language: str = "en") -> list[str]:
     for cite in items[:8]:
         loc = format_citation(cite)
         symbol = (getattr(cite, "symbol", "") or "").strip()
+        if is_dummy_symbol(symbol):
+            symbol = ""
         pill = f"{loc} {symbol}".strip() if symbol else loc
         chips.append(f"`{pill}`")
     label = structural_title("related-source", language)
@@ -1032,6 +1132,8 @@ def upgrade_source_chip_markdown(content: str) -> str:
             symbol = (item.group(2) or "").strip()
             if not path:
                 continue
+            if is_dummy_symbol(symbol):
+                symbol = ""
             pills.append(f"`{path} {symbol}`" if symbol else f"`{path}`")
         if not pills:
             return match.group(0)
@@ -1041,12 +1143,78 @@ def upgrade_source_chip_markdown(content: str) -> str:
         prefix, path, symbol, note = match.group(1), match.group(2), match.group(3), match.group(4)
         path = (path or "").strip()
         symbol = (symbol or "").strip()
+        if is_dummy_symbol(symbol):
+            symbol = ""
         pill = f"`{path} {symbol}`" if symbol else f"`{path}`"
         tail = (note or "").rstrip()
         return f"{prefix}{pill}{tail}"
 
     content = _CHIP_HEADING_RE.sub(heading_repl, content)
     return _EVIDENCE_SPLIT_RE.sub(evidence_repl, content)
+
+
+# `` `Type` — duty — `path` `` (关键类型 / 核心子系统). Symbol may have spaces.
+_KEY_TYPE_TRIPLE_RE = re.compile(
+    r"(?m)^([ \t]*[-*][ \t]*)`([^`]+)`"
+    r"[ \t]*[—–−-][ \t]*([^\n`]+?)[ \t]*[—–−-][ \t]*`([^`]+)`[ \t]*$"
+)
+
+
+def upgrade_key_type_chip_markdown(content: str) -> str:
+    """Rewrite `` `Type` — duty — `path` `` into Type — duty — `` `path Symbol` ``."""
+    if not content or "`" not in content:
+        return content
+
+    def repl(match: re.Match[str]) -> str:
+        prefix, symbol, role, path = match.group(1), match.group(2), match.group(3), match.group(4)
+        symbol = (symbol or "").strip()
+        role = (role or "").strip()
+        path = (path or "").strip()
+        if is_dummy_symbol(symbol):
+            return ""
+        if "/" in symbol:
+            return match.group(0)
+        loc, line = _split_path_line(path)
+        loc = loc or path
+        chip_loc = f"{loc}:{line}" if line else loc
+        pill = f"`{chip_loc} {symbol}`" if symbol else f"`{chip_loc}`"
+        if role:
+            return f"{prefix}{symbol} — {role} — {pill}"
+        return f"{prefix}{pill}"
+
+    return _KEY_TYPE_TRIPLE_RE.sub(repl, content)
+
+
+def upgrade_architecture_loop_wording(content: str) -> str:
+    """GET: invented AgentLoop / cli-tool lede / leftover assembly title."""
+    if not content:
+        return content
+    content = content.replace("Agent Loop 与上下文装配", "Agent Loop")
+    content = content.replace("Agent Loop & Context Assembly", "Agent Loop")
+    content = re.sub(r"\bAgentLoop\b", "start_turn", content)
+    content = re.sub(r"（cli-tool）", "", content)
+    content = re.sub(r"\(cli-tool\)", "", content)
+    return content
+
+
+def thicken_getting_started(
+    content: str, known_ids: set[str], *, language: str = "zh"
+) -> str:
+    """If 快速开始 is a stub, append 跑起来之后 links (GET refresh)."""
+    if not content or len(content) >= 800:
+        return content
+    if "跑起来之后" in content or "After it runs" in content:
+        return content
+    links: list[str] = []
+    if "architecture" in known_ids:
+        title = structural_title("architecture", language)
+        links.append(f"- [{title}](architecture)")
+    if "topics/agent-loop" in known_ids:
+        links.append("- [Agent Loop](topics/agent-loop)")
+    if not links:
+        return content
+    heading = "## 跑起来之后" if language == "zh" else "## After it runs"
+    return content.rstrip() + "\n\n" + heading + "\n\n" + "\n".join(links) + "\n"
 
 
 def _overview_lede(name: str, one_liner: str, language: str) -> str:
@@ -1207,7 +1375,9 @@ def mermaid_from_call_chain(chain) -> str:
 
 def _safe_mermaid_label(text: str) -> str:
     cleaned = _MERMAID_LABEL_RE.sub(" ", text)
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()[:48]
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if len(cleaned) > 64:
+        cleaned = cleaned[:64].rsplit(" ", 1)[0]
     if len(cleaned) < 8:
         return ""
     return cleaned
@@ -1359,6 +1529,69 @@ _TOPIC_GROUP_TITLES = {
     "深入探索",
 }
 _MODULE_GROUP_TITLES = {"modules", "模块", "by directory", "按目录"}
+DIR_SIDEBAR_LEAF_CAP = 8
+
+
+def _sidebar_title(item) -> str:
+    if isinstance(item, dict):
+        return str(item.get("title") or "")
+    return str(getattr(item, "title", "") or "")
+
+
+def _sidebar_children(item):
+    if isinstance(item, dict):
+        return list(item.get("children") or [])
+    return list(getattr(item, "children", None) or [])
+
+
+def _set_sidebar_children(item, children) -> None:
+    if isinstance(item, dict):
+        item["children"] = children
+    else:
+        item.children = children
+
+
+def _count_sidebar_leaves(item) -> int:
+    kids = _sidebar_children(item)
+    if not kids:
+        return 1
+    return sum(_count_sidebar_leaves(child) for child in kids)
+
+
+def _cap_sidebar_children(children: list, cap: int) -> list:
+    kept: list = []
+    leaves = 0
+    for child in children:
+        n = _count_sidebar_leaves(child)
+        if leaves + n <= cap:
+            kept.append(child)
+            leaves += n
+        elif n > 1:
+            inner = _cap_sidebar_children(_sidebar_children(child), cap - leaves)
+            if inner:
+                _set_sidebar_children(child, inner)
+                kept.append(child)
+                leaves += sum(_count_sidebar_leaves(c) for c in inner)
+        if leaves >= cap:
+            break
+    return kept
+
+
+def cap_directory_sidebar(sidebar: list, *, cap: int = DIR_SIDEBAR_LEAF_CAP) -> list:
+    """Keep 按目录 to a handful of crate roots so topics stay the main nav."""
+    out: list = []
+    labels = {t.lower() for t in _MODULE_GROUP_TITLES}
+    for item in sidebar or []:
+        title = _sidebar_title(item).strip().lower()
+        if title in labels:
+            kids = _cap_sidebar_children(_sidebar_children(item), cap)
+            if not kids:
+                continue
+            _set_sidebar_children(item, kids)
+        out.append(item)
+    return out
+
+
 _GENERIC_WEB_PAGE_SLUGS = {
     "caching",
     "authentication",
@@ -1445,9 +1678,9 @@ def rebuild_topic_sidebar(
         items.append({
             "title": structural_title("by-directory", lang),
             "page_id": "",
-            "children": module_children[:24],
+            "children": module_children,
         })
-    return items
+    return cap_directory_sidebar(items)
 
 
 def prune_generic_web_sidebar(sidebar: list, content_by_id: dict[str, str]) -> list:

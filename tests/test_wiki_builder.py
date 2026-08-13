@@ -22,9 +22,13 @@ from repowiki.core.models import (
 from repowiki.core.modules import ROOT_NAME, group_into_modules
 from repowiki.core.wiki_builder import (
     WikiBuilder,
+    cap_directory_sidebar,
     filter_unknown_wiki_links,
+    upgrade_architecture_loop_wording,
+    upgrade_key_type_chip_markdown,
     upgrade_legacy_module_markdown,
     upgrade_source_chip_markdown,
+    upgrade_wiki_page_content,
 )
 
 _FILLER = "x = 1\n" * 200
@@ -607,6 +611,8 @@ def test_structured_overview_renders_deepwiki_sections_without_key_features():
     assert "| 名称 |" in overview
     assert "crates/agent" in overview
     assert "`Session`" in overview
+    assert "crates/agent/src/loop.rs Session" in overview
+    assert "`Session` — 持有本轮上下文 — `crates/agent/src/loop.rs`" not in overview
     assert "[架构概览](architecture)" in overview
     assert "[Agent Loop](topics/agent-loop)" in overview
     assert "## 主要能力" not in overview
@@ -653,8 +659,9 @@ def test_architecture_renders_type_roles_under_components():
     assert "## 系统架构" in arch
     assert arch.index("```mermaid") < arch.index("请求从 main 进")
     assert "## 核心子系统" in arch
-    assert "`main` — 启动进程 — `app/main.py`" in arch
+    assert "main — 启动进程 — `app/main.py main`" in arch
     assert "  - 文件:" not in arch
+    assert "`main` — 启动进程 — `app/main.py`" not in arch
 
 
 def test_overview_omits_unused_languages_and_marketing_when_structured():
@@ -854,4 +861,142 @@ def test_filter_unknown_wiki_links_keeps_planned_ids():
     )
     assert "topics/code-graph" not in dropped
     assert "[ok](architecture)" in dropped
+
+
+def test_overview_subsystem_rows_require_path_and_chip_form():
+    project = _project(
+        {
+            "bin/grok.rs": "fn main() {}\n",
+            "crates/agent/src/loop.rs": "pub struct Session;\n",
+        }
+    )
+    graph = DependencyGraph.build_from_project(project)
+    data = WikiData(
+        overview=ProjectOverview(
+            name="grok-study",
+            subsystems=[
+                Subsystem(
+                    name="Agent Loop 与上下文装配",
+                    role="把一轮对话跑完",
+                    key_types=[
+                        KeyType(
+                            name="start_turn",
+                            role="pager dispatch / start_turn",
+                            path="crates/agent/src/loop.rs",
+                            line=40,
+                        ),
+                        KeyType(name="Ghost", role="no path"),
+                    ],
+                ),
+                Subsystem(name="Terminal UI", role="empty heading"),
+            ],
+        ),
+        architecture=ArchitectureDiagram(architecture_type="monolith"),
+    )
+    overview = WikiBuilder().build(project, data, graph, language="zh").get_page(
+        "index"
+    ).content
+    assert "### Agent Loop\n" in overview
+    assert "与上下文装配" not in overview
+    assert "start_turn — pager dispatch / start_turn — `crates/agent/src/loop.rs:40 start_turn`" in overview
+    assert "`Ghost`" not in overview
+    assert "### Terminal UI" not in overview
+
+
+def test_architecture_sequence_is_model_then_tools():
+    from repowiki.core.analyzer import Analyzer
+    from repowiki.core.models import TopicOutline, WikiOutline
+    from repowiki.core.topics import GROK_LOOP_SEQUENCE, sequence_tools_before_model
+
+    tools_first = (
+        "sequenceDiagram\n"
+        "  participant Tools as ToolBridge\n"
+        "  participant Model\n"
+        "  Tools->>Model: tools first\n"
+    )
+    assert sequence_tools_before_model(tools_first)
+    assert not sequence_tools_before_model(GROK_LOOP_SEQUENCE)
+    assert GROK_LOOP_SEQUENCE.index("Turn->>Model") < GROK_LOOP_SEQUENCE.index(
+        "Turn->>Bridge"
+    )
+
+    project = _project(
+        {
+            "bin/grok.rs": "fn main() {}\n",
+            "crates/agent/src/loop.rs": "pub fn start_turn() {}\n",
+        }
+    )
+    graph = DependencyGraph.build_from_project(project)
+    outline = WikiOutline(
+        topics=[
+            TopicOutline(
+                id="agent-loop",
+                title="Agent Loop",
+                section="deep-dive",
+                key_files=["crates/agent/src/loop.rs"],
+            )
+        ]
+    )
+    analyzer = Analyzer.__new__(Analyzer)
+    analyzer.language = "zh"
+    arch = Analyzer._fill_architecture_gaps(
+        analyzer,
+        ArchitectureDiagram(
+            architecture_type="cli-tool",
+            mermaid_sequence=tools_first,
+        ),
+        project,
+        outline,
+        graph,
+    )
+    seq = arch.mermaid_sequence
+    assert "Turn->>Model: complete" in seq
+    assert seq.index("Turn->>Model") < seq.index("Turn->>Bridge")
+    data = WikiData(architecture=arch)
+    page = WikiBuilder().build(project, data, graph, language="zh").get_page(
+        "architecture"
+    ).content
+    assert "cli-tool" not in page
+    assert "AgentLoop" not in page
+
+
+def test_upgrade_key_type_chip_and_agentloop_wording():
+    md = (
+        "## 关键类型\n\n"
+        "- `Session` — 持有本轮 — `crates/agent/src/loop.rs:40`\n"
+        "- `lib.rs` — crate root — `crates/agent/src/lib.rs:1`\n"
+    )
+    chips = upgrade_key_type_chip_markdown(md)
+    assert "Session — 持有本轮 — `crates/agent/src/loop.rs:40 Session`" in chips
+    assert "`lib.rs`" not in chips
+    looped = upgrade_architecture_loop_wording(
+        "# 架构\n\n> 这篇文档讲系统怎么串起来（cli-tool）。\n\n"
+        "`AgentLoop` in `xai-grok-agent/src/lib.rs`\n"
+        "### Agent Loop 与上下文装配\n"
+    )
+    assert "cli-tool" not in looped
+    assert "AgentLoop" not in looped
+    assert "start_turn" in looped
+    assert "与上下文装配" not in looped
+    combined = upgrade_wiki_page_content(
+        md + "\n`AgentLoop`\n",
+        {"index", "architecture"},
+        language="zh",
+    )
+    assert "crates/agent/src/loop.rs:40 Session" in combined
+    assert "AgentLoop" not in combined
+
+
+def test_directory_sidebar_is_capped():
+    children = [
+        {"title": f"crate-{i}", "page_id": f"modules/crates/c{i}", "children": []}
+        for i in range(20)
+    ]
+    sidebar = [
+        {"title": "入门指南", "page_id": "", "children": []},
+        {"title": "按目录", "page_id": "", "children": children},
+    ]
+    capped = cap_directory_sidebar(sidebar)
+    directory = next(item for item in capped if item["title"] == "按目录")
+    assert len(directory["children"]) <= 8
 

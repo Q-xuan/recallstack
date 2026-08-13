@@ -131,9 +131,13 @@ def build_outline_prompt(
                 "topics[].key_files MUST be real paths from the tree (2-6 per topic). "
                 "agent-loop key_files MUST be the runtime loop "
                 "(xai-grok-agent `agent.rs` / run / turn / tool dispatch, or crates/agent loop.rs) "
-                "— NEVER conversation_util.rs, PromptContext, or replace_or_insert_system_head. "
+                "— NEVER conversation_util.rs, PromptContext, or replace_or_insert_system_head, "
+                "and prefer production files over tests/. "
                 "Context assembly (System head, PromptContext, xai-chat-state) is a SEPARATE "
                 "topic id context-assembly, not a subtitle of agent-loop. "
+                "entry-and-boot key_files MUST be the grok binary / pager boot "
+                "(bin/grok.rs, pager app/boot), NEVER code-graph or fast-worktree CLIs. "
+                "tool-system key_files MUST include ToolBridge when that type exists. "
                 "depth is one of deep, standard, brief. Mark at most a third as deep. "
                 "Do NOT emit modules[], reading_order, or emphasized_pages — those are planned locally. "
                 "Do NOT dump a crate inventory. Keep purpose to one sentence. "
@@ -209,7 +213,7 @@ def build_overview_prompt(
                 "    {\n"
                 '      "name": "subsystem matching a planned topic if possible",\n'
                 '      "role": "what it does on the call flow",\n'
-                '      "key_types": [{"name": "Type", "role": "job on the flow", "path": "src/file.rs"}],\n'
+                '      "key_types": [{"name": "start_turn", "role": "pager dispatch / start_turn", "path": "src/file.rs:12"}],\n'
                 '      "files": ["src/file.rs"],\n'
                 '      "mermaid": ""\n'
                 "    }\n"
@@ -219,20 +223,24 @@ def build_overview_prompt(
                 '  "tech_stack": [{"name": "Python", "category": "language", "version": "3.10+"}],\n'
                 '  "setup_instructions": [],\n'
                 '  "key_features": [],\n'
-                '  "citations": [{"path": "real/file.py", "start_line": 1, "symbol": "", "note": "why this file matters"}],\n'
+                '  "citations": [{"path": "real/file.py", "start_line": 1, "symbol": "Type", "note": "why this file matters"}],\n'
                 f"{_term_tips_field()}"
                 "}\n\n"
                 "REQUIRED (DeepWiki handbook, not a README): "
                 "document_scope is the lede (what this document covers / what the reader can explain; "
                 "in 简体中文: 这篇文档讲…读完应能…, 用你不用您). "
-                "what_it_is: 3-6 characteristic sentences, each with a real `path:line` cite — "
-                "not a README paraphrase. "
+                "what_it_is: 3-6 characteristic sentences, each with a real `path:line` cite "
+                "(not a crate folder and not a path without a line). "
                 "runtime_flow: types as roles on one real call. "
                 "mermaid_component: a mermaid flowchart of that runtime (not a crate tree). "
                 "codebase_structure: 2-8 rows from REAL paths (crates/, src/, packages/), "
                 "columns name / location / purpose — not a file dump. "
-                "subsystems: 3-8; each has role + 2-4 key_types. "
+                "subsystems: 3-8. Each row MUST be a real Type, one-line duty, and one "
+                "`path:line Symbol` key_type — not an empty heading. "
+                "Name Agent Loop (pager dispatch / start_turn), never 'Agent Loop 与上下文装配'. "
+                "Terminal UI / TUI MUST cite pager types (Pager / TuiPager), not an empty section. "
                 "Omit a key_type if `path` is missing; never invent Type names that are not in the source. "
+                "Never use lib.rs or a crate folder name as a Type. "
                 "see_also: architecture plus planned topic ids only "
                 "(e.g. topics/agent-loop, topics/context-assembly when that topic is planned). "
                 "Never invent topics/pty-control or topics/code-graph — use the planned ids "
@@ -344,8 +352,19 @@ def build_module_prompt(
             "FORBIDDEN as the spine/lede of this page: replace_or_insert_system_head, "
             "PromptContext-as-the-loop, traceparent injection, ChatStateActor System head. "
             "Those belong on topics/context-assembly, at most a short aside here. "
+            "Cite production model-call / ToolBridge sites, not tests/. "
             "Do NOT invent types named AgentLoop or HooksSystem. "
-            "Mermaid node labels must be complete words (no truncated 'Cont' / 'Sess'). "
+            "Mermaid node labels must be complete words (no truncated 'Cont' / 'Sess' / 'ToolB'). "
+        )
+    if "tool-system" in tid or "工具层" in tid:
+        extra_rules += (
+            "THIS PAGE IS THE TOOL SYSTEM. Include ToolBridge "
+            "(model tool calls → execute → write-back), not only hooks. "
+        )
+    if "entry-and-boot" in tid or "入口与启动" in tid or "entry and boot" in tid:
+        extra_rules += (
+            "THIS PAGE IS PROCESS BOOT: grok main / pager boot handing off the first turn. "
+            "Do NOT narrate code-graph or fast-worktree CLIs as the entry. "
         )
     if "context-assembly" in tid or "上下文装配" in tid:
         extra_rules += (
@@ -448,29 +467,35 @@ def build_architecture_prompt(
                 f"{outline_block}"
                 "Analyze the architecture. Output JSON:\n"
                 "{\n"
-                '  "architecture_type": "one of: monolith, client-server, microservices, library, cli-tool, framework, plugin-system, pipeline",\n'
-                '  "description": "2-4 professional paragraphs: types as roles on ONE real flow, with `path:line` cites. NEVER a PageRank file dump.",\n'
+                '  "architecture_type": "one of: monolith, client-server, microservices, library, framework, plugin-system, pipeline — never cli-tool",\n'
+                '  "description": "2-4 professional paragraphs: types as roles on ONE real flow, with `path:line` cites. NEVER a PageRank file dump. NEVER invent AgentLoop.",\n'
                 '  "components": [\n'
                 "    {\n"
                 '      "name": "Subsystem",\n'
                 '      "role": "job on the flow",\n'
                 '      "purpose": "same as role if you only fill one",\n'
-                '      "key_types": [{"name": "Type", "role": "job on the flow", "path": "src/file.rs"}],\n'
+                '      "key_types": [{"name": "start_turn", "role": "pager dispatch", "path": "src/file.rs:12"}],\n'
                 '      "files": ["real/path.py"]\n'
                 "    }\n"
                 "  ],\n"
                 '  "mermaid_component": "graph TD\\n  A[Component] --> B[Component]\\n  ...",\n'
-                '  "mermaid_sequence": "sequenceDiagram\\n  participant A\\n  A->>B: request\\n  ...",\n'
+                '  "mermaid_sequence": "sequenceDiagram\\n  participant Pager\\n  participant Turn as start_turn\\n  participant Model\\n  participant Bridge as ToolBridge\\n  Pager->>Turn: dispatch\\n  Turn->>Model: complete\\n  Model-->>Turn: tool calls\\n  Turn->>Bridge: execute\\n  Bridge-->>Turn: write-back\\n  Turn->>Turn: on_turn_done",\n'
                 '  "data_flow": "walk one request through the mermaid boxes in 2-4 sentences",\n'
-                '  "citations": [{"path": "real/path.py", "start_line": 1, "note": "why this file is architectural"}],\n'
+                '  "citations": [{"path": "real/path.py", "start_line": 1, "symbol": "start_turn", "note": "why this file is architectural"}],\n'
                 f"{_term_tips_field()}"
                 "}\n\n"
                 "IMPORTANT: Mermaid code must be a single string with \\n for newlines. "
                 "Use simple alphanumeric node IDs. mermaid_component is REQUIRED when the "
                 "graph is knowable — it is rendered at the top of 系统架构 / System architecture. "
                 "components: each is a ROLE in the flow (who calls whom), not a folder listing. "
-                "Each component MUST include 2-4 key_types (Type — job — path), not just "
-                "name — purpose — files. Omit a key_type if `path` is missing; never invent Type names. "
+                "Each component MUST include 2-4 key_types (Type — job — `path:line Symbol`), not just "
+                "name — purpose — files. Omit a key_type if `path` is missing; never invent Type names "
+                "(no AgentLoop, no lib.rs as a type). "
+                "Live agent loop is pager dispatch → start_turn → TurnRunning → model → ToolBridge → "
+                "write-back → on_turn_done. mermaid_sequence MUST call the model BEFORE tools "
+                "(never tools then model). "
+                "Do not set architecture_type to cli-tool; omit it or use pipeline. "
+                "citations MUST include symbol when the cited type/function is known. "
                 "Keep files to 1-3 load-bearing paths per component. "
                 "components.files and citations.path MUST be real paths from the tree. "
                 "description must explain the system as a call path, not list heaviest files. "

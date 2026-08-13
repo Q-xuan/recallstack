@@ -47,8 +47,19 @@ def _grok_project() -> ProjectContext:
         _file("crates/agent/src/loop.rs", "pub fn agent_loop() {}\n" + filler),
         _file("crates/agent/src/prompt.rs", "pub fn system_prompt() {}\n" + filler),
         _file(
-            "crates/xai-grok-agent/src/agent.rs",
-            "pub async fn run_turn() {}\n" + filler,
+            "crates/xai-grok-agent/src/tool_bridge.rs",
+            "pub struct ToolBridge;\n" + filler,
+        ),
+        _file("crates/pager/src/app.rs", "pub fn boot_pager() {}\n" + filler),
+        _file(
+            "crates/code-graph/src/main.rs",
+            "fn main() { code_graph::run(); }\n" + filler,
+            entry=True,
+        ),
+        _file(
+            "crates/fast-worktree/src/main.rs",
+            "fn main() { worktree::run(); }\n" + filler,
+            entry=True,
         ),
         _file(
             "crates/xai-chat-state/src/conversation_util.rs",
@@ -195,6 +206,43 @@ def test_agent_loop_file_pack_is_agent_crate_not_conversation_util():
     assert any(
         "conversation_util" in p for p in merged_by_id["context-assembly"].key_files
     )
+
+
+def test_entry_and_boot_file_pack_is_grok_pager_not_worktree_cli():
+    from repowiki.core.models import TopicOutline
+    from repowiki.core.topics import ENTRY_ID, build_deterministic_topics, merge_topics
+
+    project = _grok_project()
+    graph = DependencyGraph.build_from_project(project)
+    topics = build_deterministic_topics(project, graph, language="zh")
+    by_id = {t.id: t for t in topics}
+    assert ENTRY_ID in by_id
+    joined = " ".join(by_id[ENTRY_ID].key_files)
+    assert "bin/grok.rs" in joined or "pager" in joined
+    assert "worktree" not in joined
+    assert "code-graph" not in joined
+    assert "fast-worktree" not in joined
+    tools = by_id.get("tool-system")
+    assert tools is not None
+    assert any("tool_bridge" in p or "tools" in p for p in tools.key_files)
+
+    llm = [
+        TopicOutline(
+            id=ENTRY_ID,
+            title="入口与启动",
+            section="deep-dive",
+            key_files=[
+                "crates/code-graph/src/main.rs",
+                "crates/fast-worktree/src/main.rs",
+            ],
+        )
+    ]
+    merged = merge_topics(topics, llm, {f.path for f in project.files})
+    rebound = next(t for t in merged if t.id == ENTRY_ID)
+    rebound_joined = " ".join(rebound.key_files)
+    assert "worktree" not in rebound_joined
+    assert "code-graph" not in rebound_joined
+    assert "bin/grok.rs" in rebound_joined or "pager" in rebound_joined
 
 
 def test_merge_topics_drops_generic_web_slugs_on_grok_tree():
@@ -531,3 +579,53 @@ def test_wiki_out_upgrades_three_part_chip_with_spaced_symbol(monkeypatch):
     assert " — `mod channel`" not in loop.content
     items = [ln for ln in loop.content.splitlines() if ln.startswith("- ")]
     assert len(items) == 2
+
+
+def test_wiki_out_upgrades_key_types_and_agentloop(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    arch = (
+        "# 架构概览\n\n"
+        "> 这篇文档讲系统怎么串起来（cli-tool）。\n\n"
+        "## 关键类型\n\n"
+        "- `Session` — 持有本轮 — `crates/agent/src/loop.rs:40`\n"
+        "- `lib.rs` — crate root — `crates/foo/src/lib.rs:1`\n\n"
+        "`AgentLoop` lives in lib.rs\n"
+    )
+    thin_gs = "# 快速开始\n\n> 这篇按 README 跑起来。\n\n## 相关源码\n\n- `README.md`\n"
+
+    class _Version:
+        id = "ver-1"
+        wiki_pages = {
+            "project_name": "grok-study",
+            "pages": [
+                {"id": "index", "title": "概述", "content": "# grok-study\n"},
+                {"id": "architecture", "title": "架构概览", "content": arch},
+                {"id": "getting-started", "title": "快速开始", "content": thin_gs},
+                {"id": "topics/agent-loop", "title": "Agent Loop", "content": "# loop\n"},
+            ],
+            "sidebar": [
+                {"title": "入门指南", "page_id": "", "children": [
+                    {"title": "概述", "page_id": "index", "children": []},
+                    {"title": "快速开始", "page_id": "getting-started", "children": []},
+                ]},
+                {"title": "深入探索", "page_id": "", "children": [
+                    {"title": "架构概览", "page_id": "architecture", "children": []},
+                ]},
+                {"title": "按目录", "page_id": "", "children": [
+                    {"title": f"c{i}", "page_id": f"modules/c{i}", "children": []}
+                    for i in range(20)
+                ]},
+            ],
+        }
+
+    out = wiki_out("repo-1", _Version())
+    page = next(p for p in out.pages if p.id == "architecture")
+    assert "Session — 持有本轮 — `crates/agent/src/loop.rs:40 Session`" in page.content
+    assert "`lib.rs`" not in page.content
+    assert "AgentLoop" not in page.content
+    assert "cli-tool" not in page.content
+    gs = next(p for p in out.pages if p.id == "getting-started")
+    assert "跑起来之后" in gs.content
+    assert "[架构概览](architecture)" in gs.content
+    directory = next(item for item in out.sidebar if item.title == "按目录")
+    assert len(directory.children) <= 8

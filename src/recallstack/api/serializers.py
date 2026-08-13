@@ -36,6 +36,7 @@ from recallstack.learning.learning_contract import (
 )
 from repowiki.core.topics import is_generic_web_slug, omit_generic_web_wiki_page
 from repowiki.core.wiki_builder import (
+    cap_directory_sidebar,
     prune_generic_web_sidebar,
     rebuild_topic_sidebar,
     sidebar_has_topic_groups,
@@ -157,7 +158,7 @@ def wiki_out(
                 None,
             )
         content = upgrade_wiki_page_content(
-            content, known_ids, language=content_lang()
+            content, known_ids, language=content_lang(), page_id=page_id
         )
         pages.append(
             WikiPageOut(
@@ -190,14 +191,18 @@ def wiki_out(
     # tree is easy to miss, and the UI relabels 模块 → 按目录 so it looks done.
     if not sidebar_has_topic_groups(raw_sidebar):
         mapped_sidebar = map_sidebar(
-            prune_generic_web_sidebar(
-                rebuild_topic_sidebar(kept_pages, language=content_lang()),
-                content_by_id,
+            cap_directory_sidebar(
+                prune_generic_web_sidebar(
+                    rebuild_topic_sidebar(kept_pages, language=content_lang()),
+                    content_by_id,
+                )
             )
         )
     else:
         mapped_sidebar = map_sidebar(
-            prune_generic_web_sidebar(raw_sidebar, content_by_id)
+            cap_directory_sidebar(
+                prune_generic_web_sidebar(raw_sidebar, content_by_id)
+            )
         )
 
     return WikiOut(

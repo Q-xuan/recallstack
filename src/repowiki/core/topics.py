@@ -58,6 +58,18 @@ _SYSTEMS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
         "上下文装配",
         ("conversation", "chat-state", "prompt-context", "system-head"),
     ),
+    (
+        "tool-system",
+        "Tool System",
+        "工具层",
+        ("tool", "tools"),
+    ),
+    (
+        "terminal-ui",
+        "Terminal UI",
+        "Terminal UI",
+        ("tui", "ratatui", "crossterm", "pager"),
+    ),
     ("agent-runtime", "Agent Runtime", "Agent Runtime", ("agent", "runtime", "session")),
     (
         "system-prompt",
@@ -71,9 +83,7 @@ _SYSTEMS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
         "Sub-Agent 并行调度",
         ("subagent", "sub-agent", "scheduler"),
     ),
-    ("tool-system", "Tool System", "工具层", ("tool", "tools")),
     ("acp-protocol", "ACP & Protocol", "协议 / ACP", ("acp", "protocol", "jsonrpc")),
-    ("terminal-ui", "Terminal UI", "Terminal UI", ("tui", "ratatui", "crossterm")),
     ("pty-control", "PTY / Terminal Control", "PTY 控制", ("pty", "ptyctl")),
     ("headless-modes", "Headless & ACP Modes", "Headless 与 ACP 模式", ("headless",)),
     (
@@ -234,23 +244,28 @@ def build_deterministic_topics(
         )
         claimed.add(readme)
 
-    if entry_paths:
-        key = _pick_keys(entry_paths, rank_index, claimed, limit=6)
+    boot = _pick_entry_boot_files(
+        entry_paths,
+        [f.path for f in project.files],
+        rank_index,
+        claimed,
+    )
+    if boot:
         topics.append(
             TopicOutline(
                 id=ENTRY_ID,
                 title="入口与启动" if zh else "Entry and boot",
                 section="deep-dive",
                 purpose=(
-                    "进程从哪启动、启动后先装配什么。"
+                    "进程从哪启动、pager / 二进制怎么把第一轮交出去。"
                     if zh
-                    else "Where the process starts and what it wires first."
+                    else "Where the process starts and how pager/binary hands off the first turn."
                 ),
-                key_files=key,
+                key_files=boot,
                 depth="deep",
             )
         )
-        claimed.update(key)
+        claimed.update(boot)
 
     for topic_id, title_en, title_zh, names in _SYSTEMS:
         matched = [
@@ -455,6 +470,7 @@ def merge_topics(
             depth=item.depth,
         )
     _rebind_loop_and_assembly(by_id, known, base)
+    _rebind_entry_and_boot(by_id, known, base)
     getting = [t for t in by_id.values() if t.section == "getting-started"]
     deep = [t for t in by_id.values() if t.section != "getting-started"]
     # Preserve LLM order for deep-dive, then leftover deterministic.
@@ -518,13 +534,28 @@ _LOOP_FILE_STEMS = {
     "dispatch",
     "tool_dispatch",
     "tool_call",
-    "tools",
-    "tool",
 }
 _AGENT_CRATE_RE = re.compile(
     r"(?:^|/)(?:(?:xai-)?grok-agent|crates/agent|packages/agent)(?:/|$)",
     re.I,
 )
+_BOOT_SKIP_NEEDLES = (
+    "worktree",
+    "fast-worktree",
+    "code-graph",
+    "code_graph",
+    "codegraph",
+    "codebase-graph",
+)
+_BOOT_NAME = {
+    "main.rs",
+    "main.py",
+    "main.go",
+    "main.ts",
+    "main.js",
+    "app.rs",
+    "boot.rs",
+}
 
 
 def _norm_topic_path(path: str) -> str:
@@ -556,12 +587,58 @@ def is_agent_loop_file(path: str) -> bool:
     return False
 
 
+def is_tool_system_file(path: str) -> bool:
+    """ToolBridge / tools crate — not worktree CLIs."""
+    low = _norm_topic_path(path)
+    if any(n in low for n in _BOOT_SKIP_NEEDLES):
+        return False
+    compact = low.replace("_", "").replace("-", "")
+    if "toolbridge" in compact:
+        return True
+    return _path_has_system(path, ("tool", "tools"))
+
+
+def is_entry_boot_file(path: str) -> bool:
+    """grok / pager binary boot, not code-graph or fast-worktree CLIs."""
+    low = _norm_topic_path(path)
+    if any(n in low for n in _BOOT_SKIP_NEEDLES):
+        return False
+    parts = [p for p in low.split("/") if p]
+    name = parts[-1] if parts else ""
+    if parts and parts[0] in {"bin", "cmd"}:
+        return True
+    if "/pager/" in f"/{low}/" or low.startswith("pager/"):
+        return name in _BOOT_NAME or name in {"lib.rs", "mod.rs"}
+    if name in {"main.rs", "main.py", "main.go", "main.ts", "main.js"}:
+        if any(tok in low for tok in ("grok", "pager", "tui", "/agent/")):
+            return True
+        if low.startswith("src/main.") or low.startswith("src/bin/"):
+            return True
+    return False
+
+
 def _file_matches_system(path: str, topic_id: str, names: tuple[str, ...]) -> bool:
     if topic_id == "agent-loop":
         return is_agent_loop_file(path)
     if topic_id == "context-assembly":
         return is_context_assembly_file(path)
+    if topic_id == "tool-system":
+        return is_tool_system_file(path)
     return _path_has_system(path, names)
+
+
+def _production_rank(path: str) -> int:
+    low = _norm_topic_path(path)
+    leaf = low.rsplit("/", 1)[-1]
+    if (
+        "/tests/" in f"/{low}/"
+        or "/test/" in f"/{low}/"
+        or low.startswith("tests/")
+        or leaf.endswith("_test.rs")
+        or leaf.startswith("test_")
+    ):
+        return 1
+    return 0
 
 
 def _topics_look_zh(topics: list[TopicOutline]) -> bool:
@@ -607,7 +684,7 @@ def _rebind_loop_and_assembly(
                     kept.append(path)
                 if len(kept) >= 8:
                     break
-        loop.key_files = kept[:8]
+        loop.key_files = _prefer_production(kept)[:8]
         if not loop.purpose or "上下文装配" in (loop.purpose or ""):
             loop.purpose = _purpose_for(loop.title, zh, topic_id="agent-loop")
 
@@ -617,7 +694,14 @@ def _rebind_loop_and_assembly(
     for path in moved_assembly + assembly_pool:
         if path not in assembly_files:
             assembly_files.append(path)
-    assembly_files = assembly_files[:8]
+    if not assembly_files:
+        for item in base:
+            if item.id == "context-assembly":
+                assembly_files = [
+                    p for p in item.key_files if is_context_assembly_file(p)
+                ]
+                break
+    assembly_files = _prefer_production(assembly_files)[:8]
     if assembly:
         assembly.key_files = assembly_files
         if not assembly.key_files:
@@ -641,6 +725,70 @@ def _rebind_loop_and_assembly(
         )
 
 
+def _rebind_entry_and_boot(
+    by_id: dict[str, TopicOutline],
+    known: set[str],
+    base: list[TopicOutline],
+) -> None:
+    """Keep entry-and-boot on grok/pager, not worktree or code-graph CLIs."""
+    zh = _topics_look_zh(list(by_id.values()) + list(base))
+    known_list = sorted(p.replace("\\", "/") for p in known)
+    boot_pool = [p for p in known_list if is_entry_boot_file(p)]
+    entry = by_id.get(ENTRY_ID)
+    if not entry:
+        if not boot_pool:
+            return
+        title = "入口与启动" if zh else "Entry and boot"
+        by_id[ENTRY_ID] = TopicOutline(
+            id=ENTRY_ID,
+            title=title,
+            section="deep-dive",
+            purpose=(
+                "进程从哪启动、pager / 二进制怎么把第一轮交出去。"
+                if zh
+                else "Where the process starts and how pager/binary hands off the first turn."
+            ),
+            key_files=_prefer_production(boot_pool)[:6],
+            depth="deep",
+        )
+        return
+    kept = [p for p in entry.key_files if is_entry_boot_file(p)]
+    if not kept:
+        kept = boot_pool[:6]
+    else:
+        for path in boot_pool:
+            if path not in kept:
+                kept.append(path)
+            if len(kept) >= 8:
+                break
+    entry.key_files = _prefer_production(kept)[:8]
+
+
+def _prefer_production(paths: list[str]) -> list[str]:
+    return sorted(paths, key=lambda p: (_production_rank(p), p))
+
+
+def _pick_entry_boot_files(
+    entry_paths: list[str],
+    all_paths: list[str],
+    rank_index: dict[str, int],
+    claimed: set[str],
+) -> list[str]:
+    candidates = [p for p in entry_paths if is_entry_boot_file(p)]
+    if not candidates:
+        candidates = [p for p in all_paths if is_entry_boot_file(p)]
+    if not candidates:
+        candidates = [
+            p
+            for p in entry_paths
+            if not any(n in p.replace("\\", "/").lower() for n in _BOOT_SKIP_NEEDLES)
+        ]
+    key = _pick_keys(candidates, rank_index, claimed, limit=6)
+    if not key:
+        key = _pick_keys(candidates, rank_index, set(), limit=6)
+    return key
+
+
 def _pick_keys(
     paths: list[str],
     rank_index: dict[str, int],
@@ -649,7 +797,7 @@ def _pick_keys(
     limit: int,
 ) -> list[str]:
     unused = [p for p in paths if p not in claimed]
-    unused.sort(key=lambda p: rank_index.get(p, 10_000))
+    unused.sort(key=lambda p: (_production_rank(p), rank_index.get(p, 10_000)))
     return unused[:limit]
 
 
@@ -737,10 +885,16 @@ def subsystems_from_topics(topics: list[TopicOutline], *, limit: int = 8) -> lis
                 path=(topic.key_files[0] if topic.key_files else ""),
             )
             for symbol in (topic.key_symbols or [])[:4]
+            if symbol and "/" not in symbol and not str(symbol).endswith(".rs")
         ]
+        if not types:
+            types = _fallback_key_types_for_topic(topic)
+        title = topic.title or topic.id
+        if "上下文装配" in title and "Agent Loop" in title:
+            title = "Agent Loop"
         out.append(
             Subsystem(
-                name=topic.title or topic.id,
+                name=title,
                 role=topic.purpose,
                 key_types=types,
                 files=list(topic.key_files[:4]),
@@ -749,6 +903,72 @@ def subsystems_from_topics(topics: list[TopicOutline], *, limit: int = 8) -> lis
         if len(out) >= limit:
             break
     return out
+
+
+def _fallback_key_types_for_topic(topic: TopicOutline) -> list[KeyType]:
+    hints: list[tuple[str, str]] = []
+    tid = topic.id or ""
+    if tid == "agent-loop":
+        hints = [
+            ("start_turn", "pager dispatch / start_turn"),
+            ("TurnRunning", "本轮运行中"),
+        ]
+    elif tid in {"terminal-ui", "tui-pager"}:
+        hints = [("Pager", "TUI pager")]
+    elif tid == "tool-system":
+        hints = [("ToolBridge", "执行模型 tool calls")]
+    elif tid == ENTRY_ID:
+        hints = [("main", "进程入口")]
+    out: list[KeyType] = []
+    files = list(topic.key_files or [])
+    if not files:
+        return out
+    for i, (name, role) in enumerate(hints):
+        path = files[min(i, len(files) - 1)]
+        out.append(KeyType(name=name, role=role, path=path, line=1))
+    if not out:
+        leaf = files[0].replace("\\", "/").rsplit("/", 1)[-1]
+        stem = leaf.rsplit(".", 1)[0]
+        if stem not in {"lib", "mod", "main"}:
+            out.append(KeyType(name=stem, role="", path=files[0], line=1))
+    return out[:4]
+
+
+GROK_LOOP_SEQUENCE = (
+    "sequenceDiagram\n"
+    "  participant Pager\n"
+    "  participant Turn as start_turn\n"
+    "  participant Model\n"
+    "  participant Bridge as ToolBridge\n"
+    "  Pager->>Turn: dispatch\n"
+    "  Turn->>Turn: TurnRunning\n"
+    "  Turn->>Model: complete\n"
+    "  Model-->>Turn: tool calls\n"
+    "  Turn->>Bridge: execute\n"
+    "  Bridge-->>Turn: write-back\n"
+    "  Turn->>Turn: on_turn_done"
+)
+
+
+def sequence_tools_before_model(text: str) -> bool:
+    """True when a sequence diagram runs tools before the model call."""
+    if "sequencediagram" not in (text or "").lower().replace(" ", ""):
+        return False
+    tool_at: tuple[int, int] | None = None
+    model_at: tuple[int, int] | None = None
+    for i, line in enumerate((text or "").splitlines()):
+        low = line.lower()
+        if "->>" not in low and "-->>" not in low:
+            continue
+        tool_m = re.search(r"toolbridge|\btools?\b", low)
+        model_m = re.search(r"\bmodel\b|\bcomplete\b|\bllm\b", low)
+        if tool_m and tool_at is None:
+            tool_at = (i, tool_m.start())
+        if model_m and model_at is None:
+            model_at = (i, model_m.start())
+    if tool_at is None or model_at is None:
+        return False
+    return tool_at < model_at
 
 
 def topic_wiki_links(topics: list[TopicOutline]) -> list[str]:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Callable
 
 from repowiki.core.cache import Cache, content_hash
@@ -37,9 +38,11 @@ from repowiki.core.module_handbook import fallback_module_doc
 from repowiki.core.modules import group_into_modules
 from repowiki.core.outline import build_deterministic_outline, merge_outline
 from repowiki.core.topics import (
+    GROK_LOOP_SEQUENCE,
     codebase_structure_for,
     fallback_topic_doc,
     runtime_mermaid_for,
+    sequence_tools_before_model,
     subsystems_from_topics,
     topic_wiki_links,
 )
@@ -243,7 +246,7 @@ class Analyzer:
         outline: WikiOutline | None = None,
         graph: DependencyGraph | None = None,
     ) -> ProjectOverview:
-        cache_key = f"overview:v2:{self.language}:{tree_hash}"
+        cache_key = f"overview:v3:{self.language}:{tree_hash}"
         cached = await self.cache.get(cache_key)
         if cached:
             try:
@@ -384,7 +387,7 @@ class Analyzer:
             )
             content_parts = [(f.content or f.preview or "") for f in files]
             cache_key = (
-                f"topic:v4:{self.language}:{plan.depth}:{topic.id}:"
+                f"topic:v5:{self.language}:{plan.depth}:{topic.id}:"
                 f"{content_hash(''.join(content_parts))}"
             )
             cached = await self.cache.get(cache_key)
@@ -486,7 +489,7 @@ class Analyzer:
         outline: WikiOutline | None = None,
         graph: DependencyGraph | None = None,
     ) -> ArchitectureDiagram:
-        cache_key = f"arch:v2:{self.language}:{tree_hash}"
+        cache_key = f"arch:v3:{self.language}:{tree_hash}"
         cached = await self.cache.get(cache_key)
         if cached:
             try:
@@ -771,6 +774,21 @@ class Analyzer:
             overview.codebase_structure = codebase_structure_for(
                 project, language=self._lang()
             )
+        if overview.subsystems:
+            for sub in overview.subsystems:
+                name = sub.name or ""
+                if "上下文装配" in name and "Agent Loop" in name:
+                    sub.name = "Agent Loop"
+                sub.key_types = [
+                    kt
+                    for kt in (sub.key_types or [])
+                    if (kt.path or "").strip()
+                    and "/" not in (kt.name or "")
+                    and not str(kt.name or "").endswith(".rs")
+                ]
+            overview.subsystems = [
+                s for s in overview.subsystems if s.key_types or s.files
+            ]
         if not overview.subsystems and outline:
             overview.subsystems = subsystems_from_topics(outline.topics)
         if not overview.see_also and outline:
@@ -836,6 +854,30 @@ class Analyzer:
         for comp in arch.components:
             if not comp.role:
                 comp.role = comp.purpose
+            if "上下文装配" in (comp.name or "") and "Agent Loop" in (comp.name or ""):
+                comp.name = "Agent Loop"
+            comp.key_types = [
+                kt
+                for kt in (comp.key_types or [])
+                if (kt.path or "").strip()
+                and "/" not in (kt.name or "")
+                and not str(kt.name or "").endswith(".rs")
+            ]
+        if arch.description:
+            arch.description = arch.description.replace("AgentLoop", "start_turn")
+            arch.description = arch.description.replace(
+                "Agent Loop 与上下文装配", "Agent Loop"
+            )
+        has_loop = bool(
+            outline
+            and any(
+                (t.id or t.name) == "agent-loop"
+                for t in outline.topics
+            )
+        )
+        seq = (arch.mermaid_sequence or "").strip()
+        if has_loop and (not seq or sequence_tools_before_model(seq)):
+            arch.mermaid_sequence = GROK_LOOP_SEQUENCE
         if not arch.description:
             if zh:
                 arch.description = (
@@ -952,11 +994,12 @@ def _fallback_what_it_is(
             if topic.section == "getting-started" or not topic.key_files:
                 continue
             path = topic.key_files[0]
+            cite = path if re.search(r":\d+", path) else f"{path}:1"
             title = topic.title or topic.id
             if zh:
-                items.append(f"「{title}」接住链路上的一段工作，证据在 `{path}`。")
+                items.append(f"「{title}」接住链路上的一段工作，证据在 `{cite}`。")
             else:
-                items.append(f"{title} owns one stretch of the call path; see `{path}`.")
+                items.append(f"{title} owns one stretch of the call path; see `{cite}`.")
             if len(items) >= 6:
                 break
     return items[:6]
@@ -1132,21 +1175,34 @@ def _coerce_key_types(raw) -> list[dict]:
     items = raw if isinstance(raw, list) else [raw]
     out: list[dict] = []
     for item in items:
-        if isinstance(item, str) and item.strip():
-            out.append({"name": item.strip(), "role": "", "path": ""})
-        elif isinstance(item, dict):
-            name = str(
-                item.get("name") or item.get("type") or item.get("symbol") or ""
-            ).strip()
-            if not name:
-                continue
-            out.append(
-                {
-                    "name": name,
-                    "role": str(item.get("role") or item.get("purpose") or ""),
-                    "path": str(item.get("path") or item.get("file") or ""),
-                }
-            )
+        if isinstance(item, str):
+            continue
+        if not isinstance(item, dict):
+            continue
+        name = str(
+            item.get("name") or item.get("type") or item.get("symbol") or ""
+        ).strip()
+        path = str(item.get("path") or item.get("file") or "").strip()
+        if not name or not path:
+            continue
+        try:
+            line = int(item.get("line") or item.get("start_line") or 0)
+        except (TypeError, ValueError):
+            line = 0
+        loc = path.split()[0]
+        match = re.search(r":(\d+)(?:-\d+)?$", loc)
+        if match:
+            if not line:
+                line = int(match.group(1))
+            path = loc[: match.start()]
+        out.append(
+            {
+                "name": name,
+                "role": str(item.get("role") or item.get("purpose") or ""),
+                "path": path,
+                "line": line,
+            }
+        )
     return out
 
 
