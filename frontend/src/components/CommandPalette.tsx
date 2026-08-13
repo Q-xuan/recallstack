@@ -13,8 +13,8 @@ interface Props {
 }
 
 const KIND_LABEL: Record<WikiSearchResult["kind"], [string, string]> = {
-  overview: ["总览", "Overview"],
-  architecture: ["架构", "Architecture"],
+  overview: ["概述", "Overview"],
+  architecture: ["架构概览", "Architecture"],
   guide: ["导读", "Guide"],
   module: ["模块", "Module"],
   concept: ["词条", "Concept"],

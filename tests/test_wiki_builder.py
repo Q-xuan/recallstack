@@ -172,12 +172,13 @@ def test_en_structural_sidebar_titles_stay_english():
 def test_zh_structural_sidebar_titles_and_headings():
     wiki, names = _structural_wiki("zh")
     titles = [item.title for item in wiki.sidebar]
-    assert titles[0] == "总览"
-    assert "架构" in titles
+    assert titles[0] == "概述"
+    assert "架构概览" in titles
     assert "导读" in titles
     assert "依赖" in titles
     assert "Overview" not in titles
     assert "Modules" not in titles
+    assert "总览" not in titles
     modules = next(item for item in wiki.sidebar if item.title == "模块")
     assert ROOT_NAME in names
     root = next(c for c in modules.children if c.page_id == "modules/root")
@@ -189,13 +190,13 @@ def test_zh_structural_sidebar_titles_and_headings():
     app = next(c for c in modules.children if c.title == "app")
     assert app.title == "app"
     assert wiki.get_page("index").id == "index"
-    assert wiki.get_page("index").title == "总览"
-    assert wiki.get_page("architecture").title == "架构"
+    assert wiki.get_page("index").title == "概述"
+    assert wiki.get_page("architecture").title == "架构概览"
     assert wiki.get_page("reading-guide").title == "导读"
     assert wiki.get_page("dependencies").title == "依赖"
     assert wiki.get_page("modules/root").id == "modules/root"
     assert wiki.get_page("modules/root").title == "根目录"
-    assert wiki.get_page("architecture").content.startswith("# 架构")
+    assert wiki.get_page("architecture").content.startswith("# 架构概览")
     assert wiki.get_page("reading-guide").content.startswith("# 导读")
     assert wiki.get_page("dependencies").content.startswith("# 依赖")
     assert wiki.get_page("modules/root").content.startswith("# 根目录")

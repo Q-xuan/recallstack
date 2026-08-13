@@ -14,8 +14,8 @@ export interface WikiTitleSource {
 }
 
 const PAGE_ID_LABELS: Record<string, [string, string]> = {
-  index: ["总览", "Overview"],
-  architecture: ["架构", "Architecture"],
+  index: ["概述", "Overview"],
+  architecture: ["架构概览", "Architecture"],
   "reading-guide": ["导读", "Reading Guide"],
   dependencies: ["依赖", "Dependencies"],
   "modules/root": ["根目录", "Root"],

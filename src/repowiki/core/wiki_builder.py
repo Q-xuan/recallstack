@@ -12,8 +12,8 @@ from repowiki.core.modules import ROOT_NAME
 # Sidebar / page chrome labels. Path segments (crates, bin, .cargo) stay as
 # they are in the repo; only these structural names are translated.
 _STRUCTURAL_TITLES: dict[str, dict[str, str]] = {
-    "overview": {"en": "Overview", "zh": "总览", "ja": "概要", "ko": "개요"},
-    "architecture": {"en": "Architecture", "zh": "架构", "ja": "アーキテクチャ", "ko": "아키텍처"},
+    "overview": {"en": "Overview", "zh": "概述", "ja": "概要", "ko": "개요"},
+    "architecture": {"en": "Architecture", "zh": "架构概览", "ja": "アーキテクチャ", "ko": "아키텍처"},
     "modules": {"en": "Modules", "zh": "模块", "ja": "モジュール", "ko": "모듈"},
     "reading-guide": {"en": "Reading Guide", "zh": "导读", "ja": "ガイド", "ko": "가이드"},
     "dependencies": {"en": "Dependencies", "zh": "依赖", "ja": "依存関係", "ko": "의존성"},
