@@ -44,6 +44,7 @@ def test_cite_check_drops_bad_paths_and_keeps_good_ones():
         overview=ProjectOverview(
             name="demo",
             description="Starts in `app/main.py:3` and never in `ghost/x.py:1`.",
+            what_it_is=["boot lives in `app/core.py:1` not `ghost/x.py:1`"],
             citations=[
                 Citation(path="app/main.py", start_line=3, note="entry"),
                 Citation(path="totally/fake.py", start_line=1, note="nope"),
@@ -113,6 +114,8 @@ def test_cite_check_drops_bad_paths_and_keeps_good_ones():
     assert cleaned.reading_guide.steps[0].files == ["app/main.py"]
     assert "`app/main.py:3`" in cleaned.overview.description
     assert "ghost/x.py" not in cleaned.overview.description
+    assert "`app/core.py:1`" in cleaned.overview.what_it_is[0]
+    assert "ghost/x.py" not in cleaned.overview.what_it_is[0]
 
 
 def test_sanitize_text_resolves_unique_basename():

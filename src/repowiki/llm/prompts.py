@@ -157,12 +157,20 @@ def build_overview_prompt(
     *,
     outline_focus: str = "",
     emphasized: str = "",
+    topic_titles: list[str] | None = None,
 ) -> list[dict]:
     outline_block = ""
     if outline_focus or emphasized:
         outline_block = (
             f"## Wiki outline focus\n{outline_focus or '(none)'}\n\n"
             f"## Pages/modules to emphasize\n{emphasized or '(none)'}\n\n"
+        )
+    titles = [t for t in (topic_titles or []) if t]
+    if titles:
+        listed = "\n".join(f"- {t}" for t in titles[:12])
+        outline_block += (
+            "## Planned deep-dive wiki pages (cross-link these by title in see_also / subsystems)\n"
+            f"{listed}\n\n"
         )
     return [
         {
@@ -173,8 +181,11 @@ def build_overview_prompt(
                 "Do NOT use filler phrases like 'leveraging', 'utilizing', 'cutting-edge', "
                 "'robust', or 'comprehensive'. Just describe what things do. "
                 "Cite real file paths from the tree using backticks like `src/app.py:12`. "
-                "FORBIDDEN: file inventory, JavaDoc/method dumps, 'Heaviest modules by PageRank', "
-                "homework headings (what this step asks of you / pass check). "
+                "The builder renders lists and tables — fill structured fields, "
+                "do not dump one long description blob. "
+                "FORBIDDEN: README dump, crate inventory, file inventory, JavaDoc/method dumps, "
+                "'Heaviest modules by PageRank', key_features as marketing bullets, "
+                "homework headings (what this step asks of you / 本步要你干什么 / pass check). "
                 f"{_lang_instruction(language)}"
             ),
         },
@@ -185,25 +196,51 @@ def build_overview_prompt(
                 f"## File Tree\n```\n{file_tree}\n```\n\n"
                 f"## Key Files\n{key_files}\n\n"
                 f"{outline_block}"
-                f"Generate a project overview as JSON with this structure:\n"
+                "Generate a project overview as JSON with this structure:\n"
                 "{\n"
                 '  "name": "project name",\n'
                 '  "one_liner": "what this project does in one sentence (max 20 words)",\n'
-                '  "description": "2-3 paragraphs explaining the project in plain language",\n'
+                '  "document_scope": "This page covers X. After reading you should be able to Y.",\n'
+                '  "what_it_is": [\n'
+                '    "concrete characteristic with a `path:line` cite",\n'
+                '    "another characteristic with a `path:line` cite"\n'
+                "  ],\n"
+                '  "runtime_flow": "2-4 short paragraphs: name types as roles on ONE real flow.",\n'
+                '  "mermaid_component": "flowchart TD\\n  A[Entry] --> B[Core]",\n'
+                '  "codebase_structure": [\n'
+                '    {"name": "crate-or-package", "location": "crates/foo", "purpose": "role in the flow"}\n'
+                "  ],\n"
+                "  \"subsystems\": [\n"
+                "    {\n"
+                '      "name": "subsystem matching a planned topic if possible",\n'
+                '      "role": "what it does on the call flow",\n'
+                '      "key_types": [{"name": "Type", "role": "job on the flow", "path": "src/file.rs"}],\n'
+                '      "files": ["src/file.rs"],\n'
+                '      "mermaid": ""\n'
+                "    }\n"
+                "  ],\n"
+                '  "see_also": ["architecture", "topics/agent-loop"],\n'
+                '  "description": "backup sentence only; do not dump the README here",\n'
                 '  "tech_stack": [{"name": "Python", "category": "language", "version": "3.10+"}],\n'
-                '  "setup_instructions": ["step 1", "step 2"],\n'
-                '  "key_features": ["feature 1", "feature 2"],\n'
+                '  "setup_instructions": [],\n'
+                '  "key_features": [],\n'
                 '  "citations": [{"path": "real/file.py", "start_line": 1, "symbol": "", "note": "why this file matters"}],\n'
                 f"{_term_tips_field()}"
                 "}\n\n"
-                "Write description as 2-4 professional paragraphs in DeepWiki order: "
-                "what this document covers and what the reader can explain afterwards; "
-                "what the project is (characteristics, not a README paraphrase); "
-                "how the main pieces connect on one real flow. "
-                "Do not dump a file inventory, method list, or JavaDoc. "
-                "Never write homework headings (what this step asks, pass check). "
-                "tech_stack: a short list of load-bearing tools (name, category, version) — "
-                "not every dependency. "
+                "REQUIRED (DeepWiki handbook, not a README): "
+                "document_scope is the lede (what this document covers / what the reader can explain). "
+                "what_it_is: 3-6 characteristic sentences, each with a real `path:line` cite — "
+                "not a README paraphrase. "
+                "runtime_flow: types as roles on one real call. "
+                "mermaid_component: a mermaid flowchart of that runtime (not a crate tree). "
+                "codebase_structure: 2-8 rows from REAL paths (crates/, src/, packages/), "
+                "columns name / location / purpose — not a file dump. "
+                "subsystems: 3-8; each has role + 2-4 key_types (Type — job — path). "
+                "see_also: architecture plus planned topic titles as topics/<id> links "
+                "(e.g. 细节见 [Agent Loop](topics/agent-loop)). "
+                "Leave key_features empty. Do not dump a file inventory, method list, or JavaDoc. "
+                "Never write homework headings (what this step asks, 本步要你干什么, pass check). "
+                "tech_stack is a footnote of load-bearing tools, not the page body. "
                 f"{_term_tips_rules(required=True)} "
                 "citations.path MUST be a real path from the tree. Omit citations rather than invent paths.\n\n"
                 f"{_json_instruction(language)}"
@@ -257,11 +294,15 @@ def build_module_prompt(
     else:
         term_tips_required = depth == "deep"
         extra_rules = (
-            "Write a DeepWiki handbook page, not an interface catalog. "
-            "purpose: what this document is for, and what the reader can explain afterwards "
+            "Write a DeepWiki handbook page for one subsystem, not an interface catalog. "
+            "document_scope: what this document is for, and what the reader can explain afterwards "
             "(startup / one request / one session / failure). "
-            "description: role in the system — who calls this module, what it calls, what "
-            "breaks if it disappeared. Do not repeat purpose. "
+            "what_it_is: 2-4 characteristic sentences, each with a `path:line` cite. "
+            "purpose: role in the system — who calls this, what it calls, what "
+            "breaks if it disappeared. Do not repeat document_scope. "
+            "description: same as purpose if you only fill one; do not dump README. "
+            "key_types: 2-4 types as roles (`Type` — job on the flow — `path`). "
+            "mermaid: one small flowchart of THIS subsystem on the call path. "
             "implementation_details: ONE happy-path walkthrough in prose paragraphs, with "
             "`path:line` cites and types in backticks. Control flow and state, not a file list. "
             "call_chains: REQUIRED, 1-3 named flows. Each step is "
@@ -272,6 +313,7 @@ def build_module_prompt(
             "Do not nest method lists under files. "
             "key_symbols (if any) only for 1-3 types/functions that already appear in the "
             "walkthrough — never a method dump. "
+            "No homework headings (本步要你干什么 / what this step asks). "
         )
         if depth == "deep":
             extra_rules += (
@@ -291,6 +333,7 @@ def build_module_prompt(
                 "Be direct and specific. No filler. "
                 "Only cite file paths that appear in the provided source. "
                 "Never invent paths, line numbers, or symbols. "
+                "FORBIDDEN: homework headings (本步要你干什么). "
                 f"{_lang_instruction(language)}"
             ),
         },
@@ -306,8 +349,12 @@ def build_module_prompt(
                 "Output JSON:\n"
                 "{\n"
                 f'  "name": "{module_name}",\n'
+                '  "document_scope": "what this page is for, and what the reader can explain afterwards",\n'
+                '  "what_it_is": ["characteristic with `path:line`", "characteristic with `path:line`"],\n'
                 '  "purpose": "what this page is for, and what the reader can explain afterwards",\n'
                 '  "description": "who calls this, what it calls, what breaks if it disappears",\n'
+                '  "key_types": [{"name": "Type", "role": "job on the flow", "path": "src/file.rs"}],\n'
+                '  "mermaid": "flowchart TD\\n  A[Caller] --> B[This subsystem]",\n'
                 '  "implementation_details": "ONE happy-path walkthrough with `path:line` cites",\n'
                 '  "call_chains": [\n'
                 '    {"name": "one session", "description": "request to PTY bytes", '
@@ -328,6 +375,7 @@ def build_module_prompt(
                 "files[].path, relationships, call_chains.files, and citations.path MUST be "
                 "paths shown above. Use 0 for unknown line numbers rather than guessing. "
                 "Omit files[].key_symbols; names belong in the walkthrough as `path:line` cites. "
+                "Never write 本步要你干什么 or a homework worksheet. "
                 f"{_term_tips_rules(required=term_tips_required)}\n\n"
                 f"{_json_instruction(language)}"
             ),
@@ -358,8 +406,8 @@ def build_architecture_prompt(
                 "components as roles on that flow — not as a file tree. "
                 "Mermaid syntax must be valid. Use simple node names (no special chars). "
                 "Cite real file paths from the tree; never invent them. "
-                "FORBIDDEN: file inventory, JavaDoc/method dumps, 'Heaviest modules by PageRank', "
-                "homework headings. "
+                "FORBIDDEN: README dump, crate inventory, file inventory, JavaDoc/method dumps, "
+                "'Heaviest modules by PageRank', homework headings (本步要你干什么). "
                 f"{_lang_instruction(language)}"
             ),
         },
@@ -372,18 +420,28 @@ def build_architecture_prompt(
                 "Analyze the architecture. Output JSON:\n"
                 "{\n"
                 '  "architecture_type": "one of: monolith, client-server, microservices, library, cli-tool, framework, plugin-system, pipeline",\n'
-                '  "description": "2-4 professional paragraphs: responsibilities, how components wire together, data flow. NEVER a PageRank file dump.",\n'
-                '  "components": [{"name": "...", "purpose": "...", "files": ["real/path.py"]}],\n'
+                '  "description": "2-4 professional paragraphs: types as roles on ONE real flow, with `path:line` cites. NEVER a PageRank file dump.",\n'
+                '  "components": [\n'
+                "    {\n"
+                '      "name": "Subsystem",\n'
+                '      "role": "job on the flow",\n'
+                '      "purpose": "same as role if you only fill one",\n'
+                '      "key_types": [{"name": "Type", "role": "job on the flow", "path": "src/file.rs"}],\n'
+                '      "files": ["real/path.py"]\n'
+                "    }\n"
+                "  ],\n"
                 '  "mermaid_component": "graph TD\\n  A[Component] --> B[Component]\\n  ...",\n'
                 '  "mermaid_sequence": "sequenceDiagram\\n  participant A\\n  A->>B: request\\n  ...",\n'
-                '  "data_flow": "describe the main data flow in 2-3 sentences",\n'
+                '  "data_flow": "walk one request through the mermaid boxes in 2-4 sentences",\n'
                 '  "citations": [{"path": "real/path.py", "start_line": 1, "note": "why this file is architectural"}],\n'
                 f"{_term_tips_field()}"
                 "}\n\n"
                 "IMPORTANT: Mermaid code must be a single string with \\n for newlines. "
                 "Use simple alphanumeric node IDs. mermaid_component is REQUIRED when the "
-                "graph is knowable — it is rendered near the top of the page. "
+                "graph is knowable — it is rendered at the top of 系统架构 / System architecture. "
                 "components: each is a ROLE in the flow (who calls whom), not a folder listing. "
+                "Each component MUST include 2-4 key_types (Type — job — path), not just "
+                "name — purpose — files. "
                 "Keep files to 1-3 load-bearing paths per component. "
                 "components.files and citations.path MUST be real paths from the tree. "
                 "description must explain the system as a call path, not list heaviest files. "

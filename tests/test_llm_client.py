@@ -83,14 +83,20 @@ def test_zh_prompts_ask_for_handbook_prose_and_term_tips():
     overview = build_overview_prompt("tree", "files", "zh")
     assert "手册正文" in overview[0]["content"]
     assert "term_tips" in overview[-1]["content"]
+    overview_user = overview[-1]["content"]
+    assert "what_it_is" in overview_user
+    assert "codebase_structure" in overview_user
+    assert "subsystems" in overview_user
+    assert "mermaid_component" in overview_user
+    assert "file inventory" in overview_user
+    assert "key_features" in overview_user
+    assert "本步要你干什么" in overview[0]["content"]
     arch = build_architecture_prompt("tree", "files", "zh")
     assert "PageRank file dump" in arch[-1]["content"]
     assert "term_tips" in arch[-1]["content"]
     assert "ROLE in the flow" in arch[-1]["content"]
+    assert "key_types" in arch[-1]["content"]
     assert "homework" in arch[0]["content"]
-    overview_user = overview[-1]["content"]
-    assert "file inventory" in overview_user
-    assert "DeepWiki order" in overview_user
     deep = build_module_prompt("app", "src", "demo", "zh", depth="deep")
     assert "term_tips is REQUIRED" in deep[-1]["content"]
     assert "`PtyHandle`" in deep[0]["content"]
@@ -104,3 +110,9 @@ def test_zh_prompts_ask_for_handbook_prose_and_term_tips():
     standard = build_module_prompt("app", "src", "demo", "zh", depth="standard")
     assert "Walkthrough + at least one call_chain" in standard[-1]["content"]
     assert "key_symbols\": [{\"name\": \"func_name\"" not in standard[-1]["content"]
+    titled = build_overview_prompt(
+        "tree", "files", "zh", topic_titles=["Agent Loop", "Tool System"]
+    )
+    assert "Agent Loop" in titled[-1]["content"]
+    assert "Tool System" in titled[-1]["content"]
+    assert "see_also" in titled[-1]["content"]

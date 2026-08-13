@@ -74,6 +74,32 @@ class TechItem(BaseModel):
     version: str = ""
 
 
+class KeyType(BaseModel):
+    """A type/function named as a role on a call path, not a method dump."""
+
+    name: str
+    role: str = ""
+    path: str = ""
+
+
+class CodebasePart(BaseModel):
+    """One row in 代码如何拆分: crate or top-level package."""
+
+    name: str
+    location: str = ""
+    purpose: str = ""
+
+
+class Subsystem(BaseModel):
+    """One DeepWiki 核心子系统 block."""
+
+    name: str
+    role: str = ""
+    key_types: list[KeyType] = Field(default_factory=list)
+    files: list[str] = Field(default_factory=list)
+    mermaid: str = ""
+
+
 class ProjectOverview(BaseModel):
     name: str = ""
     one_liner: str = ""
@@ -83,6 +109,14 @@ class ProjectOverview(BaseModel):
     key_features: list[str] = Field(default_factory=list)
     citations: list[Citation] = Field(default_factory=list)
     term_tips: list[TermTip] = Field(default_factory=list)
+    # DeepWiki handbook fields. Older cached JSON without them still parses.
+    document_scope: str = ""
+    what_it_is: list[str] = Field(default_factory=list)
+    runtime_flow: str = ""
+    codebase_structure: list[CodebasePart] = Field(default_factory=list)
+    subsystems: list[Subsystem] = Field(default_factory=list)
+    mermaid_component: str = ""
+    see_also: list[str] = Field(default_factory=list)
 
 
 class Symbol(BaseModel):
@@ -123,6 +157,10 @@ class ModuleDoc(BaseModel):
     edge_cases: list[str] = Field(default_factory=list)
     citations: list[Citation] = Field(default_factory=list)
     term_tips: list[TermTip] = Field(default_factory=list)
+    document_scope: str = ""
+    what_it_is: list[str] = Field(default_factory=list)
+    key_types: list[KeyType] = Field(default_factory=list)
+    mermaid: str = ""
 
 
 class ModuleOutline(BaseModel):
@@ -186,7 +224,9 @@ class WikiOutline(BaseModel):
 class Component(BaseModel):
     name: str
     purpose: str = ""
+    role: str = ""
     files: list[str] = Field(default_factory=list)
+    key_types: list[KeyType] = Field(default_factory=list)
 
 
 class ArchitectureDiagram(BaseModel):

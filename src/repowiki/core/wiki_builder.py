@@ -21,6 +21,11 @@ _STRUCTURAL_TITLES: dict[str, dict[str, str]] = {
     "root": {"en": "Root", "zh": "根目录", "ja": "ルート", "ko": "루트"},
     "concepts": {"en": "Concepts", "zh": "词条", "ja": "用語", "ko": "개념"},
     "what-is": {"en": "What it is", "zh": "它是什么", "ja": "これは何か", "ko": "이것이 무엇인가"},
+    "system-architecture": {"en": "System architecture", "zh": "系统架构", "ja": "システム構成", "ko": "시스템 아키텍처"},
+    "codebase-split": {"en": "How the code is split", "zh": "代码如何拆分", "ja": "コードの分割", "ko": "코드가 나뉘는 방식"},
+    "core-subsystems": {"en": "Core subsystems", "zh": "核心子系统", "ja": "中核サブシステム", "ko": "핵심 서브시스템"},
+    "key-types": {"en": "Key types", "zh": "关键类型", "ja": "主要な型", "ko": "핵심 타입"},
+    "see-also": {"en": "Read next", "zh": "继续读", "ja": "次に読む", "ko": "이어서 읽기"},
     "components": {"en": "Roles in the flow", "zh": "链路里的角色", "ja": "フロー上の役割", "ko": "흐름 속 역할"},
     "diagram": {"en": "Diagram", "zh": "结构图", "ja": "図", "ko": "다이어그램"},
     "data-flow": {"en": "Data Flow", "zh": "数据流", "ja": "データフロー", "ko": "데이터 흐름"},
@@ -126,7 +131,11 @@ class WikiBuilder:
 
         overview = wiki_data.overview
         overview_md = self._build_overview_page(
-            overview, project, lang, architecture=wiki_data.architecture
+            overview,
+            project,
+            lang,
+            architecture=wiki_data.architecture,
+            topics=wiki_data.topics,
         )
         overview_title = structural_title("overview", lang)
         pages.append(WikiPage(id="index", title=overview_title, content=overview_md, order=0))
@@ -193,56 +202,95 @@ class WikiBuilder:
         return Wiki(pages=pages, sidebar=sidebar, project_name=project.name)
 
     def _build_overview_page(
-        self, overview, project, language: str = "en", architecture=None
+        self,
+        overview,
+        project,
+        language: str = "en",
+        architecture=None,
+        topics=None,
     ) -> str:
         name = overview.name or project.name
         lines = [f"# {name}\n"]
-        lede = _overview_lede(name, overview.one_liner, language)
-        lines.append(f"> {lede}\n")
-        if overview.one_liner and overview.one_liner.strip() not in lede:
-            lines.append(f"{overview.one_liner}\n")
 
         chip_lines = _related_source_chip_lines(
             getattr(overview, "citations", None), language
         )
         lines.extend(chip_lines)
 
+        scope = (getattr(overview, "document_scope", "") or "").strip()
+        lede = scope or _overview_lede(name, overview.one_liner, language)
+        lines.append(f"> {lede}\n")
+        if (
+            not scope
+            and overview.one_liner
+            and overview.one_liner.strip() not in lede
+        ):
+            lines.append(f"{overview.one_liner}\n")
+
+        what = [s for s in (getattr(overview, "what_it_is", None) or []) if str(s).strip()]
         lines.append(f"## {structural_title('what-is', language)}\n")
-        if overview.description:
+        if what:
+            for item in what:
+                lines.append(f"- {item}")
+            lines.append("")
+        elif overview.description:
             lines.append(f"{overview.description}\n")
         else:
             lines.append(f"{lede}\n")
 
+        mermaid = (getattr(overview, "mermaid_component", "") or "").strip()
+        if not mermaid and architecture:
+            mermaid = (getattr(architecture, "mermaid_component", "") or "").strip()
+        flow = (getattr(overview, "runtime_flow", "") or "").strip()
         arch_type = getattr(architecture, "architecture_type", "") if architecture else ""
-        mermaid = (getattr(architecture, "mermaid_component", "") or "").strip() if architecture else ""
-        if arch_type:
-            arch_title = structural_title("architecture", language)
-            if mermaid and mermaid.count("\n") <= 40:
-                lines.append("```mermaid")
-                lines.append(mermaid)
-                lines.append("```\n")
-            if language == "zh":
-                lines.append(f"架构见图 [{arch_title}](architecture)。\n")
-            else:
-                lines.append(f"Architecture: see [{arch_title}](architecture).\n")
+        arch_title = structural_title("architecture", language)
+        if mermaid or flow or arch_type:
+            lines.append(f"## {structural_title('system-architecture', language)}\n")
+            _append_mermaid(lines, mermaid)
+            if flow:
+                lines.append(f"{flow}\n")
+            elif arch_type:
+                if language == "zh":
+                    lines.append(f"架构见图 [{arch_title}](architecture)。\n")
+                else:
+                    lines.append(f"Architecture: see [{arch_title}](architecture).\n")
 
-        _append_term_tips(lines, getattr(overview, "term_tips", None), language)
-
-        if overview.tech_stack:
+        structure = list(getattr(overview, "codebase_structure", None) or [])
+        if structure:
+            lines.append(f"## {structural_title('codebase-split', language)}\n")
+            lines.extend(_codebase_structure_table(structure, language))
+        elif overview.tech_stack:
             lines.append(f"## {structural_title('tech-stack', language)}\n")
             lines.extend(_tech_stack_table(overview.tech_stack, language))
 
-        if overview.key_features:
+        subsystems = list(getattr(overview, "subsystems", None) or [])
+        if subsystems:
+            lines.append(f"## {structural_title('core-subsystems', language)}\n")
+            lines.extend(_render_subsystems(subsystems, language))
+
+        _append_term_tips(lines, getattr(overview, "term_tips", None), language)
+
+        handbook = bool(what or structure or subsystems)
+        if not handbook and overview.key_features:
             lines.append(f"## {structural_title('key-features', language)}\n")
             for feat in overview.key_features:
                 lines.append(f"- {feat}")
             lines.append("")
 
-        if overview.setup_instructions:
+        if not handbook and overview.setup_instructions:
             lines.append(f"## {structural_title('setup', language)}\n")
             for i, step in enumerate(overview.setup_instructions, 1):
                 lines.append(f"{i}. {step}")
             lines.append("")
+
+        see_lines = _see_also_lines(
+            getattr(overview, "see_also", None) or [],
+            topics or [],
+            language,
+        )
+        if see_lines:
+            lines.append(f"## {structural_title('see-also', language)}\n")
+            lines.extend(see_lines)
 
         return "\n".join(lines)
 
@@ -296,32 +344,34 @@ class WikiBuilder:
             _related_source_chip_lines(getattr(arch, "citations", None), language)
         )
 
-        if arch.mermaid_component:
-            lines.append("```mermaid")
-            lines.append(arch.mermaid_component.strip())
-            lines.append("```\n")
-        if getattr(arch, "mermaid_sequence", ""):
-            lines.append("```mermaid")
-            lines.append(arch.mermaid_sequence.strip())
-            lines.append("```\n")
-
-        if arch.description:
-            lines.append(f"## {structural_title('what-is', language)}\n")
-            lines.append(f"{arch.description}\n")
-
-        if arch.data_flow:
-            lines.append(f"## {structural_title('how-a-call-runs', language)}\n")
-            lines.append(f"{arch.data_flow}\n")
+        mermaid = (arch.mermaid_component or "").strip()
+        sequence = (getattr(arch, "mermaid_sequence", "") or "").strip()
+        if mermaid or sequence or arch.description or arch.data_flow:
+            lines.append(f"## {structural_title('system-architecture', language)}\n")
+            _append_mermaid(lines, mermaid)
+            _append_mermaid(lines, sequence)
+            if arch.description:
+                lines.append(f"{arch.description}\n")
+            if arch.data_flow:
+                lines.append(f"{arch.data_flow}\n")
 
         if arch.components:
-            lines.append(f"## {structural_title('components', language)}\n")
+            heading = (
+                "core-subsystems"
+                if any(getattr(c, "key_types", None) for c in arch.components)
+                else "components"
+            )
+            lines.append(f"## {structural_title(heading, language)}\n")
             for c in arch.components:
-                purpose = f" — {c.purpose}" if c.purpose else ""
+                role = (getattr(c, "role", "") or "").strip() or (c.purpose or "").strip()
+                purpose = f" — {role}" if role else ""
                 files = ""
                 if c.files:
                     cites = ", ".join(f"`{f}`" for f in c.files[:3])
                     files = f"；证据：{cites}" if language == "zh" else f"; evidence: {cites}"
                 lines.append(f"- **{c.name}**{purpose}{files}")
+                for kt in getattr(c, "key_types", None) or []:
+                    lines.append(_key_type_line(kt))
             lines.append("")
 
         _append_term_tips(lines, getattr(arch, "term_tips", None), language)
@@ -425,9 +475,21 @@ class WikiBuilder:
     ) -> str:
         heading = display_title or mod.name
         lines = [f"# {heading}\n"]
-        if mod.purpose:
-            lines.append(f"> {mod.purpose}\n")
-        if mod.description:
+        scope = (getattr(mod, "document_scope", "") or "").strip()
+        lede = scope or (mod.purpose or "")
+        if lede:
+            lines.append(f"> {lede}\n")
+
+        chip_lines = _related_source_chip_lines(getattr(mod, "citations", None), language)
+        lines.extend(chip_lines)
+
+        what = [s for s in (getattr(mod, "what_it_is", None) or []) if str(s).strip()]
+        if what:
+            lines.append(f"## {structural_title('what-is', language)}\n")
+            for item in what:
+                lines.append(f"- {item}")
+            lines.append("")
+        elif mod.description:
             lines.append(f"{mod.description}\n")
 
         _append_term_tips(lines, getattr(mod, "term_tips", None), language)
@@ -435,6 +497,7 @@ class WikiBuilder:
         chains = list(getattr(mod, "call_chains", None) or [])
         implementation = (getattr(mod, "implementation_details", "") or "").strip()
         walkthrough = _walkthrough_blob(mod)
+        own_mermaid = (getattr(mod, "mermaid", "") or "").strip()
 
         if chains:
             lines.append(f"## {structural_title('how-a-call-runs', language)}\n")
@@ -448,9 +511,19 @@ class WikiBuilder:
                     lines.append("")
                 diagram = mermaid_from_call_chain(chain)
                 if diagram:
-                    lines.append("```mermaid")
-                    lines.append(diagram)
-                    lines.append("```\n")
+                    _append_mermaid(lines, diagram)
+            if own_mermaid and not any(mermaid_from_call_chain(c) for c in chains):
+                _append_mermaid(lines, own_mermaid)
+        elif own_mermaid:
+            lines.append(f"## {structural_title('how-a-call-runs', language)}\n")
+            _append_mermaid(lines, own_mermaid)
+
+        key_types = list(getattr(mod, "key_types", None) or [])
+        if key_types:
+            lines.append(f"## {structural_title('key-types', language)}\n")
+            for kt in key_types:
+                lines.append(_key_type_line(kt))
+            lines.append("")
 
         if implementation and not _duplicates_chain_prose(implementation, chains):
             lines.append(f"## {structural_title('how-it-runs', language)}\n")
@@ -500,6 +573,19 @@ class WikiBuilder:
             lines.append("")
 
         _append_citations(lines, getattr(mod, "citations", None), language)
+
+        if getattr(mod, "title", "") and getattr(mod, "section", "") not in {
+            "",
+            "getting-started",
+        }:
+            lines.append(f"## {structural_title('see-also', language)}\n")
+            lines.append(
+                f"- [{structural_title('overview', language)}](index)"
+            )
+            lines.append(
+                f"- [{structural_title('architecture', language)}](architecture)"
+            )
+            lines.append("")
 
         return "\n".join(lines)
 
@@ -577,6 +663,108 @@ class WikiBuilder:
             lines.append("")
 
         return "\n".join(lines)
+
+
+def _append_mermaid(lines: list[str], mermaid: str, *, max_lines: int = 40) -> None:
+    text = (mermaid or "").strip()
+    if not text:
+        return
+    if text.count("\n") > max_lines:
+        return
+    lines.append("```mermaid")
+    lines.append(text)
+    lines.append("```\n")
+
+
+def _key_type_line(kt) -> str:
+    name = getattr(kt, "name", "") or ""
+    role = (getattr(kt, "role", "") or "").strip()
+    path = (getattr(kt, "path", "") or "").strip()
+    bits = [f"`{name}`"] if name else []
+    if role:
+        bits.append(role)
+    if path:
+        bits.append(f"`{path}`")
+    return "- " + " — ".join(bits)
+
+
+def _codebase_structure_table(rows, language: str = "en") -> list[str]:
+    if language == "zh":
+        headers = ["名称", "位置", "职责"]
+    else:
+        headers = ["Name", "Location", "Purpose"]
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    for row in rows:
+        name = str(getattr(row, "name", "") or "").replace("|", "\\|")
+        loc = str(getattr(row, "location", "") or "").replace("|", "\\|")
+        purpose = str(getattr(row, "purpose", "") or "").replace("|", "\\|")
+        lines.append(f"| {name} | {loc or '—'} | {purpose or '—'} |")
+    lines.append("")
+    return lines
+
+
+def _render_subsystems(subsystems, language: str = "en") -> list[str]:
+    lines: list[str] = []
+    for sub in subsystems:
+        name = getattr(sub, "name", "") or ""
+        role = (getattr(sub, "role", "") or "").strip()
+        lines.append(f"### {name}\n")
+        if role:
+            lines.append(f"{role}\n")
+        mermaid = (getattr(sub, "mermaid", "") or "").strip()
+        _append_mermaid(lines, mermaid, max_lines=20)
+        types = list(getattr(sub, "key_types", None) or [])
+        if types:
+            for kt in types:
+                lines.append(_key_type_line(kt))
+            lines.append("")
+        files = list(getattr(sub, "files", None) or [])
+        if files and not types:
+            cites = ", ".join(f"`{p}`" for p in files[:4])
+            label = "相关源码" if language == "zh" else "Source"
+            lines.append(f"{label}: {cites}\n")
+    return lines
+
+
+def _see_also_lines(see_also, topics, language: str = "en") -> list[str]:
+    titles = {
+        (getattr(t, "name", "") or ""): (getattr(t, "title", "") or getattr(t, "name", ""))
+        for t in topics or []
+    }
+    arch_title = structural_title("architecture", language)
+    items: list[str] = []
+    seen: set[str] = set()
+    raw = list(see_also or [])
+    if not raw and topics:
+        raw = ["architecture"]
+        for t in topics:
+            if getattr(t, "section", "") == "getting-started":
+                continue
+            tid = getattr(t, "name", "") or ""
+            if tid:
+                raw.append(f"topics/{tid}")
+    for item in raw:
+        text = str(item or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        if text.startswith("[") and "](" in text:
+            items.append(f"- {text}")
+            continue
+        if text in {"architecture", "架构概览"}:
+            items.append(f"- [{arch_title}](architecture)")
+            continue
+        href = text
+        label = text
+        if text.startswith("topics/"):
+            tid = text.split("/", 1)[-1]
+            href = f"topics/{tid}"
+            label = titles.get(tid) or tid
+        items.append(f"- [{label}]({href})")
+    return items + ([""] if items else [])
 
 
 def _append_term_tips(lines: list[str], tips, language: str = "en") -> None:

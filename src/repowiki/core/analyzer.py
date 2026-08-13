@@ -21,6 +21,7 @@ from repowiki.core.models import (
     Citation,
     Component,
     FileInfo,
+    KeyType,
     ModuleDoc,
     ModuleOutline,
     ProjectContext,
@@ -35,7 +36,13 @@ from repowiki.core.models import (
 from repowiki.core.module_handbook import fallback_module_doc
 from repowiki.core.modules import group_into_modules
 from repowiki.core.outline import build_deterministic_outline, merge_outline
-from repowiki.core.topics import fallback_topic_doc
+from repowiki.core.topics import (
+    codebase_structure_for,
+    fallback_topic_doc,
+    runtime_mermaid_for,
+    subsystems_from_topics,
+    topic_wiki_links,
+)
 from repowiki.llm.client import LLMClient
 from repowiki.llm.prompts import (
     build_architecture_prompt,
@@ -110,7 +117,7 @@ class Analyzer:
 
         progress("Generating project overview...")
         overview = await self._generate_overview(
-            project, key_files_text, tree_hash, outline
+            project, key_files_text, tree_hash, outline, graph
         )
 
         progress(f"Writing {len(modules_map)} modules...")
@@ -127,7 +134,7 @@ class Analyzer:
 
         progress("Detecting architecture...")
         architecture = await self._generate_architecture(
-            project, key_files_text, tree_hash, outline
+            project, key_files_text, tree_hash, outline, graph
         )
 
         progress("Creating reading guide...")
@@ -226,8 +233,9 @@ class Analyzer:
         key_files: str,
         tree_hash: str,
         outline: WikiOutline | None = None,
+        graph: DependencyGraph | None = None,
     ) -> ProjectOverview:
-        cache_key = f"overview:{self.language}:{tree_hash}"
+        cache_key = f"overview:v2:{self.language}:{tree_hash}"
         cached = await self.cache.get(cache_key)
         if cached:
             try:
@@ -235,21 +243,28 @@ class Analyzer:
             except Exception:
                 pass
 
-        fallback = self._fallback_overview(project, outline)
+        fallback = self._fallback_overview(project, outline, graph)
         if not self._llm_enabled():
             return fallback
 
         emphasized = ""
         focus = ""
+        topic_titles: list[str] = []
         if outline:
             focus = outline.overview_focus
             emphasized = ", ".join(outline.emphasized_pages[:12])
+            topic_titles = [
+                t.title or t.id
+                for t in outline.topics
+                if t.section != "getting-started" and t.id != "getting-started"
+            ]
         messages = build_overview_prompt(
             project.file_tree,
             key_files,
             self.language,
             outline_focus=focus,
             emphasized=emphasized,
+            topic_titles=topic_titles,
         )
         raw = await self._complete_json(messages, max_tokens=4096)
         data = extract_json(raw)
@@ -260,7 +275,13 @@ class Analyzer:
         overview = _coerce_model(data, ProjectOverview, name=project.name)
         if not overview.name:
             overview.name = project.name
-        if overview.one_liner or overview.description:
+        overview = self._fill_overview_gaps(overview, project, outline, graph)
+        if (
+            overview.one_liner
+            or overview.description
+            or overview.what_it_is
+            or overview.subsystems
+        ):
             await self.cache.put(cache_key, overview.model_dump())
         return overview
 
@@ -355,7 +376,7 @@ class Analyzer:
             )
             content_parts = [(f.content or f.preview or "") for f in files]
             cache_key = (
-                f"topic:{self.language}:{plan.depth}:{topic.id}:"
+                f"topic:v2:{self.language}:{plan.depth}:{topic.id}:"
                 f"{content_hash(''.join(content_parts))}"
             )
             cached = await self.cache.get(cache_key)
@@ -404,7 +425,7 @@ class Analyzer:
             )
             content_parts = [(f.content or f.preview or "") for f in files]
             cache_key = (
-                f"module:{self.language}:{depth}:{name}:"
+                f"module:v2:{self.language}:{depth}:{name}:"
                 f"{content_hash(''.join(content_parts))}"
             )
 
@@ -450,8 +471,9 @@ class Analyzer:
         key_files: str,
         tree_hash: str,
         outline: WikiOutline | None = None,
+        graph: DependencyGraph | None = None,
     ) -> ArchitectureDiagram:
-        cache_key = f"arch:{self.language}:{tree_hash}"
+        cache_key = f"arch:v2:{self.language}:{tree_hash}"
         cached = await self.cache.get(cache_key)
         if cached:
             try:
@@ -459,14 +481,18 @@ class Analyzer:
             except Exception:
                 pass
 
-        fallback = self._fallback_architecture(project, outline)
+        fallback = self._fallback_architecture(project, outline, graph)
         if not self._llm_enabled():
             return fallback
 
         focus = outline.architecture_focus if outline else ""
         core = ""
         if outline:
-            core = ", ".join(m.name for m in outline.modules if m.depth == "deep")
+            core = ", ".join(
+                (t.title or t.id)
+                for t in outline.topics
+                if t.section != "getting-started"
+            ) or ", ".join(m.name for m in outline.modules if m.depth == "deep")
         messages = build_architecture_prompt(
             project.file_tree,
             key_files,
@@ -481,6 +507,7 @@ class Analyzer:
             return fallback
 
         arch = _coerce_model(data, ArchitectureDiagram)
+        arch = self._fill_architecture_gaps(arch, project, outline, graph)
         if arch.architecture_type or arch.description or arch.mermaid_component:
             await self.cache.put(cache_key, arch.model_dump())
         return arch
@@ -638,89 +665,172 @@ class Analyzer:
         return "\n".join(lines)
 
     def _fallback_overview(
-        self, project: ProjectContext, outline: WikiOutline | None
+        self,
+        project: ProjectContext,
+        outline: WikiOutline | None,
+        graph: DependencyGraph | None = None,
     ) -> ProjectOverview:
+        return self._fill_overview_gaps(
+            ProjectOverview(
+                name=project.name,
+                term_tips=_generic_term_tips(self._lang()),
+            ),
+            project,
+            outline,
+            graph,
+        )
+
+    def _fill_overview_gaps(
+        self,
+        overview: ProjectOverview,
+        project: ProjectContext,
+        outline: WikiOutline | None,
+        graph: DependencyGraph | None,
+    ) -> ProjectOverview:
+        zh = self._lang() == "zh"
         readme = next(
             (f for f in project.files if f.path.lower() in {"readme.md", "readme"}),
             None,
         )
-        description = ""
-        if readme and (readme.content or readme.preview):
-            description = (readme.content or readme.preview or "").strip()[:1200]
-        elif self._lang() == "zh":
-            description = (
-                f"{project.name} 按目录划成模块。先从入口文件看进程怎么启动，"
-                "再顺着 import 图读枢纽包的职责与边界，而不是把 Wiki 写成文件清单。"
-            )
-            if outline and outline.overview_focus:
-                names = ", ".join(f"`{m.name}`" for m in outline.modules[:6])
-                if names:
-                    description += f" 枢纽包包括 {names}。"
-        elif outline and outline.overview_focus:
-            description = outline.overview_focus
-        else:
-            description = (
-                f"{project.name} is organized as directory modules. Start at the "
-                "entrypoints, then follow imports into the hub packages — this page "
-                "states purpose and boundaries, not a file inventory."
-            )
-        cites: list[Citation] = []
-        if readme:
-            cites.append(Citation(path=readme.path, start_line=1, note="README"))
-        for f in project.files:
-            if f.is_entrypoint:
+        entries = [f for f in project.files if f.is_entrypoint]
+        if not overview.citations:
+            cites: list[Citation] = []
+            if readme:
+                cites.append(Citation(path=readme.path, start_line=1, note="README"))
+            for f in entries:
                 cites.append(Citation(path=f.path, note="entrypoint"))
-        return ProjectOverview(
-            name=project.name,
-            description=description,
-            citations=cites,
-            term_tips=_generic_term_tips(self._lang()),
-        )
+            overview.citations = cites
+        if not overview.document_scope:
+            if zh:
+                overview.document_scope = (
+                    f"这篇文档讲 {project.name} 是什么、一次真实调用怎么走、仓库怎么拆。"
+                    "读完应能不靠目录讲清目标与边界，并指出链路上的关键类型。"
+                )
+            else:
+                overview.document_scope = (
+                    f"This page covers what {project.name} is, how one real call runs, "
+                    "and how the repo is split. After reading you should name the "
+                    "goal and the types on that path without leaning on the folder tree."
+                )
+        if not overview.what_it_is:
+            overview.what_it_is = _fallback_what_it_is(project, outline, zh)
+        if not overview.description:
+            overview.description = (
+                (readme.content or readme.preview or "").strip()[:800]
+                if readme and (readme.content or readme.preview)
+                else (outline.overview_focus if outline else "")
+            )
+        if not overview.runtime_flow:
+            if outline and outline.overview_focus:
+                overview.runtime_flow = outline.overview_focus
+            elif zh:
+                overview.runtime_flow = (
+                    "请求从入口进程进来，经过枢纽包上的类型，再交到依赖方。"
+                    "下面的结构图按这条链路画，而不是按 crate 目录。"
+                )
+            else:
+                overview.runtime_flow = (
+                    "Work enters at the process entrypoint, moves through hub types, "
+                    "then out to dependents. The diagram follows that call, not the crate tree."
+                )
+        if not overview.mermaid_component:
+            overview.mermaid_component = (graph.to_mermaid() if graph else "") or ""
+        if not overview.mermaid_component:
+            overview.mermaid_component = runtime_mermaid_for(
+                entry_files=[f.path for f in project.files if f.is_entrypoint],
+                topics=(outline.topics if outline else None),
+            )
+        if not overview.codebase_structure:
+            overview.codebase_structure = codebase_structure_for(
+                project, language=self._lang()
+            )
+        if not overview.subsystems and outline:
+            overview.subsystems = subsystems_from_topics(outline.topics)
+        if not overview.see_also and outline:
+            overview.see_also = topic_wiki_links(outline.topics)
+        if not overview.term_tips:
+            overview.term_tips = _generic_term_tips(self._lang())
+        return overview
 
     def _fallback_architecture(
-        self, project: ProjectContext, outline: WikiOutline | None
+        self,
+        project: ProjectContext,
+        outline: WikiOutline | None,
+        graph: DependencyGraph | None = None,
     ) -> ArchitectureDiagram:
-        components: list[Component] = []
-        if outline and outline.topics:
+        return self._fill_architecture_gaps(
+            ArchitectureDiagram(
+                architecture_type="codebase-modules",
+                term_tips=_generic_term_tips(self._lang()),
+            ),
+            project,
+            outline,
+            graph,
+        )
+
+    def _fill_architecture_gaps(
+        self,
+        arch: ArchitectureDiagram,
+        project: ProjectContext,
+        outline: WikiOutline | None,
+        graph: DependencyGraph | None,
+    ) -> ArchitectureDiagram:
+        zh = self._lang() == "zh"
+        if not arch.components and outline and outline.topics:
             for item in outline.topics:
                 if item.section == "getting-started":
                     continue
-                components.append(
-                    Component(name=item.title or item.id, files=list(item.key_files[:6]))
+                types = [
+                    KeyType(
+                        name=symbol,
+                        role="",
+                        path=(item.key_files[0] if item.key_files else ""),
+                    )
+                    for symbol in (item.key_symbols or [])[:4]
+                ]
+                arch.components.append(
+                    Component(
+                        name=item.title or item.id,
+                        role=item.purpose,
+                        purpose=item.purpose,
+                        files=list(item.key_files[:6]),
+                        key_types=types,
+                    )
                 )
-        elif outline:
+        elif not arch.components and outline:
             for item in outline.modules[:12]:
-                components.append(
+                arch.components.append(
                     Component(name=item.name, files=list(item.key_files[:6]))
                 )
-        focus = ""
-        if self._lang() == "zh":
-            focus = (
-                "仓库按目录模块分层。请求从入口进入，经过 import 图上最中心的包，"
-                "再扩散到依赖方。architecture_type 只是机器标签；正文讲职责怎么切、数据怎么走。"
-                "PageRank 只决定哪些模块值得先写深，不是目录清单。"
-            )
-            if outline:
-                names = ", ".join(f"`{m.name}`" for m in outline.modules[:6])
-                if names:
-                    focus += f" 优先读 {names}。"
-        else:
-            focus = (outline.architecture_focus if outline else "").strip()
-            if "Heaviest modules by PageRank" in focus:
-                focus = ""
-            if not focus:
-                focus = (
-                    "The repo is split by directory modules. Work enters at the "
-                    "entrypoints, moves through the highest-centrality packages, then "
-                    "out to dependents. PageRank only ranks which packages to explain "
-                    "first — it is not a table of contents."
+        for comp in arch.components:
+            if not comp.role:
+                comp.role = comp.purpose
+        if not arch.description:
+            if zh:
+                arch.description = (
+                    "仓库按一次调用真正经过的系统切页，而不是按目录罗列。"
+                    "请求从入口进来，经过运行时、工具层和界面。"
+                    "结构图用来看耦合；类型在链路上是角色，不是文件清单。"
                 )
-        return ArchitectureDiagram(
-            architecture_type="codebase-modules",
-            description=focus,
-            components=components,
-            term_tips=_generic_term_tips(self._lang()),
-        )
+            else:
+                focus = (outline.architecture_focus if outline else "").strip()
+                if "Heaviest modules by PageRank" in focus:
+                    focus = ""
+                arch.description = focus or (
+                    "The repo is split by the systems that actually run a call. "
+                    "Work enters at the entrypoints, then through runtime, tools, and UI. "
+                    "Types are roles on that path, not a file inventory."
+                )
+        if not arch.mermaid_component:
+            arch.mermaid_component = (graph.to_mermaid() if graph else "") or ""
+        if not arch.mermaid_component:
+            arch.mermaid_component = runtime_mermaid_for(
+                entry_files=[f.path for f in project.files if f.is_entrypoint],
+                topics=(outline.topics if outline else None),
+            )
+        if not arch.term_tips:
+            arch.term_tips = _generic_term_tips(self._lang())
+        return arch
 
     def _fallback_reading_guide(
         self,
@@ -764,6 +874,43 @@ class Analyzer:
         )
 
 
+def _fallback_what_it_is(
+    project: ProjectContext, outline: WikiOutline | None, zh: bool
+) -> list[str]:
+    items: list[str] = []
+    readme = next(
+        (f for f in project.files if f.path.lower() in {"readme.md", "readme"}),
+        None,
+    )
+    if readme:
+        if zh:
+            items.append(f"仓库目标与边界写在 README，而不是目录名。 `{readme.path}:1`")
+        else:
+            items.append(f"The goal lives in the README, not the folder names. `{readme.path}:1`")
+    for f in project.files:
+        if not f.is_entrypoint:
+            continue
+        if zh:
+            items.append(f"进程从 `{f.path}:1` 启动，一次调用从这里进图。")
+        else:
+            items.append(f"The process starts at `{f.path}:1`; one call enters the graph here.")
+        if len(items) >= 4:
+            break
+    if outline:
+        for topic in outline.topics:
+            if topic.section == "getting-started" or not topic.key_files:
+                continue
+            path = topic.key_files[0]
+            title = topic.title or topic.id
+            if zh:
+                items.append(f"「{title}」接住链路上的一段工作，证据在 `{path}`。")
+            else:
+                items.append(f"{title} owns one stretch of the call path; see `{path}`.")
+            if len(items) >= 6:
+                break
+    return items[:6]
+
+
 def _generic_term_tips(language: str) -> list[TermTip]:
     if language == "zh":
         return [
@@ -802,6 +949,24 @@ def _coerce_model(data: dict, model_cls, **defaults):
         filtered["term_tips"] = _coerce_term_tips(filtered.get("term_tips"))
     if "citations" in model_cls.model_fields and "citations" in data:
         filtered["citations"] = _coerce_citations(filtered.get("citations"))
+    if "what_it_is" in model_cls.model_fields:
+        filtered["what_it_is"] = _coerce_what_it_is(filtered.get("what_it_is"))
+    if "codebase_structure" in model_cls.model_fields:
+        filtered["codebase_structure"] = _coerce_codebase_structure(
+            filtered.get("codebase_structure")
+        )
+    if "subsystems" in model_cls.model_fields:
+        filtered["subsystems"] = _coerce_subsystems(filtered.get("subsystems"))
+    if "key_types" in model_cls.model_fields:
+        filtered["key_types"] = _coerce_key_types(filtered.get("key_types"))
+    if "components" in model_cls.model_fields:
+        filtered["components"] = _coerce_components(filtered.get("components"))
+    if "see_also" in model_cls.model_fields:
+        filtered["see_also"] = _coerce_strings(filtered.get("see_also"))
+    if "mermaid_component" in model_cls.model_fields:
+        filtered["mermaid_component"] = _coerce_mermaid(filtered.get("mermaid_component"))
+    if "mermaid" in model_cls.model_fields:
+        filtered["mermaid"] = _coerce_mermaid(filtered.get("mermaid"))
     for key, value in defaults.items():
         filtered.setdefault(key, value)
     try:
@@ -813,10 +978,7 @@ def _coerce_model(data: dict, model_cls, **defaults):
 def _coerce_module(data: dict, name: str) -> ModuleDoc:
     payload = dict(data)
     payload.setdefault("name", name)
-    payload["call_chains"] = _coerce_call_chains(payload.get("call_chains"))
-    payload["edge_cases"] = _coerce_strings(payload.get("edge_cases"))
-    payload["citations"] = _coerce_citations(payload.get("citations"))
-    payload["term_tips"] = _coerce_term_tips(payload.get("term_tips"))
+    _coerce_handbook_fields(payload)
     filtered = {k: v for k, v in payload.items() if k in ModuleDoc.model_fields}
     try:
         return ModuleDoc(**filtered)
@@ -827,16 +989,15 @@ def _coerce_module(data: dict, name: str) -> ModuleDoc:
 def _coerce_topic(data: dict, topic) -> TopicDoc:
     payload = dict(data)
     payload.setdefault("name", topic.id)
-    payload["call_chains"] = _coerce_call_chains(payload.get("call_chains"))
-    payload["edge_cases"] = _coerce_strings(payload.get("edge_cases"))
-    payload["citations"] = _coerce_citations(payload.get("citations"))
-    payload["term_tips"] = _coerce_term_tips(payload.get("term_tips"))
+    _coerce_handbook_fields(payload)
     filtered = {k: v for k, v in payload.items() if k in TopicDoc.model_fields}
     filtered["name"] = topic.id
     filtered["title"] = topic.title or str(filtered.get("title") or topic.id)
     filtered["section"] = topic.section or "deep-dive"
     if topic.purpose and not filtered.get("purpose"):
         filtered["purpose"] = topic.purpose
+    if topic.purpose and not filtered.get("document_scope"):
+        filtered["document_scope"] = topic.purpose
     try:
         return TopicDoc(**filtered)
     except Exception:
@@ -846,6 +1007,147 @@ def _coerce_topic(data: dict, topic) -> TopicDoc:
             section=topic.section,
             purpose=topic.purpose or str(payload.get("purpose") or ""),
         )
+
+
+def _coerce_handbook_fields(payload: dict) -> None:
+    payload["call_chains"] = _coerce_call_chains(payload.get("call_chains"))
+    payload["edge_cases"] = _coerce_strings(payload.get("edge_cases"))
+    payload["citations"] = _coerce_citations(payload.get("citations"))
+    payload["term_tips"] = _coerce_term_tips(payload.get("term_tips"))
+    payload["what_it_is"] = _coerce_what_it_is(payload.get("what_it_is"))
+    payload["key_types"] = _coerce_key_types(payload.get("key_types"))
+    payload["mermaid"] = _coerce_mermaid(payload.get("mermaid"))
+    payload["see_also"] = _coerce_strings(payload.get("see_also"))
+
+
+def _coerce_mermaid(raw) -> str:
+    if not raw:
+        return ""
+    if isinstance(raw, list):
+        return "\n".join(str(x) for x in raw if str(x).strip())
+    return str(raw)
+
+
+def _coerce_what_it_is(raw) -> list[str]:
+    items = raw if isinstance(raw, list) else ([raw] if raw else [])
+    out: list[str] = []
+    for item in items:
+        if isinstance(item, str) and item.strip():
+            out.append(item.strip())
+        elif isinstance(item, dict):
+            text = str(
+                item.get("text")
+                or item.get("sentence")
+                or item.get("characteristic")
+                or ""
+            ).strip()
+            path = str(item.get("path") or "").strip()
+            line = item.get("start_line") or item.get("line")
+            cite = f"{path}:{line}" if path and line else path
+            if text and cite and cite not in text:
+                out.append(f"{text} `{cite}`")
+            elif text:
+                out.append(text)
+            elif cite:
+                out.append(f"`{cite}`")
+    return out
+
+
+def _coerce_codebase_structure(raw) -> list[dict]:
+    if not raw:
+        return []
+    items = raw if isinstance(raw, list) else [raw]
+    out: list[dict] = []
+    for item in items:
+        if isinstance(item, str) and item.strip():
+            out.append({"name": item.strip(), "location": item.strip(), "purpose": ""})
+        elif isinstance(item, dict):
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            out.append(
+                {
+                    "name": name,
+                    "location": str(item.get("location") or item.get("path") or ""),
+                    "purpose": str(item.get("purpose") or item.get("role") or ""),
+                }
+            )
+    return out
+
+
+def _coerce_key_types(raw) -> list[dict]:
+    if not raw:
+        return []
+    items = raw if isinstance(raw, list) else [raw]
+    out: list[dict] = []
+    for item in items:
+        if isinstance(item, str) and item.strip():
+            out.append({"name": item.strip(), "role": "", "path": ""})
+        elif isinstance(item, dict):
+            name = str(
+                item.get("name") or item.get("type") or item.get("symbol") or ""
+            ).strip()
+            if not name:
+                continue
+            out.append(
+                {
+                    "name": name,
+                    "role": str(item.get("role") or item.get("purpose") or ""),
+                    "path": str(item.get("path") or item.get("file") or ""),
+                }
+            )
+    return out
+
+
+def _coerce_subsystems(raw) -> list[dict]:
+    if not raw:
+        return []
+    items = raw if isinstance(raw, list) else [raw]
+    out: list[dict] = []
+    for item in items:
+        if isinstance(item, str) and item.strip():
+            out.append(
+                {"name": item.strip(), "role": "", "key_types": [], "files": []}
+            )
+        elif isinstance(item, dict):
+            name = str(item.get("name") or item.get("title") or "").strip()
+            if not name:
+                continue
+            out.append(
+                {
+                    "name": name,
+                    "role": str(item.get("role") or item.get("purpose") or ""),
+                    "key_types": _coerce_key_types(item.get("key_types")),
+                    "files": _coerce_strings(item.get("files")),
+                    "mermaid": _coerce_mermaid(item.get("mermaid")),
+                }
+            )
+    return out
+
+
+def _coerce_components(raw) -> list[dict]:
+    if not raw:
+        return []
+    items = raw if isinstance(raw, list) else [raw]
+    out: list[dict] = []
+    for item in items:
+        if isinstance(item, str) and item.strip():
+            out.append({"name": item.strip(), "purpose": "", "files": []})
+        elif isinstance(item, dict):
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            role = str(item.get("role") or item.get("purpose") or "")
+            out.append(
+                {
+                    "name": name,
+                    "role": role,
+                    "purpose": str(item.get("purpose") or role),
+                    "files": _coerce_strings(item.get("files")),
+                    "key_types": _coerce_key_types(item.get("key_types")),
+                }
+            )
+    return out
 
 
 def _coerce_call_chains(raw) -> list[dict]:

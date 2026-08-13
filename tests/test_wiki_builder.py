@@ -3,16 +3,20 @@ from repowiki.core.models import (
     ArchitectureDiagram,
     CallChain,
     Citation,
+    CodebasePart,
     FileDoc,
     FileInfo,
+    KeyType,
     ModuleDoc,
     ProjectContext,
     ProjectOverview,
     ReadingGuide,
     ReadingStep,
+    Subsystem,
     Symbol,
     TechItem,
     TermTip,
+    TopicDoc,
     WikiData,
 )
 from repowiki.core.modules import ROOT_NAME, group_into_modules
@@ -232,8 +236,15 @@ def test_old_json_parses_without_term_tips():
     arch = ArchitectureDiagram.model_validate({"architecture_type": "monolith"})
     mod = ModuleDoc.model_validate({"name": "app", "purpose": "boot"})
     assert overview.term_tips == []
+    assert overview.what_it_is == []
+    assert overview.codebase_structure == []
+    assert overview.subsystems == []
+    assert overview.mermaid_component == ""
     assert arch.term_tips == []
+    assert arch.components == []
     assert mod.term_tips == []
+    assert mod.what_it_is == []
+    assert mod.key_types == []
 
 
 def test_term_tips_section_omitted_when_empty():
@@ -498,6 +509,7 @@ def test_overview_is_deepwiki_handbook_not_stack_dump():
     overview = wiki.get_page("index").content
     assert "这篇文档讲" in overview
     assert "## 它是什么" in overview
+    assert "## 系统架构" in overview
     assert "架构见图" in overview
     assert "[架构概览](architecture)" in overview
     assert "| 技术 |" in overview
@@ -505,12 +517,136 @@ def test_overview_is_deepwiki_handbook_not_stack_dump():
     assert "- **Python**" not in overview
     assert "`app/main.py:1`" in overview
     assert overview.index("相关源码") < overview.index("## 它是什么")
+    assert overview.index("```mermaid") < overview.index("架构见图")
 
     arch = wiki.get_page("architecture").content
     assert "```mermaid" in arch
+    assert "## 系统架构" in arch
     assert "## 链路里的角色" in arch
     assert arch.index("```mermaid") < arch.index("## 链路里的角色")
     assert "**app**" in arch
     assert "`app/main.py`" in arch
+    assert "  - 文件:" not in arch
+
+
+def test_structured_overview_renders_deepwiki_sections_without_key_features():
+    project = _project(
+        {
+            "bin/grok.rs": "fn main() {}\n",
+            "crates/agent/src/loop.rs": "pub struct Session;\n",
+        }
+    )
+    graph = DependencyGraph.build_from_project(project)
+    data = WikiData(
+        overview=ProjectOverview(
+            name="grok-study",
+            document_scope="这篇文档讲 grok-study 是什么、三种模式怎么跑、仓库怎么拆。读完应能不靠目录讲清一次调用经过谁。",
+            what_it_is=[
+                "进程从 `bin/grok.rs:1` 启动。",
+                "`Session` 在 `crates/agent/src/loop.rs:1` 接住一次对话。",
+            ],
+            runtime_flow="用户输入进 `bin/grok.rs`，由 `Session` 跑完一轮再吐出回复。",
+            mermaid_component="flowchart TD\n  A[bin/grok.rs] --> B[Session]",
+            codebase_structure=[
+                CodebasePart(name="agent", location="crates/agent", purpose="跑 Agent Loop"),
+            ],
+            subsystems=[
+                Subsystem(
+                    name="Agent Loop",
+                    role="把一轮对话跑完",
+                    key_types=[
+                        KeyType(
+                            name="Session",
+                            role="持有本轮上下文",
+                            path="crates/agent/src/loop.rs",
+                        )
+                    ],
+                    files=["crates/agent/src/loop.rs"],
+                )
+            ],
+            see_also=["architecture", "topics/agent-loop"],
+            citations=[Citation(path="bin/grok.rs", start_line=1)],
+        ),
+        architecture=ArchitectureDiagram(
+            architecture_type="cli-tool",
+            mermaid_component="graph TD\n  X --> Y",
+        ),
+        topics=[
+            TopicDoc(
+                name="agent-loop",
+                title="Agent Loop",
+                section="deep-dive",
+                purpose="读完应能指出 Session 在链路上的职责。",
+                document_scope="这篇文档讲 Agent Loop 在整仓调用链上的位置。",
+                what_it_is=["`Session` 在 `crates/agent/src/loop.rs:1` 接住一轮对话。"],
+                key_types=[
+                    KeyType(
+                        name="Session",
+                        role="持有本轮上下文",
+                        path="crates/agent/src/loop.rs",
+                    )
+                ],
+                mermaid="flowchart TD\n  U[User] --> S[Session]",
+                files=[FileDoc(path="crates/agent/src/loop.rs", purpose="loop")],
+            )
+        ],
+    )
+    wiki = WikiBuilder().build(project, data, graph, language="zh")
+    overview = wiki.get_page("index").content
+    assert "## 它是什么" in overview
+    assert "## 系统架构" in overview
+    assert "## 代码如何拆分" in overview
+    assert "## 核心子系统" in overview
+    assert "```mermaid" in overview
+    assert "| 名称 |" in overview
+    assert "crates/agent" in overview
+    assert "`Session`" in overview
+    assert "[架构概览](architecture)" in overview
+    assert "[Agent Loop](topics/agent-loop)" in overview
+    assert "## 主要能力" not in overview
+    assert "key_features" not in overview
+    assert "本步要你干什么" not in overview
+    assert overview.index("相关源码") < overview.index("## 它是什么")
+    assert overview.index("## 它是什么") < overview.index("## 系统架构")
+    assert overview.index("```mermaid") < overview.index("用户输入进")
+    assert overview.index("## 系统架构") < overview.index("## 代码如何拆分")
+    assert overview.index("## 代码如何拆分") < overview.index("## 核心子系统")
+
+    topic = wiki.get_page("topics/agent-loop").content
+    assert "## 它是什么" in topic
+    assert "`Session`" in topic
+    assert "```mermaid" in topic
+    assert "本步要你干什么" not in topic
+    assert "## 过关" not in topic
+
+
+def test_architecture_renders_type_roles_under_components():
+    project = _project({"app/main.py": "def main():\n    return 1\n"})
+    graph = DependencyGraph.build_from_project(project)
+    data = WikiData(
+        architecture=ArchitectureDiagram(
+            architecture_type="monolith",
+            description="请求从 main 进。",
+            mermaid_component="graph TD\n  A[main] --> B[core]",
+            components=[
+                {
+                    "name": "app",
+                    "role": "接住进程",
+                    "purpose": "receives the process",
+                    "files": ["app/main.py"],
+                    "key_types": [
+                        {"name": "main", "role": "启动进程", "path": "app/main.py"}
+                    ],
+                }
+            ],
+        ),
+    )
+    arch = WikiBuilder().build(project, data, graph, language="zh").get_page(
+        "architecture"
+    ).content
+    assert "## 系统架构" in arch
+    assert arch.index("```mermaid") < arch.index("请求从 main 进")
+    assert "## 核心子系统" in arch
+    assert "`main` — 启动进程 — `app/main.py`" in arch
     assert "  - 文件:" not in arch
 

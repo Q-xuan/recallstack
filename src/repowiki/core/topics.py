@@ -10,7 +10,15 @@ import re
 from collections import defaultdict
 
 from repowiki.core.graph import DependencyGraph
-from repowiki.core.models import FileInfo, ProjectContext, TopicDoc, TopicOutline
+from repowiki.core.models import (
+    CodebasePart,
+    FileInfo,
+    KeyType,
+    ProjectContext,
+    Subsystem,
+    TopicDoc,
+    TopicOutline,
+)
 from repowiki.core.module_handbook import fallback_module_doc
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
@@ -260,7 +268,17 @@ def fallback_topic_doc(
         title=topic.title,
         section=topic.section,
         purpose=topic.purpose or mod.purpose,
+        document_scope=topic.purpose or mod.purpose,
         description=mod.description,
+        what_it_is=_topic_what_it_is(topic, language),
+        key_types=[
+            KeyType(
+                name=symbol,
+                role="",
+                path=(topic.key_files[0] if topic.key_files else ""),
+            )
+            for symbol in (topic.key_symbols or [])[:4]
+        ],
         implementation_details=mod.implementation_details,
         call_chains=mod.call_chains,
         edge_cases=mod.edge_cases,
@@ -268,6 +286,20 @@ def fallback_topic_doc(
         citations=mod.citations,
         term_tips=mod.term_tips,
     )
+
+
+def _topic_what_it_is(topic: TopicOutline, language: str) -> list[str]:
+    zh = _is_zh(language)
+    items: list[str] = []
+    cite = f"`{topic.key_files[0]}`" if topic.key_files else ""
+    if topic.purpose:
+        items.append(f"{topic.purpose} {cite}".strip())
+    for path in topic.key_files[:3]:
+        if zh:
+            items.append(f"这条链路经过 `{path}`。")
+        else:
+            items.append(f"The call path runs through `{path}`.")
+    return items[:4]
 
 
 def merge_topics(
@@ -399,3 +431,102 @@ def _purpose_for(title: str, zh: bool) -> str:
     if zh:
         return f"「{title}」在一次真实调用里做什么、缺了它哪条能力会断。"
     return f"What `{title}` does on one real call, and what breaks if it disappears."
+
+
+def codebase_structure_for(
+    project: ProjectContext, *, language: str = "zh", limit: int = 12
+) -> list[CodebasePart]:
+    """Crate / top-package rows for 代码如何拆分. Not a file dump."""
+    zh = _is_zh(language)
+    clusters: dict[str, str] = {}
+    for f in project.files:
+        parts = [p for p in f.path.replace("\\", "/").split("/") if p]
+        if not parts or parts[0] in _SKIP_DIRS:
+            continue
+        if parts[0] in {"crates", "packages", "apps"} and len(parts) > 1:
+            name, loc = parts[1], f"{parts[0]}/{parts[1]}"
+        elif len(parts) == 1:
+            continue
+        else:
+            name, loc = parts[0], parts[0]
+        clusters.setdefault(name, loc)
+    rows: list[CodebasePart] = []
+    for name, loc in list(clusters.items())[:limit]:
+        purpose = (
+            f"`{loc}` 这一包在仓库里的职责边界。"
+            if zh
+            else f"Responsibility boundary of `{loc}`."
+        )
+        rows.append(CodebasePart(name=name, location=loc, purpose=purpose))
+    return rows
+
+
+def subsystems_from_topics(topics: list[TopicOutline], *, limit: int = 8) -> list[Subsystem]:
+    out: list[Subsystem] = []
+    for topic in topics:
+        if topic.section == "getting-started" or topic.id == GETTING_STARTED_ID:
+            continue
+        types = [
+            KeyType(
+                name=symbol,
+                role="",
+                path=(topic.key_files[0] if topic.key_files else ""),
+            )
+            for symbol in (topic.key_symbols or [])[:4]
+        ]
+        out.append(
+            Subsystem(
+                name=topic.title or topic.id,
+                role=topic.purpose,
+                key_types=types,
+                files=list(topic.key_files[:4]),
+            )
+        )
+        if len(out) >= limit:
+            break
+    return out
+
+
+def topic_wiki_links(topics: list[TopicOutline]) -> list[str]:
+    links: list[str] = ["architecture"]
+    for topic in topics:
+        if topic.section == "getting-started" or topic.id == GETTING_STARTED_ID:
+            continue
+        links.append(wiki_page_id_for_topic(topic.id))
+    return links[:12]
+
+
+def runtime_mermaid_for(
+    *,
+    entry_files: list[str] | None = None,
+    topics=None,
+    limit: int = 6,
+) -> str:
+    """Tiny runtime flowchart when the import graph has no edges."""
+    nodes: list[str] = []
+    for path in entry_files or []:
+        leaf = path.replace("\\", "/").rstrip("/").split("/")[-1]
+        if leaf:
+            nodes.append(leaf[:32])
+            break
+    for topic in topics or []:
+        section = getattr(topic, "section", "") or ""
+        tid = getattr(topic, "id", "") or getattr(topic, "name", "")
+        if section == "getting-started" or tid == GETTING_STARTED_ID:
+            continue
+        title = getattr(topic, "title", "") or tid
+        label = re.sub(r'[\[\]{}"#\n]', " ", str(title))
+        label = re.sub(r"\s+", " ", label).strip()[:32]
+        if label:
+            nodes.append(label)
+        if len(nodes) >= limit + 1:
+            break
+    if len(nodes) < 2:
+        return ""
+    lines = ["flowchart TD"]
+    ids = [f"n{i}" for i in range(len(nodes))]
+    for nid, lab in zip(ids, nodes, strict=True):
+        lines.append(f'  {nid}["{lab}"]')
+    for src, dst in zip(ids, ids[1:], strict=False):
+        lines.append(f"  {src} --> {dst}")
+    return "\n".join(lines)

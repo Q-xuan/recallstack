@@ -95,6 +95,16 @@ def test_grok_default_sidebar_is_conceptual_not_crate_tree():
         assert "本步要你干什么" not in page["content"]
         assert "What this step asks of you" not in page["content"]
 
+    overview = next(p for p in payload["pages"] if p["id"] == "index")
+    content = overview["content"]
+    assert "## 它是什么" in content or "## What it is" in content
+    assert "## 系统架构" in content or "## System architecture" in content
+    assert "## 代码如何拆分" in content or "## How the code is split" in content
+    assert "## 核心子系统" in content or "## Core subsystems" in content
+    assert "```mermaid" in content
+    assert "本步要你干什么" not in content
+    assert "30 秒自测" not in content
+
 
 def test_grok_learning_path_is_topics_not_web_app_syllabus():
     project = _grok_project()

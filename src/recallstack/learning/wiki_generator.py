@@ -25,6 +25,7 @@ from recallstack.learning.learning_contract import (
 from repowiki.core.graph import DependencyGraph
 from repowiki.core.models import (
     ArchitectureDiagram,
+    Citation,
     Component,
     ProjectContext,
     ProjectOverview,
@@ -35,7 +36,13 @@ from repowiki.core.models import (
 )
 from repowiki.core.module_handbook import fallback_module_doc
 from repowiki.core.modules import group_into_modules
-from repowiki.core.topics import fallback_topic_doc
+from repowiki.core.topics import (
+    codebase_structure_for,
+    fallback_topic_doc,
+    runtime_mermaid_for,
+    subsystems_from_topics,
+    topic_wiki_links,
+)
 from repowiki.core.wiki_builder import Wiki, WikiBuilder, WikiPage
 
 logger = logging.getLogger(__name__)
@@ -88,11 +95,61 @@ def build_deterministic_wiki_data(
     ][:8]
 
     lang = content_lang()
+
+    # Same grouping the LLM path and the dependency graph use, so a module keeps
+    # one name across all three and its page can find its own edges.
+    modules_map = group_into_modules(project.files)
+
+    from repowiki.core.outline import build_deterministic_outline
+
+    outline = build_deterministic_outline(project, modules_map, graph, language=lang)
+
+    cites: list[Citation] = []
+    if readme:
+        cites.append(Citation(path=readme.path, start_line=1, note="README"))
+    for path in entry_files[:4]:
+        cites.append(Citation(path=path, note="entrypoint"))
+
+    what_it_is: list[str] = []
+    if readme:
+        what_it_is.append(
+            t(
+                f"The goal lives in the README, not the folder names. `{readme.path}:1`",
+                f"仓库目标与边界写在 README，而不是目录名。 `{readme.path}:1`",
+            )
+        )
+    for path in entry_files[:3]:
+        what_it_is.append(
+            t(
+                f"The process starts at `{path}:1`; one call enters the graph here.",
+                f"进程从 `{path}:1` 启动，一次调用从这里进图。",
+            )
+        )
+    for topic in outline.topics:
+        if topic.section == "getting-started" or not topic.key_files:
+            continue
+        title = topic.title or topic.id
+        path = topic.key_files[0]
+        what_it_is.append(
+            t(
+                f"{title} owns one stretch of the call path; see `{path}`.",
+                f"「{title}」接住链路上的一段工作，证据在 `{path}`。",
+            )
+        )
+        if len(what_it_is) >= 6:
+            break
+
     overview = ProjectOverview(
         name=project.name,
         one_liner=t(
-            f"{project.name}: a learnable wiki of how this repo is wired",
-            f"{project.name}：讲清这个仓库怎么串起来的可学习 Wiki",
+            f"{project.name}: how this repo is wired on one real call",
+            f"{project.name}：一次真实调用里这个仓库怎么串起来",
+        ),
+        document_scope=t(
+            f"This page covers what {project.name} is, how one real call runs, "
+            "and how the repo is split. After reading you should name the types on that path.",
+            f"这篇文档讲 {project.name} 是什么、一次真实调用怎么走、仓库怎么拆。"
+            "读完应能不靠目录讲清目标与边界，并指出链路上的关键类型。",
         ),
         description=description
         or t(
@@ -101,30 +158,25 @@ def build_deterministic_wiki_data(
             "本 Wiki 是内部手册，不是文件清单。先从入口看进程怎么启动，再顺着一次调用经过的"
             "系统读下去，而不是把 crate 列一遍。",
         ),
-        key_features=[
-            t(
-                "Scan + import graph produce a reading path; start at entrypoints, then hubs.",
-                "扫描与 import 图搭出阅读路径：先从入口进，再读枢纽系统。",
-            ),
-            t(
-                f"{len(concepts)} practice concepts mapped onto source evidence",
-                f"{len(concepts)} 个可练习词条，对齐源码证据",
-            ) if concepts else t(
-                "Learning concepts will appear once the concept graph is built",
-                "概念图谱生成后会出现可练习词条",
-            ),
-        ],
-        setup_instructions=[
-            t("Read Overview and Architecture first", "先读概述与架构概览"),
-            t("Follow the Reading Guide / learning path page by page", "按导读 / 学习路径逐步打开词条"),
-            t("Do the 30-second probe on a concept page, then go deeper", "在词条内完成 30 秒自测，再进入深入练习"),
-        ],
+        what_it_is=what_it_is,
+        runtime_flow=(
+            outline.overview_focus
+            if outline.overview_focus
+            else t(
+                "Work enters at the process entrypoint, moves through hub types, "
+                "then out to dependents. The diagram follows that call, not the crate tree.",
+                "请求从入口进程进来，经过枢纽包上的类型，再交到依赖方。"
+                "下面的结构图按这条链路画，而不是按 crate 目录。",
+            )
+        ),
+        mermaid_component=graph.to_mermaid()
+        or runtime_mermaid_for(entry_files=entry_files, topics=outline.topics),
+        codebase_structure=codebase_structure_for(project, language=lang),
+        subsystems=subsystems_from_topics(outline.topics),
+        see_also=topic_wiki_links(outline.topics),
+        citations=cites,
         term_tips=_generic_term_tips(),
     )
-
-    # Same grouping the LLM path and the dependency graph use, so a module keeps
-    # one name across all three and its page can find its own edges.
-    modules_map = group_into_modules(project.files)
 
     module_docs = [
         fallback_module_doc(
@@ -136,9 +188,6 @@ def build_deterministic_wiki_data(
         for name, files in sorted(modules_map.items(), key=lambda x: (-len(x[1]), x[0]))
     ]
 
-    from repowiki.core.outline import build_deterministic_outline
-
-    outline = build_deterministic_outline(project, modules_map, graph, language=lang)
     files_by_path = {f.path.replace("\\", "/"): f for f in project.files}
     topic_docs = []
     for topic in outline.topics:
@@ -154,8 +203,10 @@ def build_deterministic_wiki_data(
     components = [
         Component(
             name=doc.title or doc.name,
+            role=doc.purpose,
             purpose=doc.purpose,
             files=[fd.path for fd in doc.files[:6]],
+            key_types=list(getattr(doc, "key_types", None) or [])[:4],
         )
         for doc in topic_docs
         if doc.section != "getting-started"
@@ -164,6 +215,7 @@ def build_deterministic_wiki_data(
         components = [
             Component(
                 name=m.name,
+                role=m.purpose,
                 purpose=m.purpose,
                 files=[fd.path for fd in m.files[:6]],
             )
@@ -179,7 +231,8 @@ def build_deterministic_wiki_data(
             "结构图用来看耦合；左侧是概念导航，不是 crate 树。",
         ),
         components=components,
-        mermaid_component=graph.to_mermaid() or "",
+        mermaid_component=graph.to_mermaid()
+        or runtime_mermaid_for(entry_files=entry_files, topics=outline.topics),
         data_flow=t(
             "Entrypoints → core systems → dependents (see architecture and the learning path).",
             "入口文件 → 核心系统 → 依赖方（见架构概览与学习路径）。",
