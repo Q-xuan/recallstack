@@ -9,6 +9,7 @@ import FolderPicker from "../components/FolderPicker";
 import TableOfContents from "../components/TableOfContents";
 import WikiContent from "../components/WikiContent";
 import type { TocEntry } from "../lib/markdown";
+import { localizeBreadcrumbSegment, localizeSidebarTitle } from "../lib/wikiTitles";
 import {
   Concept,
   LearningPath,
@@ -629,12 +630,15 @@ export default function RepositoryPage() {
                     {currentPage.id.includes("/") && (
                       <>
                         <span aria-hidden>/</span>
-                        <span>{currentPage.id.split("/")[0]}</span>
+                        <span>{localizeBreadcrumbSegment(currentPage.id.split("/")[0], t)}</span>
                       </>
                     )}
                     <span aria-hidden>/</span>
                     <span className="rs-breadcrumb-current">
-                      {currentPage.title || currentPage.id}
+                      {localizeSidebarTitle(
+                        { title: currentPage.title || currentPage.id, page_id: currentPage.id },
+                        t,
+                      )}
                     </span>
                   </nav>
 
@@ -657,7 +661,9 @@ export default function RepositoryPage() {
                       {prevPage ? (
                         <button type="button" onClick={() => openPage(prevPage.page_id)}>
                           <span className="rs-pager-dir">← {t("上一页", "Previous")}</span>
-                          <span className="rs-pager-title">{prevPage.title}</span>
+                          <span className="rs-pager-title">
+                            {localizeSidebarTitle({ title: prevPage.title, page_id: prevPage.page_id }, t)}
+                          </span>
                         </button>
                       ) : (
                         <span />
@@ -669,7 +675,9 @@ export default function RepositoryPage() {
                           onClick={() => openPage(nextPage.page_id)}
                         >
                           <span className="rs-pager-dir">{t("下一页", "Next")} →</span>
-                          <span className="rs-pager-title">{nextPage.title}</span>
+                          <span className="rs-pager-title">
+                            {localizeSidebarTitle({ title: nextPage.title, page_id: nextPage.page_id }, t)}
+                          </span>
                         </button>
                       )}
                     </nav>
@@ -739,11 +747,17 @@ function PipelineSteps({ status, detail }: { status: string; detail?: string | n
 }
 
 /** True when the item or any descendant matches the filter. */
-function matchesFilter(item: WikiSidebarItem, filter: string): boolean {
+function matchesFilter(
+  item: WikiSidebarItem,
+  filter: string,
+  t: (zh: string, en: string) => string,
+): boolean {
   if (!filter) return true;
+  const shown = localizeSidebarTitle(item, t).toLowerCase();
+  if (shown.includes(filter)) return true;
   if (item.title.toLowerCase().includes(filter)) return true;
   if (item.page_id?.toLowerCase().includes(filter)) return true;
-  return (item.children || []).some((c) => matchesFilter(c, filter));
+  return (item.children || []).some((c) => matchesFilter(c, filter, t));
 }
 
 function SidebarTree({
@@ -759,16 +773,18 @@ function SidebarTree({
   filter?: string;
   depth?: number;
 }) {
-  const visible = items.filter((item) => matchesFilter(item, filter));
+  const t = useT();
+  const visible = items.filter((item) => matchesFilter(item, filter, t));
   if (!visible.length) {
     return depth === 0 ? (
-      <p className="px-3 py-2 text-[13px] text-[var(--rs-muted)]">没有匹配的页面</p>
+      <p className="px-3 py-2 text-[13px] text-[var(--rs-muted)]">{t("没有匹配的页面", "No matching pages")}</p>
     ) : null;
   }
   return (
     <ul className="space-y-0.5">
       {visible.map((item) => {
         const active = item.page_id === currentId;
+        const label = localizeSidebarTitle(item, t);
         return (
           <li key={item.page_id || item.title}>
             {item.page_id ? (
@@ -779,14 +795,14 @@ function SidebarTree({
                 style={{ paddingLeft: 10 + depth * 12 }}
                 aria-current={active ? "page" : undefined}
               >
-                <span className="truncate">{item.title}</span>
+                <span className="truncate">{label}</span>
               </button>
             ) : (
               <div
                 className="rs-wiki-nav-group"
                 style={{ paddingLeft: 10 + depth * 12 }}
               >
-                {item.title}
+                {label}
               </div>
             )}
             {item.children?.length > 0 && (

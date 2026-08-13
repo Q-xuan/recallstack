@@ -7,6 +7,45 @@ from dataclasses import dataclass, field
 from repowiki.core.cite_check import format_citation
 from repowiki.core.graph import DependencyGraph
 from repowiki.core.models import ProjectContext, WikiData
+from repowiki.core.modules import ROOT_NAME
+
+# Sidebar / page chrome labels. Path segments (crates, bin, .cargo) stay as
+# they are in the repo; only these structural names are translated.
+_STRUCTURAL_TITLES: dict[str, dict[str, str]] = {
+    "overview": {"en": "Overview", "zh": "总览", "ja": "概要", "ko": "개요"},
+    "architecture": {"en": "Architecture", "zh": "架构", "ja": "アーキテクチャ", "ko": "아키텍처"},
+    "modules": {"en": "Modules", "zh": "模块", "ja": "モジュール", "ko": "모듈"},
+    "reading-guide": {"en": "Reading Guide", "zh": "导读", "ja": "ガイド", "ko": "가이드"},
+    "dependencies": {"en": "Dependencies", "zh": "依赖", "ja": "依存関係", "ko": "의존성"},
+    "root": {"en": "Root", "zh": "根目录", "ja": "ルート", "ko": "루트"},
+    "concepts": {"en": "Concepts", "zh": "词条", "ja": "用語", "ko": "개념"},
+}
+
+
+def normalize_wiki_lang(language: str | None) -> str:
+    code = (language or "en").strip().lower().replace("_", "-")
+    primary = code.split("-", 1)[0]
+    if primary in {"zh", "cn"}:
+        return "zh"
+    if primary in {"ja", "jp"}:
+        return "ja"
+    if primary in {"ko", "kr"}:
+        return "ko"
+    return "en"
+
+
+def structural_title(key: str, language: str = "en") -> str:
+    """Localized label for a structural wiki page or sidebar group."""
+    table = _STRUCTURAL_TITLES[key]
+    lang = normalize_wiki_lang(language)
+    return table.get(lang) or table["en"]
+
+
+def module_display_title(name: str, language: str = "en") -> str:
+    """Sidebar/page title for a module. Only ``root`` is localized; paths stay."""
+    if name == ROOT_NAME:
+        return structural_title("root", language)
+    return name
 
 
 @dataclass
@@ -41,53 +80,66 @@ class Wiki:
 class WikiBuilder:
     """constructs a Wiki from analysis results."""
 
+    def __init__(self, language: str = "en"):
+        self.language = language
+
     def build(
         self,
         project: ProjectContext,
         wiki_data: WikiData,
         graph: DependencyGraph,
+        *,
+        language: str | None = None,
     ) -> Wiki:
+        lang = normalize_wiki_lang(self.language if language is None else language)
         pages: list[WikiPage] = []
         sidebar: list[SidebarItem] = []
 
         # 1. index / overview page
         overview = wiki_data.overview
         overview_md = self._build_overview_page(overview, project)
-        pages.append(WikiPage(id="index", title="Overview", content=overview_md, order=0))
-        sidebar.append(SidebarItem(title="Overview", page_id="index"))
+        overview_title = structural_title("overview", lang)
+        pages.append(WikiPage(id="index", title=overview_title, content=overview_md, order=0))
+        sidebar.append(SidebarItem(title=overview_title, page_id="index"))
 
         # 2. architecture page
         arch = wiki_data.architecture
         if arch.architecture_type:
-            arch_md = self._build_architecture_page(arch)
-            pages.append(WikiPage(id="architecture", title="Architecture", content=arch_md, order=1))
-            sidebar.append(SidebarItem(title="Architecture", page_id="architecture"))
+            arch_title = structural_title("architecture", lang)
+            arch_md = self._build_architecture_page(arch, lang)
+            pages.append(WikiPage(id="architecture", title=arch_title, content=arch_md, order=1))
+            sidebar.append(SidebarItem(title=arch_title, page_id="architecture"))
 
         # 3. module pages
         for i, mod in enumerate(wiki_data.modules):
             mod_id = f"modules/{mod.name}"
-            mod_md = self._build_module_page(mod, graph)
+            mod_title = module_display_title(mod.name, lang)
+            mod_md = self._build_module_page(mod, graph, display_title=mod_title)
             pages.append(WikiPage(
-                id=mod_id, title=mod.name, content=mod_md,
+                id=mod_id, title=mod_title, content=mod_md,
                 parent_id="modules", order=i,
             ))
-        module_sidebar = self._build_module_sidebar([m.name for m in wiki_data.modules])
+        module_sidebar = self._build_module_sidebar(
+            [m.name for m in wiki_data.modules], language=lang
+        )
         if module_sidebar.children:
             sidebar.append(module_sidebar)
 
         # 4. reading guide
         guide = wiki_data.reading_guide
         if guide.steps:
-            guide_md = self._build_reading_guide_page(guide)
-            pages.append(WikiPage(id="reading-guide", title="Reading Guide", content=guide_md, order=10))
-            sidebar.append(SidebarItem(title="Reading Guide", page_id="reading-guide"))
+            guide_title = structural_title("reading-guide", lang)
+            guide_md = self._build_reading_guide_page(guide, lang)
+            pages.append(WikiPage(id="reading-guide", title=guide_title, content=guide_md, order=10))
+            sidebar.append(SidebarItem(title=guide_title, page_id="reading-guide"))
 
         # 5. dependency graph
         mermaid = graph.to_mermaid()
         if mermaid:
-            dep_md = self._build_dependency_page(graph, mermaid)
-            pages.append(WikiPage(id="dependencies", title="Dependencies", content=dep_md, order=11))
-            sidebar.append(SidebarItem(title="Dependencies", page_id="dependencies"))
+            dep_title = structural_title("dependencies", lang)
+            dep_md = self._build_dependency_page(graph, mermaid, lang)
+            pages.append(WikiPage(id="dependencies", title=dep_title, content=dep_md, order=11))
+            sidebar.append(SidebarItem(title=dep_title, page_id="dependencies"))
 
         return Wiki(pages=pages, sidebar=sidebar, project_name=project.name)
 
@@ -122,8 +174,8 @@ class WikiBuilder:
 
         return "\n".join(lines)
 
-    def _build_architecture_page(self, arch) -> str:
-        lines = ["# Architecture\n"]
+    def _build_architecture_page(self, arch, language: str = "en") -> str:
+        lines = [f"# {structural_title('architecture', language)}\n"]
         if arch.architecture_type:
             lines.append(f"**Type:** {arch.architecture_type}\n")
         if arch.description:
@@ -153,14 +205,16 @@ class WikiBuilder:
 
         return "\n".join(lines)
 
-    def _build_module_sidebar(self, names: list[str]) -> SidebarItem:
+    def _build_module_sidebar(self, names: list[str], language: str = "en") -> SidebarItem:
         """Nest module entries by path so siblings sit under a shared parent.
 
         Module names are full repository paths; listed flat they are both wide
         and repetitive. The tree also gives a home to intermediate directories
         like ``src/`` that hold no files of their own and so have no page.
+        Path segments stay as in the repo; only the group label and ``root``
+        are localized.
         """
-        root = SidebarItem(title="Modules", page_id="", children=[])
+        root = SidebarItem(title=structural_title("modules", language), page_id="", children=[])
         nodes: dict[str, SidebarItem] = {}
 
         def ensure(prefix: str) -> SidebarItem:
@@ -168,7 +222,11 @@ class WikiBuilder:
                 return nodes[prefix]
             parent_key, _, leaf = prefix.rpartition("/")
             parent = ensure(parent_key) if parent_key else root
-            item = SidebarItem(title=leaf or prefix, page_id="", children=[])
+            item = SidebarItem(
+                title=module_display_title(leaf or prefix, language),
+                page_id="",
+                children=[],
+            )
             parent.children.append(item)
             nodes[prefix] = item
             return item
@@ -177,8 +235,11 @@ class WikiBuilder:
             ensure(name).page_id = f"modules/{name}"
         return root
 
-    def _build_module_page(self, mod, graph: DependencyGraph | None = None) -> str:
-        lines = [f"# {mod.name}\n"]
+    def _build_module_page(
+        self, mod, graph: DependencyGraph | None = None, *, display_title: str | None = None
+    ) -> str:
+        heading = display_title or mod.name
+        lines = [f"# {heading}\n"]
         if mod.purpose:
             lines.append(f"> {mod.purpose}\n")
         if mod.description:
@@ -244,8 +305,8 @@ class WikiBuilder:
 
         return "\n".join(lines)
 
-    def _build_reading_guide_page(self, guide) -> str:
-        lines = ["# Reading Guide\n"]
+    def _build_reading_guide_page(self, guide, language: str = "en") -> str:
+        lines = [f"# {structural_title('reading-guide', language)}\n"]
         if guide.introduction:
             lines.append(f"{guide.introduction}\n")
 
@@ -265,8 +326,10 @@ class WikiBuilder:
 
         return "\n".join(lines)
 
-    def _build_dependency_page(self, graph: DependencyGraph, mermaid: str) -> str:
-        lines = ["# Module Dependencies\n"]
+    def _build_dependency_page(
+        self, graph: DependencyGraph, mermaid: str, language: str = "en"
+    ) -> str:
+        lines = [f"# {structural_title('dependencies', language)}\n"]
         lines.append("```mermaid\n" + mermaid + "\n```\n")
 
         # core files

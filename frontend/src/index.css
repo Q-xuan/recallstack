@@ -587,6 +587,11 @@ a {
   color: var(--rs-muted);
 }
 
+html[lang="zh-CN"] .rs-wiki-nav-group {
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
 /* Mobile nav drawer. */
 .rs-drawer-backdrop {
   position: fixed;

@@ -121,7 +121,7 @@ async def _run_scan(project_id: str, req: ScanRequest, user_api_key: str | None)
 
         graph = DependencyGraph.build_from_project(project)
         builder = WikiBuilder()
-        wiki = builder.build(project, wiki_data, graph)
+        wiki = builder.build(project, wiki_data, graph, language=cfg.language)
 
         proj["wiki"] = wiki
         proj["info"].status = "done"

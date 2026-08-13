@@ -11,7 +11,7 @@ import re
 from typing import Any
 
 from recallstack.domain.schemas import ConceptDraft
-from recallstack.learning.i18n import t
+from recallstack.learning.i18n import content_lang, t
 from repowiki.core.graph import DependencyGraph
 from repowiki.core.models import (
     ArchitectureDiagram,
@@ -189,7 +189,7 @@ def append_concept_pages(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
     def link(slug: str) -> str:
         return f"[{title_by_slug.get(slug, slug)}](concepts/{slug})"
 
-    concept_sidebar = SidebarItem(title="Concepts", page_id="", children=[])
+    concept_sidebar = SidebarItem(title=t("Concepts", "词条"), page_id="", children=[])
     for i, c in enumerate(concepts):
         page_id = f"concepts/{c.slug}"
         minutes = c.estimated_minutes or 10
@@ -359,7 +359,7 @@ def build_wiki_payload(
     if wiki_data is None:
         wiki_data = build_deterministic_wiki_data(project, graph, concepts)
     wiki_data = verify_wiki_data(wiki_data, project)
-    wiki = WikiBuilder().build(project, wiki_data, graph)
+    wiki = WikiBuilder().build(project, wiki_data, graph, language=content_lang())
     wiki = append_concept_pages(wiki, concepts)
     wiki = link_reading_guide(wiki, concepts)
     return {

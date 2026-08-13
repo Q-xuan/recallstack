@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "../lib/i18n";
 import { recallstackApi, type WikiSearchResult } from "../lib/recallstackApi";
+import { localizeSidebarTitle } from "../lib/wikiTitles";
 
 interface Props {
   open: boolean;
@@ -151,7 +152,9 @@ export default function CommandPalette({
                   >
                     <span className="rs-palette-kind">{t(...(KIND_LABEL[hit.kind] ?? ["页面", "Page"]))}</span>
                     <span className="min-w-0 flex-1">
-                      <span className="rs-palette-title">{highlight(hit.title, terms)}</span>
+                      <span className="rs-palette-title">
+                        {highlight(localizeSidebarTitle({ title: hit.title, page_id: hit.page_id }, t), terms)}
+                      </span>
                       {hit.snippet && (
                         <span className="rs-palette-snippet">{highlight(hit.snippet, terms)}</span>
                       )}
