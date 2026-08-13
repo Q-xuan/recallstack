@@ -1001,12 +1001,16 @@ def _related_source_chip_lines(citations, language: str = "en") -> list[str]:
 _CHIP_HEADING_RE = re.compile(
     r"(?m)^([ \t]*\*\*(?:相关源码|Related source):\*\*[ \t]*)(.*)$"
 )
+# Symbol may be `mod channel` (spaces). Use [ \t] never \s so the match cannot
+# swallow the next list line.
 _CHIP_ITEM_RE = re.compile(
-    r"`([^`]+)`(?:\s*[—–−-]\s*`([A-Za-z_][A-Za-z0-9_]*)`)?"
+    r"`([^`]+)`(?:[ \t]*[—–−-][ \t]*"
+    r"`([A-Za-z_][A-Za-z0-9_]*(?:[ \t]+[A-Za-z_][A-Za-z0-9_]*)*)`)?"
 )
 _EVIDENCE_SPLIT_RE = re.compile(
-    r"(?m)^([ \t]*[-*][ \t]*)`([^`]+)`\s*[—–−-]\s*`([A-Za-z_][A-Za-z0-9_]*)`"
-    r"(\s*[—–−-]\s*.*)?\s*$"
+    r"(?m)^([ \t]*[-*][ \t]*)`([^`]+)`[ \t]*[—–−-][ \t]*"
+    r"`([A-Za-z_][A-Za-z0-9_]*(?:[ \t]+[A-Za-z_][A-Za-z0-9_]*)*)`"
+    r"([ \t]*[—–−-][ \t]*[^\n]*)?[ \t]*$"
 )
 
 

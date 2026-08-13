@@ -123,9 +123,29 @@ def test_zh_prompts_ask_for_handbook_prose_and_term_tips():
     loop = build_module_prompt(
         "Agent Loop", "src", "demo", "zh", depth="deep", topic_id="agent-loop"
     )
-    assert "session → model call → tool → observe → next turn" in loop[-1]["content"]
-    assert "AgentLoop" in loop[-1]["content"]
-    assert "replace_or_insert_system_head" in loop[-1]["content"]
+    loop_user = loop[-1]["content"]
+    assert "收用户输入" in loop_user
+    assert "调模型" in loop_user
+    assert "解析 tool calls" in loop_user
+    assert "执行工具" in loop_user
+    assert "再调模型" in loop_user
+    assert "mermaid is REQUIRED" in loop_user
+    assert "下一轮" in loop_user
+    assert "observe" in loop_user
+    assert "工具调用" in loop_user
+    assert "AgentLoop" in loop_user
+    assert "replace_or_insert_system_head" in loop_user
+    assert "FORBIDDEN as the spine/lede" in loop_user
+    assert "topics/context-assembly" in loop_user
+
+
+def test_outline_prompt_splits_agent_loop_from_context_assembly():
+    prompt = build_outline_prompt("tree", "mods", "ranks", "entries", "zh")
+    user = prompt[-1]["content"]
+    assert "agent-loop key_files MUST be the runtime loop" in user
+    assert "NEVER conversation_util.rs" in user
+    assert "topic id context-assembly" in user
+    assert "replace_or_insert_system_head" in user
 
 
 def test_extract_json_recovers_truncated_topics_payload():

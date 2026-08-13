@@ -43,13 +43,22 @@ _SKIP_DIRS = {
 # First-class systems detected from path *segments* (crate/dir names), not
 # substrings like "auth" inside "author".
 _SYSTEMS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
-    ("agent-runtime", "Agent Runtime", "Agent Runtime", ("agent", "runtime", "session")),
+    # Loop before runtime so xai-grok-agent agent.rs/turn/run is not stolen by
+    # the "agent" token, and before context-assembly so conversation_util cannot
+    # become the Agent Loop evidence pack.
     (
         "agent-loop",
-        "Agent Loop & Context Assembly",
-        "Agent Loop 与上下文装配",
-        ("loop", "context", "assembly", "conversation"),
+        "Agent Loop",
+        "Agent Loop",
+        ("loop", "turn"),
     ),
+    (
+        "context-assembly",
+        "Context assembly",
+        "上下文装配",
+        ("conversation", "chat-state", "prompt-context", "system-head"),
+    ),
+    ("agent-runtime", "Agent Runtime", "Agent Runtime", ("agent", "runtime", "session")),
     (
         "system-prompt",
         "System Prompt Templating",
@@ -247,7 +256,7 @@ def build_deterministic_topics(
         matched = [
             f.path
             for f in project.files
-            if _path_has_system(f.path, names)
+            if _file_matches_system(f.path, topic_id, names)
         ]
         if not matched:
             continue
@@ -263,7 +272,7 @@ def build_deterministic_topics(
                 id=topic_id,
                 title=title_zh if zh else title_en,
                 section="deep-dive",
-                purpose=_purpose_for(title_zh if zh else title_en, zh),
+                purpose=_purpose_for(title_zh if zh else title_en, zh, topic_id=topic_id),
                 key_files=key,
                 depth="deep" if topic_id in {"agent-runtime", "agent-loop", "tool-system"} else "standard",
             )
@@ -445,6 +454,7 @@ def merge_topics(
             key_symbols=item.key_symbols,
             depth=item.depth,
         )
+    _rebind_loop_and_assembly(by_id, known, base)
     getting = [t for t in by_id.values() if t.section == "getting-started"]
     deep = [t for t in by_id.values() if t.section != "getting-started"]
     # Preserve LLM order for deep-dive, then leftover deterministic.
@@ -491,6 +501,146 @@ def _path_has_system(path: str, names: tuple[str, ...]) -> bool:
     return False
 
 
+_ASSEMBLY_NEEDLES = (
+    "conversation_util",
+    "prompt_context",
+    "promptcontext",
+    "chat-state",
+    "chat_state",
+    "system_head",
+    "replace_or_insert",
+)
+_LOOP_FILE_STEMS = {
+    "agent",
+    "loop",
+    "turn",
+    "run",
+    "dispatch",
+    "tool_dispatch",
+    "tool_call",
+    "tools",
+    "tool",
+}
+_AGENT_CRATE_RE = re.compile(
+    r"(?:^|/)(?:(?:xai-)?grok-agent|crates/agent|packages/agent)(?:/|$)",
+    re.I,
+)
+
+
+def _norm_topic_path(path: str) -> str:
+    return (path or "").replace("\\", "/").lower()
+
+
+def is_context_assembly_file(path: str) -> bool:
+    """System-head / PromptContext / chat-state — not the runtime agent loop."""
+    low = _norm_topic_path(path)
+    if any(needle in low for needle in _ASSEMBLY_NEEDLES):
+        return True
+    return _path_has_system(
+        path, ("conversation", "chat-state", "prompt-context", "system-head")
+    )
+
+
+def is_agent_loop_file(path: str) -> bool:
+    """Runtime loop (run / turn / tool dispatch), never conversation_util."""
+    if is_context_assembly_file(path):
+        return False
+    if _path_has_system(path, ("loop", "turn")):
+        return True
+    low = _norm_topic_path(path)
+    if not _AGENT_CRATE_RE.search(low):
+        return False
+    stem = low.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    if stem in _LOOP_FILE_STEMS or "dispatch" in stem or stem.endswith("_loop"):
+        return True
+    return False
+
+
+def _file_matches_system(path: str, topic_id: str, names: tuple[str, ...]) -> bool:
+    if topic_id == "agent-loop":
+        return is_agent_loop_file(path)
+    if topic_id == "context-assembly":
+        return is_context_assembly_file(path)
+    return _path_has_system(path, names)
+
+
+def _topics_look_zh(topics: list[TopicOutline]) -> bool:
+    for item in topics:
+        for ch in item.title or "":
+            if "\u4e00" <= ch <= "\u9fff":
+                return True
+    return False
+
+
+def _system_title(topic_id: str, zh: bool) -> str:
+    for tid, title_en, title_zh, _names in _SYSTEMS:
+        if tid == topic_id:
+            return title_zh if zh else title_en
+    return topic_id
+
+
+def _rebind_loop_and_assembly(
+    by_id: dict[str, TopicOutline],
+    known: set[str],
+    base: list[TopicOutline],
+) -> None:
+    """Keep agent-loop on the runtime crate; move conversation_util off it."""
+    zh = _topics_look_zh(list(by_id.values()) + list(base))
+    known_list = sorted(p.replace("\\", "/") for p in known)
+    loop_pool = [p for p in known_list if is_agent_loop_file(p)]
+    assembly_pool = [p for p in known_list if is_context_assembly_file(p)]
+
+    loop = by_id.get("agent-loop")
+    moved_assembly: list[str] = []
+    if loop:
+        title = loop.title or ""
+        if "上下文装配" in title or "context assembly" in title.lower():
+            loop.title = _system_title("agent-loop", zh)
+            loop.purpose = _purpose_for(loop.title, zh, topic_id="agent-loop")
+        kept = [p for p in loop.key_files if not is_context_assembly_file(p)]
+        moved_assembly = [p for p in loop.key_files if is_context_assembly_file(p)]
+        if not any(is_agent_loop_file(p) for p in kept) and loop_pool:
+            kept = loop_pool[:6]
+        else:
+            for path in loop_pool:
+                if path not in kept:
+                    kept.append(path)
+                if len(kept) >= 8:
+                    break
+        loop.key_files = kept[:8]
+        if not loop.purpose or "上下文装配" in (loop.purpose or ""):
+            loop.purpose = _purpose_for(loop.title, zh, topic_id="agent-loop")
+
+    assembly = by_id.get("context-assembly")
+    assembly_files = list((assembly.key_files if assembly else []) or [])
+    assembly_files = [p for p in assembly_files if not is_agent_loop_file(p)]
+    for path in moved_assembly + assembly_pool:
+        if path not in assembly_files:
+            assembly_files.append(path)
+    assembly_files = assembly_files[:8]
+    if assembly:
+        assembly.key_files = assembly_files
+        if not assembly.key_files:
+            by_id.pop("context-assembly", None)
+        else:
+            if "Agent Loop" in (assembly.title or "") and "装配" not in (assembly.title or ""):
+                assembly.title = _system_title("context-assembly", zh)
+            if not assembly.purpose:
+                assembly.purpose = _purpose_for(
+                    assembly.title, zh, topic_id="context-assembly"
+                )
+    elif assembly_files:
+        title = _system_title("context-assembly", zh)
+        by_id["context-assembly"] = TopicOutline(
+            id="context-assembly",
+            title=title,
+            section="deep-dive",
+            purpose=_purpose_for(title, zh, topic_id="context-assembly"),
+            key_files=assembly_files,
+            depth="standard",
+        )
+
+
 def _pick_keys(
     paths: list[str],
     rank_index: dict[str, int],
@@ -523,7 +673,25 @@ def _human_system_title(leaf: str, zh: bool) -> str:
     return cleaned
 
 
-def _purpose_for(title: str, zh: bool) -> str:
+def _purpose_for(title: str, zh: bool, topic_id: str = "") -> str:
+    if topic_id == "agent-loop":
+        if zh:
+            return (
+                "一次会话怎么从用户输入走到组 prompt、调模型、解析并执行工具、"
+                "把结果写回、再进入下一轮或结束。"
+            )
+        return (
+            "How one session walks user input → prompt → model call → tool → "
+            "write-back → next turn or stop."
+        )
+    if topic_id == "context-assembly":
+        if zh:
+            return (
+                "会话历史里 System 头和 PromptContext 怎么对齐；这不是 Agent Loop 本身。"
+            )
+        return (
+            "How System head / PromptContext is assembled — not the agent loop."
+        )
     if zh:
         return f"「{title}」在一次真实调用里做什么、缺了它哪条能力会断。"
     return f"What `{title}` does on one real call, and what breaks if it disappears."

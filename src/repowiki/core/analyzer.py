@@ -384,7 +384,7 @@ class Analyzer:
             )
             content_parts = [(f.content or f.preview or "") for f in files]
             cache_key = (
-                f"topic:v3:{self.language}:{plan.depth}:{topic.id}:"
+                f"topic:v4:{self.language}:{plan.depth}:{topic.id}:"
                 f"{content_hash(''.join(content_parts))}"
             )
             cached = await self.cache.get(cache_key)

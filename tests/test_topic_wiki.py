@@ -46,6 +46,14 @@ def _grok_project() -> ProjectContext:
         _file("crates/agent/src/runtime.rs", "pub struct AgentRuntime;\n" + filler),
         _file("crates/agent/src/loop.rs", "pub fn agent_loop() {}\n" + filler),
         _file("crates/agent/src/prompt.rs", "pub fn system_prompt() {}\n" + filler),
+        _file(
+            "crates/xai-grok-agent/src/agent.rs",
+            "pub async fn run_turn() {}\n" + filler,
+        ),
+        _file(
+            "crates/xai-chat-state/src/conversation_util.rs",
+            "pub fn replace_or_insert_system_head() {}\n" + filler,
+        ),
         _file("crates/tools/src/lib.rs", "pub mod tools;\n" + filler),
         _file("crates/acp/src/protocol.rs", "pub struct AcpServer;\n" + filler),
         _file("crates/tui/src/app.rs", "pub fn run_tui() {}\n" + filler),
@@ -141,6 +149,52 @@ def test_grok_deterministic_topics_are_zread_systems_not_web_app():
     assert "authentication" not in ids
     assert "request-routing" not in ids
     assert "data-persistence" not in ids
+
+
+def test_agent_loop_file_pack_is_agent_crate_not_conversation_util():
+    from repowiki.core.models import TopicOutline
+    from repowiki.core.topics import build_deterministic_topics, merge_topics
+
+    project = _grok_project()
+    graph = DependencyGraph.build_from_project(project)
+    topics = build_deterministic_topics(project, graph, language="zh")
+    by_id = {t.id: t for t in topics}
+    assert "agent-loop" in by_id
+    loop = by_id["agent-loop"]
+    assert "与上下文装配" not in loop.title
+    loop_joined = " ".join(loop.key_files)
+    assert "conversation_util" not in loop_joined
+    assert (
+        "xai-grok-agent" in loop_joined
+        or "loop.rs" in loop_joined
+        or "/agent.rs" in loop_joined
+    )
+    assert "context-assembly" in by_id
+    assembly_joined = " ".join(by_id["context-assembly"].key_files)
+    assert "conversation_util" in assembly_joined
+    assert not any("conversation_util" in p for p in loop.key_files)
+
+    llm = [
+        TopicOutline(
+            id="agent-loop",
+            title="Agent Loop 与上下文装配",
+            section="deep-dive",
+            key_files=["crates/xai-chat-state/src/conversation_util.rs"],
+        )
+    ]
+    merged = merge_topics(topics, llm, {f.path for f in project.files})
+    merged_by_id = {t.id: t for t in merged}
+    rebound = merged_by_id["agent-loop"]
+    assert "与上下文装配" not in rebound.title
+    assert not any("conversation_util" in p for p in rebound.key_files)
+    assert any(
+        "xai-grok-agent" in p or p.endswith("loop.rs") or p.endswith("/agent.rs")
+        for p in rebound.key_files
+    )
+    assert "context-assembly" in merged_by_id
+    assert any(
+        "conversation_util" in p for p in merged_by_id["context-assembly"].key_files
+    )
 
 
 def test_merge_topics_drops_generic_web_slugs_on_grok_tree():
@@ -440,3 +494,40 @@ def test_wiki_out_drops_thin_generic_web_topics_and_dead_links(monkeypatch):
     assert " — `Session`" not in loop.content
     assert "`Cli`" not in loop.content
     assert "`Terminal`" not in loop.content
+
+
+def test_wiki_out_upgrades_three_part_chip_with_spaced_symbol(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    evidence = (
+        "# Agent Loop\n\n"
+        "## 源码证据\n\n"
+        "- `crates/xai-chat/src/lib.rs:10` — `mod channel` — 通道\n"
+        "- `crates/agent/src/loop.rs:40` — `Session` — 持有本轮\n"
+    )
+
+    class _Version:
+        id = "ver-1"
+        wiki_pages = {
+            "project_name": "grok-study",
+            "pages": [
+                {"id": "index", "title": "概述", "content": "# grok-study\n"},
+                {"id": "topics/agent-loop", "title": "Agent Loop", "content": evidence},
+            ],
+            "sidebar": [
+                {"title": "入门指南", "page_id": "", "children": [
+                    {"title": "概述", "page_id": "index", "children": []}
+                ]},
+                {"title": "深入探索", "page_id": "", "children": [
+                    {"title": "Agent Loop", "page_id": "topics/agent-loop", "children": []},
+                ]},
+            ],
+        }
+
+    out = wiki_out("repo-1", _Version())
+    loop = next(p for p in out.pages if p.id == "topics/agent-loop")
+    assert "`crates/xai-chat/src/lib.rs:10 mod channel`" in loop.content
+    assert " — 通道" in loop.content
+    assert "`crates/agent/src/loop.rs:40 Session`" in loop.content
+    assert " — `mod channel`" not in loop.content
+    items = [ln for ln in loop.content.splitlines() if ln.startswith("- ")]
+    assert len(items) == 2

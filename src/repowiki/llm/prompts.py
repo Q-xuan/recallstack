@@ -129,6 +129,11 @@ def build_outline_prompt(
                 "is named that way (e.g. `xai-grok-auth`). A helper file named auth.rs "
                 "inside another crate does not count. "
                 "topics[].key_files MUST be real paths from the tree (2-6 per topic). "
+                "agent-loop key_files MUST be the runtime loop "
+                "(xai-grok-agent `agent.rs` / run / turn / tool dispatch, or crates/agent loop.rs) "
+                "— NEVER conversation_util.rs, PromptContext, or replace_or_insert_system_head. "
+                "Context assembly (System head, PromptContext, xai-chat-state) is a SEPARATE "
+                "topic id context-assembly, not a subtitle of agent-loop. "
                 "depth is one of deep, standard, brief. Mark at most a third as deep. "
                 "Do NOT emit modules[], reading_order, or emphasized_pages — those are planned locally. "
                 "Do NOT dump a crate inventory. Keep purpose to one sentence. "
@@ -229,9 +234,9 @@ def build_overview_prompt(
                 "subsystems: 3-8; each has role + 2-4 key_types. "
                 "Omit a key_type if `path` is missing; never invent Type names that are not in the source. "
                 "see_also: architecture plus planned topic ids only "
-                "(e.g. topics/agent-loop). Never invent topics/context-assembly, "
-                "topics/pty-control, or topics/code-graph — use the planned ids "
-                "(topics/agent-loop, topics/tui-pager, topics/codebase-graph). "
+                "(e.g. topics/agent-loop, topics/context-assembly when that topic is planned). "
+                "Never invent topics/pty-control or topics/code-graph — use the planned ids "
+                "(topics/agent-loop, topics/context-assembly, topics/tui-pager, topics/codebase-graph). "
                 "If a crate is code-graph / codebase-graph, name that subsystem "
                 "代码图谱 / codebase graph, never 代码生成. "
                 "Leave key_features empty. Do not dump a file inventory, method list, or JavaDoc. "
@@ -327,11 +332,26 @@ def build_module_prompt(
     tid = f"{topic_id} {module_name}".lower()
     if "agent-loop" in tid or "agent loop" in tid:
         extra_rules += (
-            "THIS PAGE IS THE AGENT LOOP, not prompt templating or system-head/trace. "
-            "Walk the runtime loop in order: session → model call → tool → observe → next turn. "
-            "Do NOT narrate replace_or_insert_system_head / system prompt assembly as the loop. "
+            "THIS PAGE IS THE RUNTIME AGENT LOOP, not context assembly. "
+            "Title must stay Agent Loop — never 'Agent Loop 与上下文装配'. "
+            "一次调用怎么走 MUST be this spine, in this order: "
+            "收用户输入 → 组会话/prompt → 调模型 → 解析 tool calls → 执行工具 → "
+            "把结果写回 → 再调模型 / 结束 "
+            "(English: user input → assemble session/prompt → model call → parse tool calls → "
+            "run tools → write results back → call model again / stop). "
+            "call_chains and implementation_details must walk that loop (下一轮 / observe / 工具调用). "
+            "mermaid is REQUIRED: a flowchart of THAT loop, not System[0] alignment. "
+            "FORBIDDEN as the spine/lede of this page: replace_or_insert_system_head, "
+            "PromptContext-as-the-loop, traceparent injection, ChatStateActor System head. "
+            "Those belong on topics/context-assembly, at most a short aside here. "
             "Do NOT invent types named AgentLoop or HooksSystem. "
             "Mermaid node labels must be complete words (no truncated 'Cont' / 'Sess'). "
+        )
+    if "context-assembly" in tid or "上下文装配" in tid:
+        extra_rules += (
+            "THIS PAGE IS CONTEXT ASSEMBLY (System head / PromptContext / "
+            "replace_or_insert_system_head), not the agent runtime loop. "
+            "Do not make session → model → tool → observe the spine here. "
         )
 
     return [

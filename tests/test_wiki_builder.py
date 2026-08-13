@@ -758,6 +758,22 @@ def test_upgrade_source_chip_markdown_rewrites_grok_emdash_line():
     assert " — holds the turn" in fixed
 
 
+def test_upgrade_source_chip_three_part_spaced_symbol_keeps_next_list_line():
+    evidence = (
+        "## 源码证据\n\n"
+        "- `crates/xai-chat/src/lib.rs:10` — `mod channel` — 通道\n"
+        "- `crates/agent/src/loop.rs:40` — `Session` — 持有本轮\n"
+    )
+    fixed = upgrade_source_chip_markdown(evidence)
+    assert "`crates/xai-chat/src/lib.rs:10 mod channel`" in fixed
+    assert " — 通道" in fixed
+    assert "`crates/agent/src/loop.rs:40 Session`" in fixed
+    assert " — 持有本轮" in fixed
+    assert " — `mod channel`" not in fixed
+    items = [ln for ln in fixed.splitlines() if ln.startswith("- ")]
+    assert len(items) == 2
+
+
 def test_builder_strips_unknown_topic_links_and_pathless_key_types():
     project = _project(
         {
