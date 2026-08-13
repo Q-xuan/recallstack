@@ -42,7 +42,7 @@ export default function ReviewPage() {
       {loading && <p className="text-[var(--rs-muted)]">{t("加载中…", "Loading…")}</p>}
       {error && <p className="text-[var(--rs-danger)]">{error}</p>}
       {!loading && !error && items.length === 0 && (
-        <div className="bg-white border border-[var(--rs-line)] rounded-2xl p-6 text-[var(--rs-muted)]">
+        <div className="rs-card rounded-2xl p-6 text-[var(--rs-muted)]">
           {t(
             "队列是空的——先分析一个仓库,系统会把重要概念排进来。",
             "The queue is empty — analyze a repository first and important concepts will be scheduled here.",
@@ -74,7 +74,7 @@ export default function ReviewPage() {
         {items.map((item) => (
           <li
             key={item.concept_id}
-            className="bg-white border border-[var(--rs-line)] rounded-2xl p-4 flex items-center justify-between gap-4"
+            className="rs-card rounded-2xl p-4 flex items-center justify-between gap-4"
           >
             <div>
               <div className="font-medium text-[var(--rs-ink)] flex items-center gap-2">

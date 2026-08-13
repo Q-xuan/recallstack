@@ -136,7 +136,7 @@ export default function ConceptPage() {
         <span className="text-xs text-[var(--rs-muted)]">词条 · {concept.slug}</span>
       </div>
 
-      <article className="bg-white border border-[var(--rs-line)] rounded-2xl overflow-hidden">
+      <article className="rs-card rounded-2xl overflow-hidden">
         {/* 1. 是什么 */}
         <header className="px-6 md:px-8 py-6 border-b border-[var(--rs-line)] bg-[var(--rs-surface-2)]">
           <div className="text-xs uppercase tracking-wide text-[var(--rs-muted)] mb-2">1 · 是什么</div>

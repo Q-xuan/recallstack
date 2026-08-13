@@ -223,7 +223,7 @@ export default function LearningSessionPage() {
         </div>
       )}
 
-      <div className="bg-white border border-[var(--rs-line)] rounded-xl p-5 mb-4">
+      <div className="rs-card rounded-xl p-5 mb-4">
         <h1 className="text-xl font-semibold text-[var(--rs-ink)] mb-2">问题</h1>
         <p className="text-[var(--rs-ink)] whitespace-pre-wrap">{item.prompt}</p>
       </div>
@@ -263,7 +263,7 @@ export default function LearningSessionPage() {
                     {ref.symbol ? ` · ${ref.symbol}` : ""}
                   </div>
                   {ref.snippet ? (
-                    <pre className="text-xs bg-white border border-[var(--rs-line)] rounded-lg p-3 overflow-x-auto text-[var(--rs-ink-2)] whitespace-pre">
+                    <pre className="text-xs bg-[var(--rs-surface-2)] border border-[var(--rs-line)] rounded-lg p-3 overflow-x-auto text-[var(--rs-ink-2)] whitespace-pre">
                       {ref.snippet}
                     </pre>
                   ) : (
@@ -342,7 +342,7 @@ export default function LearningSessionPage() {
         </>
       ) : (
         <div className="space-y-4">
-          <div className="bg-white border border-[var(--rs-line)] rounded-xl p-5">
+          <div className="rs-card rounded-xl p-5">
             <div className="flex items-center justify-between gap-3 mb-2">
               <h2 className="font-semibold text-[var(--rs-ink)]">评价</h2>
               {result.evaluation_source && (
@@ -377,7 +377,7 @@ export default function LearningSessionPage() {
             )}
           </div>
 
-          <div className="bg-white border border-[var(--rs-line)] rounded-xl p-5">
+          <div className="rs-card rounded-xl p-5">
             <h2 className="font-semibold text-[var(--rs-ink)] mb-2">源码证据</h2>
             <ul className="text-sm text-[var(--rs-ink-2)] space-y-1">
               {(result.evaluation.source_evidence || []).map((ref, i) => (
