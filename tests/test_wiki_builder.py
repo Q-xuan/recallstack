@@ -20,7 +20,11 @@ from repowiki.core.models import (
     WikiData,
 )
 from repowiki.core.modules import ROOT_NAME, group_into_modules
-from repowiki.core.wiki_builder import WikiBuilder, upgrade_legacy_module_markdown
+from repowiki.core.wiki_builder import (
+    WikiBuilder,
+    upgrade_legacy_module_markdown,
+    upgrade_source_chip_markdown,
+)
 
 _FILLER = "x = 1\n" * 200
 
@@ -702,4 +706,42 @@ def test_overview_omits_unused_languages_and_marketing_when_structured():
     assert "JavaScript" not in overview
     assert "未指定" not in overview
     assert "## 技术栈" not in overview
+
+
+def test_related_source_chips_are_single_pills_not_emdash_pairs():
+    project = _project({"app/main.py": "def main():\n    return 1\n"})
+    graph = DependencyGraph.build_from_project(project)
+    data = WikiData(
+        overview=ProjectOverview(
+            name="fixture",
+            description="boot",
+            citations=[
+                Citation(path="app/main.py", start_line=1, symbol="Agent"),
+                Citation(path="app/main.py", start_line=1, symbol="AppServer"),
+            ],
+        )
+    )
+    overview = WikiBuilder().build(project, data, graph, language="zh").get_page("index").content
+    chip_line = next(ln for ln in overview.splitlines() if ln.startswith("**相关源码:**"))
+    assert " — `" not in chip_line
+    assert " · " not in chip_line
+    assert "`app/main.py:1 Agent`" in chip_line
+    assert "`app/main.py:1 AppServer`" in chip_line
+
+
+def test_upgrade_source_chip_markdown_rewrites_grok_emdash_line():
+    old = (
+        "**相关源码:** `bin/grok.rs:1` — `Agent` · "
+        "`crates/agent/src/app.rs:40` — `AppServer` · `crates/acp/src/lib.rs:12`"
+    )
+    upgraded = upgrade_source_chip_markdown(f"# grok-study\n\n{old}\n\n## 它是什么\n")
+    line = next(ln for ln in upgraded.splitlines() if ln.startswith("**相关源码:**"))
+    assert line.startswith("**相关源码:**")
+    assert " — `" not in line
+    assert " · " not in line
+    assert "`bin/grok.rs:1 Agent`" in line
+    assert "`crates/agent/src/app.rs:40 AppServer`" in line
+    assert "`crates/acp/src/lib.rs:12`" in line
+    # Already-upgraded pills stay stable.
+    assert upgrade_source_chip_markdown(upgraded) == upgraded
 

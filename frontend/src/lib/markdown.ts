@@ -27,9 +27,16 @@ export interface RenderedMarkdown {
   toc: TocEntry[];
 }
 
-/** Matches `src/foo/bar.py` or `README.md`, optionally with `:12` or `:12-40`. */
+/** Matches `src/foo/bar.py` or `README.md`, optionally `:12` / `:12-40` and a trailing TypeName. */
 export const SOURCE_REF_RE =
-  /^(?:[A-Za-z0-9_.@-]+\/)*[A-Za-z0-9_.@-]+\.[A-Za-z0-9]+(?::\d+(?:-\d+)?)?$/;
+  /^((?:[A-Za-z0-9_.@-]+\/)*[A-Za-z0-9_.@-]+\.[A-Za-z0-9]+(?::\d+(?:-\d+)?)?)(?:\s+([A-Za-z_][A-Za-z0-9_]*))?$/;
+
+/** Path:line for SourcePeek `parseRef` — strips a trailing type name. */
+export function sourceRefValue(raw: string): string {
+  const trimmed = (raw || "").trim();
+  const match = SOURCE_REF_RE.exec(trimmed);
+  return match?.[1] || trimmed;
+}
 
 /** README chrome that should never render as raw tags in a wiki article. */
 const HTML_CHROME_RE = /<(div|picture|source|img)\b|srcset\s*=/i;
@@ -77,11 +84,16 @@ function renderInline(src: string): string {
   // \u0000 cannot appear in the source and survives HTML escaping untouched.
   let text = src.replace(/(`+)([\s\S]*?)\1/g, (_, _ticks, body: string) => {
     const content = body.trim();
-    const isRef = SOURCE_REF_RE.test(content);
+    const refMatch = SOURCE_REF_RE.exec(content);
+    const isRef = Boolean(refMatch);
+    const dataRef = isRef ? sourceRefValue(content) : "";
     const attrs = isRef
-      ? ` class="rs-ref" data-ref="${escapeHtml(content)}" role="button" tabindex="0"`
+      ? ` class="rs-ref" data-ref="${escapeHtml(dataRef)}" role="button" tabindex="0"`
       : "";
-    spans.push(`<code${attrs}>${escapeHtml(content)}</code>`);
+    const inner = isRef && refMatch?.[2]
+      ? `${escapeHtml(refMatch[1])}<span class="rs-ref-sym">${escapeHtml(refMatch[2])}</span>`
+      : escapeHtml(content);
+    spans.push(`<code${attrs}>${inner}</code>`);
     return `\u0000${spans.length - 1}\u0000`;
   });
 
@@ -345,6 +357,8 @@ function renderSegment(md: string, toc: TocEntry[], usedIds: Set<string>): strin
   return out.join("\n");
 }
 
+const RELATED_SOURCE_LINE_RE = /^\s*\*\*(?:相关源码|Related source):\*\*/;
+
 export function renderMarkdown(md: string): RenderedMarkdown {
   const blocks: MarkdownBlock[] = [];
   const toc: TocEntry[] = [];
@@ -381,6 +395,13 @@ export function renderMarkdown(md: string): RenderedMarkdown {
             : { kind: "code", lang: lang || "text", code: body },
         );
       }
+      continue;
+    }
+    if (RELATED_SOURCE_LINE_RE.test(lines[i])) {
+      flush();
+      buffer.push(lines[i]);
+      i += 1;
+      flush();
       continue;
     }
     buffer.push(lines[i]);

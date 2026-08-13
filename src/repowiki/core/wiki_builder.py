@@ -806,10 +806,44 @@ def _related_source_chip_lines(citations, language: str = "en") -> list[str]:
     chips: list[str] = []
     for cite in items[:8]:
         loc = format_citation(cite)
-        extra = f" — `{cite.symbol}`" if cite.symbol else ""
-        chips.append(f"`{loc}`{extra}")
+        symbol = (getattr(cite, "symbol", "") or "").strip()
+        pill = f"{loc} {symbol}".strip() if symbol else loc
+        chips.append(f"`{pill}`")
     label = structural_title("related-source", language)
-    return [f"**{label}:** " + " · ".join(chips), ""]
+    return [f"**{label}:** " + " ".join(chips), ""]
+
+
+_CHIP_HEADING_RE = re.compile(
+    r"(?m)^([ \t]*\*\*(?:相关源码|Related source):\*\*[ \t]*)(.*)$"
+)
+_CHIP_ITEM_RE = re.compile(
+    r"`([^`]+)`(?:\s*[—–−-]\s*`([A-Za-z_][A-Za-z0-9_]*)`)?"
+)
+
+
+def upgrade_source_chip_markdown(content: str) -> str:
+    """Rewrite persisted `` `path` — `Sym` · `` chips into `` `path Sym` `` pills.
+
+    Colon stays inside the bold label (``**相关源码:**``). Applied on wiki GET
+    so a refresh fixes grok-study without a re-scan.
+    """
+    if not content or "**" not in content:
+        return content
+
+    def repl(match: re.Match[str]) -> str:
+        prefix, rest = match.group(1), match.group(2)
+        pills: list[str] = []
+        for item in _CHIP_ITEM_RE.finditer(rest):
+            path = (item.group(1) or "").strip()
+            symbol = (item.group(2) or "").strip()
+            if not path:
+                continue
+            pills.append(f"`{path} {symbol}`" if symbol else f"`{path}`")
+        if not pills:
+            return match.group(0)
+        return prefix + " ".join(pills)
+
+    return _CHIP_HEADING_RE.sub(repl, content)
 
 
 def _overview_lede(name: str, one_liner: str, language: str) -> str:

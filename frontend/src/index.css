@@ -1011,6 +1011,54 @@ html[lang="zh-CN"] .rs-wiki-nav-group {
   word-break: break-word;
 }
 
+/* Clickable `path:line` citations — the wiki's claim-to-evidence link. */
+.rs-ref {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  word-break: keep-all;
+  border-color: var(--rs-accent) !important;
+  background: var(--rs-accent-soft) !important;
+  color: var(--rs-accent);
+  transition: background-color 120ms ease;
+}
+
+.rs-ref-sym {
+  margin-left: 0.4em;
+  padding-left: 0.4em;
+  border-left: 1px solid color-mix(in srgb, currentColor 32%, transparent);
+  color: var(--rs-muted, color-mix(in srgb, currentColor 62%, transparent));
+  font-weight: 500;
+}
+
+.rs-prose p:has(.rs-ref) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+}
+
+.rs-ref:hover {
+  background: var(--rs-accent) !important;
+  color: #fff;
+}
+
+.rs-ref:hover .rs-ref-sym {
+  color: inherit;
+  border-left-color: color-mix(in srgb, currentColor 50%, transparent);
+}
+
+.rs-ref:focus-visible {
+  outline: 2px solid var(--rs-accent);
+  outline-offset: 2px;
+}
+
+[data-theme="dark"] .rs-ref:hover {
+  color: #0b0b0d;
+}
+
 .rs-prose a {
   color: var(--rs-accent);
   text-decoration: none;
@@ -1037,29 +1085,6 @@ html[lang="zh-CN"] .rs-wiki-nav-group {
   color: inherit;
   border-radius: 3px;
   padding: 0 2px;
-}
-
-/* Clickable `path:line` citations — the wiki's claim-to-evidence link. */
-.rs-ref {
-  cursor: pointer;
-  border-color: var(--rs-accent) !important;
-  background: var(--rs-accent-soft) !important;
-  color: var(--rs-accent);
-  transition: background-color 120ms ease;
-}
-
-.rs-ref:hover {
-  background: var(--rs-accent) !important;
-  color: #fff;
-}
-
-.rs-ref:focus-visible {
-  outline: 2px solid var(--rs-accent);
-  outline-offset: 2px;
-}
-
-[data-theme="dark"] .rs-ref:hover {
-  color: #0b0b0d;
 }
 
 /* Tables scroll rather than blow out the column width. */

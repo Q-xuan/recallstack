@@ -277,6 +277,16 @@ def test_source_ref_re_matches_readme_span():
     assert regex.fullmatch("README.md")
     assert regex.fullmatch("app/main.py:12-40")
     assert regex.fullmatch("crates/foo/src/lib.rs:1")
+    assert regex.fullmatch("bin/grok.rs:1 Agent")
+    assert regex.fullmatch("crates/agent/src/app.rs:40 AppServer")
     assert not regex.fullmatch("README")
     assert not regex.fullmatch("just a sentence")
+    assert "export function sourceRefValue" in src
+    fn = re.search(
+        r"export function sourceRefValue\(raw: string\): string \{[\s\S]*?\n\}",
+        src,
+    )
+    assert fn, "sourceRefValue must be exported"
+    assert "SOURCE_REF_RE.exec" in fn.group(0)
+    assert "match?.[1]" in fn.group(0)
 

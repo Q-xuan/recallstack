@@ -39,6 +39,7 @@ from repowiki.core.wiki_builder import (
     rebuild_topic_sidebar,
     sidebar_has_topic_groups,
     upgrade_legacy_module_markdown,
+    upgrade_source_chip_markdown,
 )
 
 
@@ -146,6 +147,7 @@ def wiki_out(
                 ),
                 None,
             )
+        content = upgrade_source_chip_markdown(content)
         pages.append(
             WikiPageOut(
                 id=page_id,

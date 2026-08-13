@@ -248,3 +248,30 @@ def test_wiki_out_rebuilds_flat_overview_architecture_modules(monkeypatch):
     for item in out.sidebar:
         if item.title in {"入门指南", "深入探索"}:
             assert all(child.title != ".cargo" for child in item.children)
+
+
+def test_wiki_out_upgrades_emdash_source_chips(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    old = (
+        "# grok-study\n\n"
+        "**相关源码:** `bin/grok.rs:1` — `Agent` · `crates/acp/src/lib.rs:12` — `AcpServer`\n\n"
+        "## 它是什么\n"
+    )
+
+    class _Version:
+        id = "ver-1"
+        wiki_pages = {
+            "project_name": "grok-study",
+            "pages": [{"id": "index", "title": "概述", "content": old}],
+            "sidebar": [
+                {"title": "入门指南", "page_id": "", "children": [
+                    {"title": "概述", "page_id": "index", "children": []}
+                ]},
+            ],
+        }
+
+    page = wiki_out("repo-1", _Version()).pages[0]
+    assert "`bin/grok.rs:1 Agent`" in page.content
+    assert "`crates/acp/src/lib.rs:12 AcpServer`" in page.content
+    assert " — `" not in page.content
+    assert " · " not in page.content

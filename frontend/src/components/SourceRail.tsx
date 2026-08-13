@@ -1,5 +1,5 @@
 import { parseRef, type ParsedRef } from "./SourcePeek";
-import { SOURCE_REF_RE } from "../lib/markdown";
+import { SOURCE_REF_RE, sourceRefValue } from "../lib/markdown";
 import { useT } from "../lib/i18n";
 
 interface Props {
@@ -20,8 +20,9 @@ export function collectSourceLocs(content: string): string[] {
   const found: string[] = [];
   const seen = new Set<string>();
   const push = (raw: string) => {
-    const loc = raw.trim();
-    if (!loc || seen.has(loc) || !SOURCE_REF_RE.test(loc.split(/\s/)[0] || "")) {
+    const trimmed = raw.trim();
+    const loc = sourceRefValue(trimmed);
+    if (!loc || seen.has(loc) || !SOURCE_REF_RE.test(trimmed)) {
       return;
     }
     const parsed = parseRef(loc);
