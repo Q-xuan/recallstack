@@ -34,10 +34,15 @@ from recallstack.learning.learning_contract import (
     upgrade_legacy_concept_markdown,
     wiki_prose_excerpt,
 )
-from repowiki.core.topics import is_generic_web_slug, omit_generic_web_wiki_page
+from repowiki.core.topics import (
+    is_generic_web_slug,
+    omit_generic_web_wiki_page,
+    omit_unusable_topic_stub,
+)
 from repowiki.core.wiki_builder import (
-    cap_directory_sidebar,
     prune_generic_web_sidebar,
+    prune_sidebar_missing_pages,
+    rank_and_cap_directory_sidebar,
     rebuild_topic_sidebar,
     sidebar_has_topic_groups,
     upgrade_legacy_module_markdown,
@@ -121,6 +126,11 @@ def wiki_out(
         if not omit_generic_web_wiki_page(
             str(item.get("id") or ""), str(item.get("content") or "")
         )
+        and not omit_unusable_topic_stub(
+            str(item.get("id") or ""),
+            str(item.get("content") or ""),
+            title=str(item.get("title") or ""),
+        )
     ]
     page_ids = {item.get("id") for item in kept_pages}
     known_ids = {str(i) for i in page_ids if i}
@@ -186,24 +196,31 @@ def wiki_out(
 
     raw_sidebar = payload.get("sidebar") or []
     content_by_id = {item.get("id") or "": item.get("content") or "" for item in kept_pages}
+    page_id_set = {str(i) for i in page_ids if i}
     # Rebuild unless this payload already has 入门指南 / 深入探索. Do not wait
     # for sidebar_looks_like_module_tree: the old Overview/Architecture/Modules
     # tree is easy to miss, and the UI relabels 模块 → 按目录 so it looks done.
     if not sidebar_has_topic_groups(raw_sidebar):
-        mapped_sidebar = map_sidebar(
-            cap_directory_sidebar(
+        ranked = rank_and_cap_directory_sidebar(
+            prune_sidebar_missing_pages(
                 prune_generic_web_sidebar(
                     rebuild_topic_sidebar(kept_pages, language=content_lang()),
                     content_by_id,
-                )
-            )
+                ),
+                page_id_set,
+            ),
+            pages=kept_pages,
         )
+        mapped_sidebar = map_sidebar(ranked)
     else:
-        mapped_sidebar = map_sidebar(
-            cap_directory_sidebar(
-                prune_generic_web_sidebar(raw_sidebar, content_by_id)
-            )
+        ranked = rank_and_cap_directory_sidebar(
+            prune_sidebar_missing_pages(
+                prune_generic_web_sidebar(raw_sidebar, content_by_id),
+                page_id_set,
+            ),
+            pages=kept_pages,
         )
+        mapped_sidebar = map_sidebar(ranked)
 
     return WikiOut(
         repository_id=repository_id,

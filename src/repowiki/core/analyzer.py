@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from collections.abc import Callable
 
@@ -34,7 +35,7 @@ from repowiki.core.models import (
     WikiData,
     WikiOutline,
 )
-from repowiki.core.module_handbook import fallback_module_doc
+from repowiki.core.module_handbook import fallback_module_doc, is_unusable_topic_stub_doc
 from repowiki.core.modules import group_into_modules
 from repowiki.core.outline import build_deterministic_outline, merge_outline
 from repowiki.core.topics import (
@@ -64,6 +65,7 @@ _REPAIR_MIN_INVALID = 3
 _MAX_REPAIRS = 3
 # grok-study-scale outlines (~16 topics) truncated at 2048 and failed to parse.
 OUTLINE_MAX_TOKENS = 8192
+_TOPIC_WRITE_ATTEMPTS = 3
 
 
 class Analyzer:
@@ -387,13 +389,15 @@ class Analyzer:
             )
             content_parts = [(f.content or f.preview or "") for f in files]
             cache_key = (
-                f"topic:v6:{self.language}:{plan.depth}:{topic.id}:"
+                f"topic:v7:{self.language}:{plan.depth}:{topic.id}:"
                 f"{content_hash(''.join(content_parts))}"
             )
             cached = await self.cache.get(cache_key)
             if cached:
                 try:
-                    return _ensure_topic_flow(TopicDoc(**cached), topic, fallback)
+                    cached_doc = _ensure_topic_flow(TopicDoc(**cached), topic, fallback)
+                    if not is_unusable_topic_stub_doc(cached_doc, topic):
+                        return cached_doc
                 except Exception:
                     pass
             if not self._llm_enabled():
@@ -409,20 +413,42 @@ class Analyzer:
                 key_symbols=topic.key_symbols,
                 topic_id=topic.id,
             )
-            raw = await self._complete_json(messages, max_tokens=4096)
-            data = extract_json(raw)
-            if not data or not isinstance(data, dict):
-                logger.warning(
-                    "Failed to parse topic '%s' JSON; raw[:400]=%r",
-                    topic.id,
-                    (raw or "")[:400],
-                )
-                return _ensure_topic_flow(fallback, topic, fallback)
-            data.setdefault("name", topic.id)
-            doc = _ensure_topic_flow(_coerce_topic(data, topic), topic, fallback)
-            if doc.description or doc.implementation_details or doc.files or doc.call_chains:
-                await self.cache.put(cache_key, doc.model_dump())
-            return doc
+            for attempt in range(_TOPIC_WRITE_ATTEMPTS):
+                raw = await self._complete_json(messages, max_tokens=4096)
+                if _llm_output_failed(raw):
+                    logger.warning(
+                        "Topic '%s' LLM failed attempt %s: %r",
+                        topic.id,
+                        attempt + 1,
+                        (raw or "")[:200],
+                    )
+                    if attempt + 1 < _TOPIC_WRITE_ATTEMPTS:
+                        await _topic_retry_sleep(attempt)
+                    continue
+                data = extract_json(raw)
+                if not data or not isinstance(data, dict):
+                    logger.warning(
+                        "Failed to parse topic '%s' JSON; raw[:400]=%r",
+                        topic.id,
+                        (raw or "")[:400],
+                    )
+                    if attempt + 1 < _TOPIC_WRITE_ATTEMPTS:
+                        await _topic_retry_sleep(attempt)
+                    continue
+                data.setdefault("name", topic.id)
+                doc = _ensure_topic_flow(_coerce_topic(data, topic), topic, fallback)
+                if is_unusable_topic_stub_doc(doc, topic):
+                    if attempt + 1 < _TOPIC_WRITE_ATTEMPTS:
+                        await _topic_retry_sleep(attempt)
+                    continue
+                if doc.description or doc.implementation_details or doc.files or doc.call_chains:
+                    await self.cache.put(cache_key, doc.model_dump())
+                return doc
+            logger.warning(
+                "Omitting topic '%s' after failed writes; not persisting a glossary stub",
+                topic.id,
+            )
+            return None
 
     async def _analyze_one_module(
         self,
@@ -945,6 +971,17 @@ class Analyzer:
             graph=graph,
             notes=(plan.notes if plan else "") or "",
         )
+
+
+def _llm_output_failed(raw: str | None) -> bool:
+    text = (raw or "").strip()
+    return not text or text.startswith("[LLM Error:")
+
+
+async def _topic_retry_sleep(attempt: int) -> None:
+    delay = float(os.getenv("REPOWIKI_TOPIC_RETRY_SLEEP", "0.05")) * (2 ** attempt)
+    if delay > 0:
+        await asyncio.sleep(min(8.0, delay))
 
 
 def _ensure_topic_flow(doc: TopicDoc, topic, fallback: TopicDoc) -> TopicDoc:

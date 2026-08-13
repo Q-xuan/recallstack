@@ -662,3 +662,162 @@ def test_wiki_out_upgrades_key_types_and_agentloop(monkeypatch):
     assert "[架构概览](architecture)" in gs.content
     directory = next(item for item in out.sidebar if item.title == "按目录")
     assert len(directory.children) <= 8
+
+
+def _directory_leaf_titles(item) -> list[str]:
+    children = getattr(item, "children", None) or []
+    if not children:
+        return [getattr(item, "title", "") or ""]
+    out: list[str] = []
+    for child in children:
+        out.extend(_directory_leaf_titles(child))
+    return out
+
+
+def test_wiki_out_directory_nav_ranks_product_crates_not_cargo():
+    pages = [
+        {
+            "id": "index",
+            "title": "概述",
+            "content": (
+                "# grok-study\n\n"
+                "核心在 `crates/xai-grok-pager` 与 `crates/xai-grok-agent`。\n"
+            ),
+        },
+        {"id": "architecture", "title": "架构概览", "content": "# 架构\n"},
+        {"id": "modules/.cargo", "title": ".cargo", "content": "# .cargo\n"},
+        {"id": "modules/bin", "title": "bin", "content": "# bin\n"},
+        {
+            "id": "modules/crates/xai-grok-agent",
+            "title": "xai-grok-agent",
+            "content": "# agent\n",
+        },
+        {
+            "id": "modules/crates/xai-grok-pager",
+            "title": "xai-grok-pager",
+            "content": "# pager\n",
+        },
+    ]
+    crate_children = [
+        {"title": f"aa-codegen-{i}", "page_id": f"modules/crates/aa-codegen-{i}", "children": []}
+        for i in range(10)
+    ] + [
+        {
+            "title": "xai-grok-agent",
+            "page_id": "modules/crates/xai-grok-agent",
+            "children": [],
+        },
+        {
+            "title": "xai-grok-pager",
+            "page_id": "modules/crates/xai-grok-pager",
+            "children": [],
+        },
+    ]
+    for i in range(10):
+        pages.append(
+            {
+                "id": f"modules/crates/aa-codegen-{i}",
+                "title": f"aa-codegen-{i}",
+                "content": "# codegen\n",
+            }
+        )
+
+    class _Version:
+        id = "ver-1"
+        wiki_pages = {
+            "project_name": "grok-study",
+            "pages": pages,
+            "sidebar": [
+                {
+                    "title": "入门指南",
+                    "page_id": "",
+                    "children": [{"title": "概述", "page_id": "index", "children": []}],
+                },
+                {
+                    "title": "按目录",
+                    "page_id": "",
+                    "children": [
+                        {"title": ".cargo", "page_id": "modules/.cargo", "children": []},
+                        {"title": "bin", "page_id": "modules/bin", "children": []},
+                        {
+                            "title": "crates",
+                            "page_id": "",
+                            "children": crate_children,
+                        },
+                    ],
+                },
+            ],
+        }
+
+    out = wiki_out("repo-1", _Version())
+    directory = next(item for item in out.sidebar if item.title == "按目录")
+    leaves = []
+    for child in directory.children:
+        leaves.extend(_directory_leaf_titles(child))
+    assert ".cargo" not in leaves
+    assert "bin" not in leaves
+    assert "xai-grok-pager" in leaves
+    assert "xai-grok-agent" in leaves
+    assert len(leaves) <= 8
+
+
+def test_wiki_out_drops_pty_glossary_stub_for_failed_topic():
+    stub = (
+        "# Markdown 渲染\n\n"
+        "> 下面只跟这一条快乐路径，不把 crate 当目录念，也不给 struct 列方法。\n\n"
+        "快乐路径不从目录名开始，而从 `crates/markdown/src/lib.rs:1` 开始。"
+        "`surface_background` 是这条链上的角色。\n\n"
+        "## 术语小贴士\n\n"
+        "> **PTY** — 伪终端：字节在进程与控制器之间流动。把它当管道，不要当目录名。\n"
+    )
+
+    class _Version:
+        id = "ver-1"
+        wiki_pages = {
+            "project_name": "grok-study",
+            "pages": [
+                {"id": "index", "title": "概述", "content": "# grok-study\n"},
+                {
+                    "id": "topics/markdown-rendering",
+                    "title": "Markdown 渲染",
+                    "content": stub,
+                },
+                {
+                    "id": "topics/agent-loop",
+                    "title": "Agent Loop",
+                    "content": "# loop\n\nstart_turn → model → ToolBridge\n",
+                },
+            ],
+            "sidebar": [
+                {
+                    "title": "深入探索",
+                    "page_id": "",
+                    "children": [
+                        {
+                            "title": "Markdown 渲染",
+                            "page_id": "topics/markdown-rendering",
+                            "children": [],
+                        },
+                        {
+                            "title": "Agent Loop",
+                            "page_id": "topics/agent-loop",
+                            "children": [],
+                        },
+                    ],
+                },
+            ],
+        }
+
+    out = wiki_out("repo-1", _Version())
+    ids = {p.id for p in out.pages}
+    assert "topics/markdown-rendering" not in ids
+    assert "topics/agent-loop" in ids
+    md_pages = [p for p in out.pages if p.id == "topics/markdown-rendering"]
+    assert not md_pages
+    deep = next(item for item in out.sidebar if item.title == "深入探索")
+    deep_ids = [c.page_id for c in deep.children]
+    assert "topics/markdown-rendering" not in deep_ids
+    assert "topics/agent-loop" in deep_ids
+    combined = "\n".join(p.content for p in out.pages)
+    assert "伪终端：字节在进程与控制器之间流动" not in combined
+

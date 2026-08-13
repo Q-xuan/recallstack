@@ -219,7 +219,7 @@ class WikiBuilder:
             dep_md = self._build_dependency_page(graph, mermaid, lang)
             pages.append(WikiPage(id="dependencies", title=dep_title, content=dep_md, order=301))
 
-        sidebar = self._topic_sidebar(pages, wiki_data, language=lang)
+        sidebar = self._topic_sidebar(pages, wiki_data, language=lang, graph=graph)
         known_ids = {p.id for p in pages}
         for page in pages:
             page.content = upgrade_wiki_page_content(
@@ -491,7 +491,9 @@ class WikiBuilder:
             nodes[prefix] = item
             return item
 
-        for name in sorted(names):
+        for name in names:
+            if is_directory_nav_noise(name):
+                continue
             ensure(name).page_id = f"modules/{name}"
         return root
 
@@ -500,6 +502,7 @@ class WikiBuilder:
         pages: list[WikiPage],
         wiki_data: WikiData,
         language: str = "en",
+        graph: DependencyGraph | None = None,
     ) -> list[SidebarItem]:
         """入门指南 / 深入探索 as the default nav; directory modules last."""
         lang = normalize_wiki_lang(language)
@@ -553,9 +556,13 @@ class WikiBuilder:
                 )
             )
         module_names = [m.name for m in wiki_data.modules if f"modules/{m.name}" in page_ids]
+        module_names = [n for n in module_names if not is_directory_nav_noise(n)]
         if module_names:
+            blob = _importance_blob_from_pages(pages)
+            ranks = _module_pagerank_scores(graph)
+            module_names.sort(key=lambda n: _module_dir_sort_key(n, blob, ranks))
             items.append(self._build_module_sidebar(module_names, language=lang))
-        return cap_directory_sidebar(items)
+        return rank_and_cap_directory_sidebar(items, pages=pages, graph=graph)
 
     def _build_module_page(
         self,
@@ -1530,6 +1537,174 @@ _TOPIC_GROUP_TITLES = {
 }
 _MODULE_GROUP_TITLES = {"modules", "模块", "by directory", "按目录"}
 DIR_SIDEBAR_LEAF_CAP = 8
+_DIR_NAV_SKIP_ROOTS = {
+    ".cargo",
+    ".github",
+    ".git",
+    "target",
+    "node_modules",
+    "vendor",
+    "scripts",
+    "third_party",
+}
+_DIR_PRODUCT_TOKS = ("xai-grok", "grok", "pager")
+
+
+def is_directory_nav_noise(module_name: str) -> bool:
+    """`.cargo` / toolchain `bin` do not belong in the 8-leaf crate listing."""
+    raw = (module_name or "").replace("\\", "/")
+    if raw.startswith("modules/"):
+        raw = raw[len("modules/") :]
+    parts = [p for p in raw.split("/") if p]
+    if not parts:
+        return True
+    root = parts[0]
+    if root.startswith(".") or root in _DIR_NAV_SKIP_ROOTS:
+        return True
+    if root == "bin":
+        return True
+    return False
+
+
+def _page_id_of(item) -> str:
+    if isinstance(item, dict):
+        return str(item.get("page_id") or "")
+    return str(getattr(item, "page_id", "") or "")
+
+
+def _importance_blob_from_pages(pages) -> str:
+    parts: list[str] = []
+    for page in pages or []:
+        if isinstance(page, dict):
+            pid = str(page.get("id") or "")
+            content = str(page.get("content") or "")
+        else:
+            pid = str(getattr(page, "id", "") or "")
+            content = str(getattr(page, "content", "") or "")
+        if pid in {"index", "architecture"} or pid.startswith("topics/"):
+            parts.append(content)
+            parts.append(pid)
+    return "\n".join(parts).lower()
+
+
+def _module_pagerank_scores(graph: DependencyGraph | None) -> dict[str, float]:
+    if graph is None:
+        return {}
+    scores: dict[str, float] = {}
+    try:
+        ranked = graph.rank_files()
+    except Exception:
+        return {}
+    for path, score in ranked:
+        parts = [p for p in path.replace("\\", "/").split("/") if p]
+        for i in range(len(parts)):
+            prefix = "/".join(parts[: i + 1])
+            scores[prefix] = max(scores.get(prefix, 0.0), float(score))
+    return scores
+
+
+def _module_dir_sort_key(
+    name: str,
+    blob: str,
+    ranks: dict[str, float] | None = None,
+) -> tuple:
+    """Lower is better: cited / product crates ahead of alphabetical codegen."""
+    path = (name or "").replace("\\", "/").removeprefix("modules/")
+    leaf = path.rsplit("/", 1)[-1] if path else ""
+    low = path.lower()
+    cited = blob or ""
+    hits = cited.count(low) * 3 + cited.count(leaf.lower())
+    product = 0
+    if any(tok in low for tok in _DIR_PRODUCT_TOKS):
+        product = 8
+    if "grok-agent" in low or low.endswith("-agent"):
+        product = max(product, 6)
+    pr = (ranks or {}).get(path, 0.0)
+    return (-hits, -product, -pr, path)
+
+
+def _dir_item_path(item) -> str:
+    pid = _page_id_of(item)
+    if pid.startswith("modules/"):
+        return pid[len("modules/") :]
+    title = _sidebar_title(item)
+    return title
+
+
+def _dir_item_sort_key(item, blob: str, ranks: dict[str, float]) -> tuple:
+    kids = _sidebar_children(item)
+    if kids:
+        return min(_dir_item_sort_key(child, blob, ranks) for child in kids)
+    return _module_dir_sort_key(_dir_item_path(item), blob, ranks)
+
+
+def _filter_directory_children(children: list) -> list:
+    kept: list = []
+    for child in children:
+        path = _dir_item_path(child)
+        kids = _sidebar_children(child)
+        if kids:
+            inner = _filter_directory_children(kids)
+            if not inner:
+                continue
+            _set_sidebar_children(child, inner)
+            kept.append(child)
+            continue
+        if is_directory_nav_noise(path):
+            continue
+        kept.append(child)
+    return kept
+
+
+def _rank_directory_children(
+    children: list, blob: str, ranks: dict[str, float]
+) -> list:
+    ranked = []
+    for child in children:
+        kids = _sidebar_children(child)
+        if kids:
+            _set_sidebar_children(child, _rank_directory_children(kids, blob, ranks))
+        ranked.append(child)
+    ranked.sort(key=lambda item: _dir_item_sort_key(item, blob, ranks))
+    return ranked
+
+
+def rank_and_cap_directory_sidebar(
+    sidebar: list,
+    *,
+    pages=None,
+    graph: DependencyGraph | None = None,
+    cap: int = DIR_SIDEBAR_LEAF_CAP,
+) -> list:
+    """Exclude toolchain dirs, rank remaining crates, then cap to `cap` leaves."""
+    blob = _importance_blob_from_pages(pages)
+    ranks = _module_pagerank_scores(graph)
+    labels = {t.lower() for t in _MODULE_GROUP_TITLES}
+    for item in sidebar or []:
+        title = _sidebar_title(item).strip().lower()
+        if title not in labels:
+            continue
+        kids = _filter_directory_children(_sidebar_children(item))
+        kids = _rank_directory_children(kids, blob, ranks)
+        _set_sidebar_children(item, kids)
+    return cap_directory_sidebar(sidebar, cap=cap)
+
+
+def prune_sidebar_missing_pages(sidebar: list, page_ids: set[str]) -> list:
+    """Drop leaves whose page was omitted (failed stub, generic web, …)."""
+    out: list = []
+    for item in sidebar or []:
+        if not isinstance(item, dict):
+            out.append(item)
+            continue
+        pid = str(item.get("page_id") or "")
+        children = prune_sidebar_missing_pages(item.get("children") or [], page_ids)
+        if pid and pid not in page_ids and pid.startswith(("topics/", "concepts/")):
+            continue
+        new_item = dict(item)
+        new_item["children"] = children
+        out.append(new_item)
+    return out
 
 
 def _sidebar_title(item) -> str:
@@ -1680,7 +1855,7 @@ def rebuild_topic_sidebar(
             "page_id": "",
             "children": module_children,
         })
-    return cap_directory_sidebar(items)
+    return rank_and_cap_directory_sidebar(items, pages=pages)
 
 
 def prune_generic_web_sidebar(sidebar: list, content_by_id: dict[str, str]) -> list:

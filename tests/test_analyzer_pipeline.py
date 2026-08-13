@@ -341,3 +341,136 @@ def test_zh_no_llm_fallback_is_handbook_not_inventory(tmp_path):
         if page.id.startswith("modules/"):
             assert "Module containing" not in page.content
             assert "虽然未直接使用" not in page.content
+
+
+def test_failed_topic_write_omits_pty_glossary_stub(tmp_path):
+    from repowiki.core.models import TopicOutline
+    from repowiki.core.topics import fallback_topic_doc
+
+    class FailLLM:
+        api_key = "test"
+        calls = 0
+
+        async def complete(self, messages, max_tokens=4096, **kwargs):
+            self.calls += 1
+            return "[LLM Error: HTTP 401: invalid token]"
+
+    async def _run_one():
+        cache = Cache(db_path=tmp_path / "c.db")
+        await cache.init()
+        try:
+            analyzer = Analyzer(llm=FailLLM(), cache=cache, language="zh")
+            topic = TopicOutline(
+                id="markdown-rendering",
+                title="Markdown 渲染",
+                section="deep-dive",
+                key_files=["crates/markdown/src/lib.rs"],
+            )
+            files = [
+                FileInfo(
+                    path="crates/markdown/src/lib.rs",
+                    size=80,
+                    language="rust",
+                    lines=8,
+                    preview="pub fn surface_background() {}\n",
+                    content="pub fn surface_background() {}\n" * 8,
+                    is_entrypoint=False,
+                )
+            ]
+            project = ProjectContext(
+                name="grok-study",
+                root=".",
+                files=files,
+                file_tree="crates/markdown/src/lib.rs",
+            )
+            graph = DependencyGraph.build_from_project(project)
+            stub = fallback_topic_doc(topic, files, language="zh", graph=graph)
+            assert any(t.term == "PTY" for t in stub.term_tips)
+            doc = await analyzer._analyze_one_topic(
+                topic, files, "markdown crate", project, graph
+            )
+            return doc, stub
+        finally:
+            await cache.close()
+
+    doc, stub = _run(_run_one())
+    assert doc is None
+    assert any(t.term == "PTY" for t in stub.term_tips)
+
+
+def test_failed_topic_write_retries_then_succeeds(tmp_path):
+    from repowiki.core.models import TopicOutline
+
+    class RetryLLM:
+        api_key = "test"
+        calls = 0
+
+        async def complete(self, messages, max_tokens=4096, **kwargs):
+            self.calls += 1
+            if self.calls < 2:
+                return "[LLM Error: HTTP 401: invalid token]"
+            return json.dumps(
+                {
+                    "name": "markdown-rendering",
+                    "purpose": "render assistant markdown in the pager",
+                    "description": "`crates/markdown/src/lib.rs:1` paints `surface_background`.",
+                    "implementation_details": (
+                        "Pager calls `surface_background` then lays out markdown blocks."
+                    ),
+                    "call_chains": [
+                        {
+                            "name": "render",
+                            "description": "markdown to cells",
+                            "steps": ["parse", "layout", "paint"],
+                        }
+                    ],
+                    "term_tips": [
+                        {"term": "markdown", "tip": "assistant message body format"}
+                    ],
+                    "files": [{"path": "crates/markdown/src/lib.rs", "purpose": "paint"}],
+                }
+            )
+
+    llm = RetryLLM()
+
+    async def _run_one():
+        cache = Cache(db_path=tmp_path / "c.db")
+        await cache.init()
+        try:
+            analyzer = Analyzer(llm=llm, cache=cache, language="zh")
+            topic = TopicOutline(
+                id="markdown-rendering",
+                title="Markdown 渲染",
+                section="deep-dive",
+                key_files=["crates/markdown/src/lib.rs"],
+            )
+            files = [
+                FileInfo(
+                    path="crates/markdown/src/lib.rs",
+                    size=80,
+                    language="rust",
+                    lines=8,
+                    preview="pub fn surface_background() {}\n",
+                    content="pub fn surface_background() {}\n" * 8,
+                    is_entrypoint=False,
+                )
+            ]
+            project = ProjectContext(
+                name="grok-study",
+                root=".",
+                files=files,
+                file_tree="crates/markdown/src/lib.rs",
+            )
+            graph = DependencyGraph.build_from_project(project)
+            return await analyzer._analyze_one_topic(
+                topic, files, "markdown crate", project, graph
+            )
+        finally:
+            await cache.close()
+
+    doc = _run(_run_one())
+    assert doc is not None
+    assert llm.calls >= 2
+    assert doc.purpose == "render assistant markdown in the pager"
+    assert not any(t.term == "PTY" for t in (doc.term_tips or []))
+

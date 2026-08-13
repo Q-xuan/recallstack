@@ -94,7 +94,7 @@ def test_module_sidebar_nests_by_path():
 
     app = next(c for c in modules.children if c.title == "app")
     assert app.page_id == ""  # intermediate directory, no page of its own
-    assert [c.title for c in app.children] == ["api", "services"]
+    assert {c.title for c in app.children} == {"api", "services"}
     assert {c.page_id for c in app.children} == {"modules/app/api", "modules/app/services"}
 
 
@@ -999,4 +999,75 @@ def test_directory_sidebar_is_capped():
     capped = cap_directory_sidebar(sidebar)
     directory = next(item for item in capped if item["title"] == "按目录")
     assert len(directory["children"]) <= 8
+
+
+def test_directory_sidebar_excludes_cargo_and_ranks_product_crates():
+    from repowiki.core.wiki_builder import rank_and_cap_directory_sidebar
+
+    crate_children = [
+        {"title": f"aa-{i}", "page_id": f"modules/crates/aa-{i}", "children": []}
+        for i in range(10)
+    ] + [
+        {
+            "title": "xai-grok-pager",
+            "page_id": "modules/crates/xai-grok-pager",
+            "children": [],
+        },
+        {
+            "title": "xai-grok-agent",
+            "page_id": "modules/crates/xai-grok-agent",
+            "children": [],
+        },
+    ]
+    pages = [
+        {
+            "id": "index",
+            "title": "概述",
+            "content": "`crates/xai-grok-pager` `crates/xai-grok-agent`",
+        },
+        {"id": "modules/.cargo", "title": ".cargo", "content": ""},
+        {"id": "modules/bin", "title": "bin", "content": ""},
+        {
+            "id": "modules/crates/xai-grok-pager",
+            "title": "xai-grok-pager",
+            "content": "",
+        },
+        {
+            "id": "modules/crates/xai-grok-agent",
+            "title": "xai-grok-agent",
+            "content": "",
+        },
+    ]
+    sidebar = [
+        {
+            "title": "按目录",
+            "page_id": "",
+            "children": [
+                {"title": ".cargo", "page_id": "modules/.cargo", "children": []},
+                {"title": "bin", "page_id": "modules/bin", "children": []},
+                {"title": "crates", "page_id": "", "children": crate_children},
+            ],
+        }
+    ]
+    ranked = rank_and_cap_directory_sidebar(sidebar, pages=pages)
+    directory = next(item for item in ranked if item["title"] == "按目录")
+
+    def leaves(item) -> list[str]:
+        kids = item.get("children") or []
+        if not kids:
+            return [item.get("title") or ""]
+        out: list[str] = []
+        for child in kids:
+            out.extend(leaves(child))
+        return out
+
+    titles = []
+    for child in directory["children"]:
+        titles.extend(leaves(child))
+    assert ".cargo" not in titles
+    assert "bin" not in titles
+    assert "xai-grok-pager" in titles
+    assert "xai-grok-agent" in titles
+    assert len(titles) <= 8
+
 

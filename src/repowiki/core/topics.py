@@ -19,7 +19,11 @@ from repowiki.core.models import (
     TopicDoc,
     TopicOutline,
 )
-from repowiki.core.module_handbook import fallback_module_doc
+from repowiki.core.module_handbook import (
+    fallback_module_doc,
+    is_canned_handbook_stub_text,
+    topic_slug_is_pty_related,
+)
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 _SKIP_DIRS = {
@@ -198,6 +202,19 @@ def omit_generic_web_wiki_page(page_id: str, content: str) -> bool:
     return not keep_generic_web_topic_nav(page_id, content) and (
         (page_id or "").startswith("topics/") or (page_id or "").startswith("concepts/")
     )
+
+
+def omit_unusable_topic_stub(
+    page_id: str, content: str, *, title: str = ""
+) -> bool:
+    """Drop persisted fallback stubs (PTY glossary on a non-PTY topic)."""
+    pid = page_id or ""
+    if not pid.startswith("topics/"):
+        return False
+    slug = pid.split("/", 1)[-1]
+    if topic_slug_is_pty_related(slug, title):
+        return False
+    return is_canned_handbook_stub_text(content or "")
 
 
 def wiki_page_id_for_topic(topic_id: str) -> str:

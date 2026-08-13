@@ -302,6 +302,57 @@ def _edge_cases(bearing: list[FileInfo], zh: bool) -> list[str]:
     return cases[:4]
 
 
+_CANNED_PTY_TIPS = (
+    "伪终端：字节在进程与控制器之间流动",
+    "A pseudo-terminal: bytes between a process and its controller",
+)
+_CANNED_HAPPY_PATH = (
+    "快乐路径不从目录名开始",
+    "下面只跟这一条快乐路径",
+    "The happy path starts at",
+    "This page follows that happy path",
+)
+
+
+def is_canned_handbook_stub_text(text: str) -> bool:
+    """True when the body is the no-LLM template (PTY glossary + 快乐路径)."""
+    blob = text or ""
+    has_pty = any(marker in blob for marker in _CANNED_PTY_TIPS)
+    has_happy = any(marker in blob for marker in _CANNED_HAPPY_PATH)
+    return has_pty and has_happy
+
+
+def topic_slug_is_pty_related(topic_id: str, title: str = "") -> bool:
+    blob = f"{topic_id} {title}".lower()
+    return any(tok in blob for tok in ("pty", "terminal", "伪终端"))
+
+
+def is_unusable_topic_stub_doc(doc, topic=None) -> bool:
+    """Failed LLM writes used to persist this template as a handbook page."""
+    tid = (
+        getattr(topic, "id", "")
+        or getattr(doc, "name", "")
+        or getattr(doc, "title", "")
+        or ""
+    )
+    title = getattr(topic, "title", "") or getattr(doc, "title", "") or ""
+    if topic_slug_is_pty_related(tid, title):
+        return False
+    tips = getattr(doc, "term_tips", None) or []
+    tip_blob = "\n".join(
+        f"{getattr(t, 'term', '')} {getattr(t, 'tip', '')}" for t in tips
+    )
+    blob = "\n".join(
+        [
+            getattr(doc, "description", "") or "",
+            getattr(doc, "implementation_details", "") or "",
+            getattr(doc, "purpose", "") or "",
+            tip_blob,
+        ]
+    )
+    return is_canned_handbook_stub_text(blob)
+
+
 def _term_tips(zh: bool) -> list[TermTip]:
     if zh:
         return [
