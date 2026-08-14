@@ -72,13 +72,19 @@ class RubricEvaluator:
         item_type: str = "active_recall",
         revealed_answer: bool = False,
     ) -> AttemptEvaluationResult:
+        contract: dict[str, Any] = {}
         if isinstance(rubric, dict):
+            raw_contract = rubric.get("contract")
+            if isinstance(raw_contract, dict):
+                contract = raw_contract
             try:
                 rub = Rubric.model_validate(rubric)
             except Exception:  # noqa: BLE001
                 rub = Rubric()
         else:
             rub = rubric
+        if not contract and getattr(rub, "contract", None):
+            contract = dict(rub.contract or {})
 
         answer = answer or ""
         answer_lower = answer.lower()
@@ -206,6 +212,18 @@ class RubricEvaluator:
         if symbol_hits and path_hits:
             follow = t("If you redrew the boundary, which logic would you extract and why?", "这个实现如果换一种边界划分，你会把哪段逻辑拆出去？为什么？")
 
+        score, covered, missing, feedback_parts, suggested = _apply_contract_gate(
+            answer=answer,
+            answer_lower=answer_lower,
+            contract=contract,
+            item_type=item_type,
+            score=score,
+            covered=covered,
+            missing=missing,
+            feedback_parts=feedback_parts,
+            suggested=suggested,
+        )
+
         return AttemptEvaluationResult(
             score=round(max(0.0, min(1.0, score)), 4),
             covered_points=covered,
@@ -216,3 +234,73 @@ class RubricEvaluator:
             suggested_revision=suggested,
             follow_up_question=follow,
         )
+
+
+def _mentions_failure_path(answer: str, tokens: list[str]) -> bool:
+    text = answer or ""
+    low = text.lower()
+    for tok in tokens or ():
+        if tok and (tok in text or tok.lower() in low):
+            return True
+    return False
+
+
+def _apply_contract_gate(
+    *,
+    answer: str,
+    answer_lower: str,
+    contract: dict[str, Any],
+    item_type: str,
+    score: float,
+    covered: list[str],
+    missing: list[str],
+    feedback_parts: list[str],
+    suggested: str,
+) -> tuple[float, list[str], list[str], list[str], str]:
+    """Hard fail: restating the heading without the chip symbol / failure path."""
+    if not contract:
+        return score, covered, missing, feedback_parts, suggested
+    symbol = str(contract.get("symbol") or "").strip()
+    tokens = [str(x) for x in (contract.get("failure_tokens") or []) if x]
+    require_failure = bool(contract.get("require_failure")) or item_type == "teach_back"
+    has_symbol = _answer_mentions_symbol(answer_lower, symbol) if symbol else True
+    has_failure = _mentions_failure_path(answer, tokens) if require_failure else True
+    if has_symbol and "chip_symbol" not in covered and symbol:
+        covered.append("chip_symbol")
+        if "chip_symbol" in missing:
+            missing.remove("chip_symbol")
+    if has_failure and require_failure and "failure_path" not in covered:
+        covered.append("failure_path")
+        if "failure_path" in missing:
+            missing.remove("failure_path")
+    if symbol and not has_symbol:
+        if "chip_symbol" not in missing:
+            missing.append("chip_symbol")
+        score = min(score, 0.32)
+        feedback_parts.append(
+            t(
+                f"Gate failed: name `{symbol}` from the evidence chip. Restating the heading does not pass.",
+                f"过关失败：必须点名证据上的 `{symbol}`。复述标题不算过关。",
+            )
+        )
+        suggested = t(
+            f"Name `{symbol}` and what breaks if that line is gone.",
+            f"点名 `{symbol}`，并说出删掉那一行会坏什么。",
+        )
+    if require_failure and not has_failure:
+        if "failure_path" not in missing:
+            missing.append("failure_path")
+        score = min(score, 0.32)
+        hint = " / ".join(tokens[:3]) if tokens else t("the failure path", "失败路径")
+        feedback_parts.append(
+            t(
+                f"Gate failed: name the failure path ({hint}).",
+                f"过关失败：必须写出失败路径（{hint}）。",
+            )
+        )
+        if not suggested:
+            suggested = t(
+                f"Add the failure path, e.g. {hint}.",
+                f"补上失败路径，例如 {hint}。",
+            )
+    return score, covered, missing, feedback_parts, suggested

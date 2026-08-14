@@ -58,6 +58,7 @@ from recallstack.learning.wiki_serve import (
     path_is_materialized,
     persist_path_resolved,
     persist_wiki_payload,
+    sync_path_contract_items,
     wiki_is_materialized,
 )
 from recallstack.security import SecurityError
@@ -463,6 +464,11 @@ def get_learning_path(
     resolved = materialize_path_resolved(path, file_texts)
     persist_path_resolved(db, path, resolved)
     path.resolved = resolved
+    sync_path_contract_items(db, path, file_texts)
+    try:
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
     out = path_out(path, file_texts=file_texts)
     _schedule_path_annotation_prefetch(background_tasks, str(version.id), out, file_texts)
     return out

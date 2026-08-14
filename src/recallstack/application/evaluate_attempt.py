@@ -250,6 +250,10 @@ class EvaluateAttemptService:
         if llm_result is None:
             return deterministic, "deterministic"
 
+        gate_ids = {"chip_symbol", "failure_path"}
+        if deterministic.score < 0.40 and gate_ids.intersection(deterministic.missing_points):
+            return deterministic, "deterministic"
+
         # Prefer LLM semantics, but never fully discard deterministic evidence signal.
         blended = self._blend_evaluations(deterministic, llm_result, revealed_answer)
         return blended, "llm"

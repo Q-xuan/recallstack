@@ -35,6 +35,9 @@ class Rubric(BaseModel):
     required_points: list[RubricPoint] = Field(default_factory=list)
     common_misconceptions: list[str] = Field(default_factory=list)
     maximum_score: float = 1.0
+    # Path-step contract copied onto the item so scoring does not join the store.
+    # {path, line, symbol, failure_tokens, gate}
+    contract: dict[str, Any] = Field(default_factory=dict)
 
 
 class ConceptTermTip(BaseModel):

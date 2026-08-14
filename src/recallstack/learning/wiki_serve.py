@@ -23,6 +23,7 @@ from recallstack.learning.learning_contract import (
     is_web_filler_path_slug,
     path_evidence_chip,
     path_rank,
+    path_step_contract,
     upgrade_legacy_concept_markdown,
     wiki_prose_excerpt,
 )
@@ -48,7 +49,7 @@ logger = logging.getLogger(__name__)
 
 # Bump when materialize logic changes so stale persisted pages re-upgrade once.
 WIKI_SERVE_REVISION = 1
-PATH_SERVE_REVISION = 1
+PATH_SERVE_REVISION = 2
 
 
 def wiki_is_materialized(payload: dict[str, Any] | None) -> bool:
@@ -189,6 +190,7 @@ def materialize_path_resolved(
     ]
     candidates.sort(key=lambda item: (item[0], item[1]))
     chips: dict[str, str] = {}
+    nodes: dict[str, dict[str, Any]] = {}
     with definition_index_scope(store):
         for _rank, _slug, n, concept in candidates[:CORE_PATH_CAP]:
             cid = str(getattr(n, "concept_id", "") or getattr(concept, "id", "") or "")
@@ -197,7 +199,8 @@ def materialize_path_resolved(
             chip = path_evidence_chip(concept, file_texts=store)
             if chip:
                 chips[cid] = chip
-    return {"serve_revision": PATH_SERVE_REVISION, "chips": chips}
+            nodes[cid] = path_step_contract(concept, chip=chip, file_texts=store)
+    return {"serve_revision": PATH_SERVE_REVISION, "chips": chips, "nodes": nodes}
 
 
 def persist_wiki_payload(session: Any, version: Any, payload: dict[str, Any]) -> None:
@@ -209,6 +212,86 @@ def persist_wiki_payload(session: Any, version: Any, payload: dict[str, Any]) ->
     except Exception:  # noqa: BLE001
         session.rollback()
         logger.exception("wiki materialize persist failed")
+
+
+def _item_has_contract(item: Any) -> bool:
+    rubric = getattr(item, "rubric", None) or {}
+    if not isinstance(rubric, dict):
+        return False
+    contract = rubric.get("contract")
+    return isinstance(contract, dict) and bool(contract.get("symbol") or contract.get("chip"))
+
+
+def sync_path_contract_items(
+    session: Any,
+    path: Any,
+    file_texts: dict[str, str] | None,
+) -> None:
+    """Replace path-step practice items with contract-locked drafts.
+
+    Off-path concepts keep the generic triad. Existing item rows are updated
+    in place so attempt FKs stay valid.
+    """
+    from sqlalchemy import select
+
+    from recallstack.db.models import LearningItem
+    from recallstack.learning.question_generator import QuestionGenerator
+
+    resolved = getattr(path, "resolved", None) or {}
+    nodes = resolved.get("nodes") if isinstance(resolved, dict) else {}
+    nodes = nodes if isinstance(nodes, dict) else {}
+    qgen = QuestionGenerator()
+    for n in getattr(path, "nodes", None) or []:
+        concept = getattr(n, "concept", None)
+        cid = str(getattr(n, "concept_id", "") or "")
+        if not concept or not cid:
+            continue
+        contract = nodes.get(cid) or path_step_contract(
+            concept, file_texts=file_texts
+        )
+        if not contract.get("chip") and not contract.get("symbol"):
+            continue
+        drafts = qgen.generate_from_contract(
+            title=getattr(concept, "title", "") or "",
+            contract=contract,
+            concept=concept,
+            file_texts=file_texts,
+        ).items
+        existing = list(
+            session.scalars(
+                select(LearningItem)
+                .where(LearningItem.concept_id == cid)
+                .order_by(LearningItem.created_at.asc())
+            )
+        )
+        if existing and all(_item_has_contract(item) for item in existing):
+            continue
+        for item, draft in zip(existing, drafts, strict=False):
+            item.item_type = draft.item_type
+            item.prompt = draft.prompt
+            item.rubric = draft.rubric.model_dump()
+            item.expected_answer_outline = draft.expected_answer_outline
+            item.source_references = [r.model_dump() for r in draft.source_references]
+            item.difficulty = draft.difficulty
+            item.content_hash = qgen.item_content_hash(draft)
+            item.stale = False
+            flag_modified(item, "rubric")
+            flag_modified(item, "source_references")
+        if len(existing) < len(drafts):
+            for draft in drafts[len(existing) :]:
+                session.add(
+                    LearningItem(
+                        concept_id=cid,
+                        item_type=draft.item_type,
+                        prompt=draft.prompt,
+                        rubric=draft.rubric.model_dump(),
+                        expected_answer_outline=draft.expected_answer_outline,
+                        source_references=[r.model_dump() for r in draft.source_references],
+                        difficulty=draft.difficulty,
+                        content_hash=qgen.item_content_hash(draft),
+                        stale=False,
+                    )
+                )
 
 
 def persist_path_resolved(session: Any, path: Any, resolved: dict[str, Any]) -> None:
@@ -240,3 +323,4 @@ def materialize_analyzed_version(
     if path is not None:
         path.resolved = materialize_path_resolved(path, file_texts)
         flag_modified(path, "resolved")
+        sync_path_contract_items(session, path, file_texts)

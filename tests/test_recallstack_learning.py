@@ -378,6 +378,86 @@ def test_question_generator_has_rubric():
     assert "responsibility" in q.items[0].prompt.lower() or "main responsibility" in q.items[0].prompt.lower() or "Application entry" in q.items[0].prompt
 
 
+def _agent_loop_contract() -> dict:
+    return {
+        "chip": "crates/tui/src/app.rs:791 start_turn",
+        "path": "crates/tui/src/app.rs",
+        "line": 791,
+        "symbol": "start_turn",
+        "task": "你负责：指出 start_turn 之后谁调模型。",
+        "gate": "你签字：把「调模型」和「跑工具」对调之后，start_turn 后面第一个函数名是什么？指出真实顺序里那个函数，并写出对调后用户看到的失败路径。",
+        "failure_tokens": ["失败", "停在", "对调"],
+        "slug": "agent-loop",
+    }
+
+
+def test_generate_from_contract_locks_items_to_chip(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    q = QuestionGenerator().generate_from_contract(
+        title="Agent Loop",
+        contract=_agent_loop_contract(),
+    )
+    assert len(q.items) == 3
+    types = [item.item_type for item in q.items]
+    assert types == ["active_recall", "code_trace", "teach_back"]
+    for item in q.items:
+        assert item.rubric.contract["symbol"] == "start_turn"
+        assert item.rubric.contract["line"] == 791
+        assert item.source_references
+        assert item.source_references[0].path == "crates/tui/src/app.rs"
+        assert item.source_references[0].start_line == 791
+        assert item.source_references[0].end_line == 791
+        assert "start_turn" in item.prompt
+        assert "职责是什么" not in item.prompt
+    assert "失败路径" in q.items[2].prompt
+    assert q.items[2].rubric.contract.get("require_failure") is True
+
+
+def test_contract_gate_generic_heading_fails_chip_answer_passes(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    q = QuestionGenerator().generate_from_contract(
+        title="Agent Loop",
+        contract=_agent_loop_contract(),
+    )
+    evaluator = RubricEvaluator()
+    recall = q.items[0]
+    generic = evaluator.evaluate_deterministic(
+        answer="Agent Loop 负责一轮对话，是本步的核心。",
+        rubric=recall.rubric.model_dump(),
+        source_references=[r.model_dump() for r in recall.source_references],
+        item_type=recall.item_type,
+    )
+    grounded = evaluator.evaluate_deterministic(
+        answer="start_turn 在 crates/tui/src/app.rs:791 开一轮，这一行必须先调模型再跑工具。",
+        rubric=recall.rubric.model_dump(),
+        source_references=[r.model_dump() for r in recall.source_references],
+        item_type=recall.item_type,
+    )
+    assert generic.score < 0.40
+    assert "chip_symbol" in generic.missing_points
+    assert grounded.score >= 0.40
+    assert "chip_symbol" in grounded.covered_points
+
+    gate = q.items[2]
+    no_fail = evaluator.evaluate_deterministic(
+        answer="过关就是 start_turn，Agent Loop 负责一轮。",
+        rubric=gate.rubric.model_dump(),
+        source_references=[r.model_dump() for r in gate.source_references],
+        item_type=gate.item_type,
+    )
+    with_fail = evaluator.evaluate_deterministic(
+        answer="start_turn 之后先调模型。若对调，写回失败，这一轮停在 TurnRunning，用户看不到完整回复。",
+        rubric=gate.rubric.model_dump(),
+        source_references=[r.model_dump() for r in gate.source_references],
+        item_type=gate.item_type,
+    )
+    assert no_fail.score < 0.40
+    assert "failure_path" in no_fail.missing_points
+    assert with_fail.score >= 0.40
+    assert "failure_path" in with_fail.covered_points
+    assert "chip_symbol" in with_fail.covered_points
+
+
 def test_session_queue_orders_item_types():
     from recallstack.application.session_queue import SessionQueueService
 

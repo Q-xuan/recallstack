@@ -898,7 +898,7 @@ def _stamp_definition_line(
         path = key
     text = _file_text_for(file_texts, path)
     if name and text:
-        found = line_of_symbol_in_text(text, name)
+        found = _definition_line_in_text(text, name)
         if found:
             return path, found, name
         return path, 0, name
@@ -920,15 +920,117 @@ def _emit_store_chip(
     symbol: str,
     store: dict[str, str] | None,
 ) -> str | None:
-    """Never emit a path that is not a version_files key when the store is loaded."""
+    """Never emit a path that is not a version_files key when the store is loaded.
+
+    Gate chips need a definition ``:line``. Occurrence-only / ``:1`` fallbacks
+    are not enough unless line 1 is the actual definition.
+    """
     if store:
         key = _resolve_store_key(store, path)
         if not key:
             return None
         path, line, symbol = _stamp_definition_line(key, line, symbol, store)
+        if symbol and not line:
+            hit = resolve_symbol_definition(store, symbol, prefer_path=path)
+            if hit:
+                path, line = hit
+        if symbol and not line:
+            first, emit = _first_definition_line(store.get(path) or "")
+            if first and emit and not _is_dummy_symbol(emit):
+                line, symbol = first, symbol or emit
+        if symbol and not line:
+            return None
         return _format_path_chip(path, line, symbol)
     path, line, symbol = _stamp_definition_line(path, line, symbol, store)
     return _format_path_chip(path, line, symbol)
+
+
+_PATH_CHIP_RE = re.compile(
+    r"^`?([A-Za-z0-9_./\-]+?\.[A-Za-z0-9]+)(?::(\d+)(?:-\d+)?)?(?:[ \t]+([A-Za-z_][A-Za-z0-9_]*))?`?$"
+)
+_GATE_IDENT_RE = re.compile(
+    r"\b([A-Z][A-Za-z0-9_]{2,}|[a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b"
+)
+_FAILURE_DEFAULTS: tuple[str, ...] = (
+    "失败",
+    "停在",
+    "写回",
+    "写不回",
+    "无法",
+    "打不开",
+    "中断",
+    "丢失",
+    "abort",
+    "fail",
+    "cancel",
+    "坏掉",
+    "看不见",
+    "空的",
+    "对调",
+)
+
+
+def parse_path_chip(chip: str) -> tuple[str, int, str]:
+    """``path:line Symbol`` → (path, line, symbol). Line 0 / empty symbol if absent."""
+    raw = (chip or "").strip().strip("`")
+    match = _PATH_CHIP_RE.match(raw)
+    if not match:
+        return "", 0, ""
+    return (
+        (match.group(1) or "").strip(),
+        int(match.group(2) or 0),
+        (match.group(3) or "").strip(),
+    )
+
+
+def gate_failure_tokens(gate: str) -> list[str]:
+    """Tokens a 过关 answer must hit: failure-path words from the gate text."""
+    text = gate or ""
+    out: list[str] = []
+    seen: set[str] = set()
+    for tok in _FAILURE_DEFAULTS:
+        if tok in text and tok not in seen:
+            seen.add(tok)
+            out.append(tok)
+    if not out:
+        out.extend(["失败", "停在"])
+    return out
+
+
+def gate_required_symbol(gate: str, chip_symbol: str = "") -> str:
+    """Concrete fn/type the gate asks for. Chip symbol wins when present."""
+    if chip_symbol and not _is_dummy_symbol(chip_symbol):
+        return chip_symbol.strip()
+    for match in _GATE_IDENT_RE.finditer(gate or ""):
+        name = match.group(1)
+        if not _is_dummy_symbol(name) and name.lower() not in {"readme", "path", "line"}:
+            return name
+    return (chip_symbol or "").strip()
+
+
+def path_step_contract(
+    concept: Any,
+    *,
+    chip: str | None = None,
+    file_texts: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Analyze/GET snapshot: chip + gate tokens used to generate and score items."""
+    slug = getattr(concept, "slug", "") or ""
+    title = getattr(concept, "title", "") or slug
+    evidence = chip if chip is not None else path_evidence_chip(concept, file_texts=file_texts)
+    path, line, symbol = parse_path_chip(evidence or "")
+    gate = pass_gate(concept)
+    required = gate_required_symbol(gate, symbol)
+    return {
+        "chip": evidence or "",
+        "path": path,
+        "line": line,
+        "symbol": required,
+        "task": step_task_for_slug(slug, title),
+        "gate": gate,
+        "failure_tokens": gate_failure_tokens(gate),
+        "slug": slug,
+    }
 
 
 def is_junk_evidence_path(path: str, *, slug: str = "") -> bool:
