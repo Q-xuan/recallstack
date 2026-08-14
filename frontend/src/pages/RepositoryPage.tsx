@@ -378,41 +378,40 @@ export default function RepositoryPage() {
           </div>
 
           <form onSubmit={handleCreate} className="space-y-4">
-            <div className="flex flex-col md:flex-row gap-3">
+            <div className="rs-import-row">
               <select
                 value={sourceType}
                 onChange={(e) => setSourceType(e.target.value as "local" | "github")}
-                className="rs-input h-11 md:w-40"
+                className="rs-input rs-import-source"
+                aria-label={t("来源", "Source")}
               >
                 <option value="local">{t("本地目录", "Local directory")}</option>
                 <option value="github">GitHub HTTPS</option>
               </select>
-              <div className="flex-1 flex gap-2">
-                <input
-                  value={sourceLocation}
-                  onChange={(e) => setSourceLocation(e.target.value)}
-                  placeholder={
-                    sourceType === "local"
-                      ? t("选择文件夹或粘贴绝对路径", "Pick a folder or paste an absolute path")
-                      : "https://github.com/org/repo"
-                  }
-                  className="rs-input flex-1 h-11"
-                  disabled={loading}
-                />
-                {sourceType === "local" && (
-                  <button
-                    type="button"
-                    onClick={() => setPickerOpen(true)}
-                    className="rs-btn rs-btn-ghost"
-                  >
-                    {t("浏览…", "Browse…")}
-                  </button>
-                )}
-              </div>
+              <input
+                value={sourceLocation}
+                onChange={(e) => setSourceLocation(e.target.value)}
+                placeholder={
+                  sourceType === "local"
+                    ? t("选择文件夹或粘贴绝对路径", "Pick a folder or paste an absolute path")
+                    : "https://github.com/org/repo"
+                }
+                className="rs-input rs-import-path"
+                disabled={loading}
+              />
+              <button
+                type="button"
+                onClick={() => setPickerOpen(true)}
+                className="rs-btn rs-btn-ghost rs-import-browse"
+                hidden={sourceType !== "local"}
+                disabled={sourceType !== "local" || loading}
+              >
+                {t("浏览…", "Browse…")}
+              </button>
               <button
                 type="submit"
                 disabled={loading || !sourceLocation.trim()}
-                className="rs-btn rs-btn-primary h-11 px-5"
+                className="rs-btn rs-btn-primary rs-import-create"
               >
                 {t("创建", "Create")}
               </button>

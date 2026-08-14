@@ -151,6 +151,47 @@ a {
   color: var(--rs-muted);
 }
 
+.rs-import-row {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.rs-input.rs-import-source {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 8.5rem;
+  height: 44px;
+}
+
+.rs-input.rs-import-path {
+  flex: 1 1 12rem;
+  min-width: 12rem;
+  width: auto;
+  height: 44px;
+}
+
+.rs-import-browse,
+.rs-import-create {
+  flex: 0 0 auto;
+  height: 44px;
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+.rs-import-browse[hidden] {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .rs-import-row {
+    flex-wrap: nowrap;
+  }
+}
+
 .rs-alert {
   border-radius: 12px;
   border: 1px solid var(--rs-danger);
