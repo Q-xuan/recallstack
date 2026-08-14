@@ -67,6 +67,7 @@ from recallstack.learning.wiki_serve import (
     wiki_is_materialized,
 )
 from recallstack.security import SecurityError
+from repowiki.ingest.github import GitIngestError
 
 router = APIRouter(prefix="/recallstack", tags=["recallstack"])
 
@@ -169,6 +170,73 @@ def list_fs_directory(path: str | None = None) -> dict[str, Any]:
 
 
 
+def _abandon_import(db: Session, repository_id: str) -> None:
+    """Remove a repo we just created so a failed analyze start is not a silent empty wiki."""
+    from sqlalchemy import select
+
+    from recallstack.db.models import RepositoryVersion
+
+    store = RepositoryStore(db)
+    repo = store.get_repository(repository_id)
+    if not repo:
+        return
+    extra = list(
+        db.scalars(
+            select(RepositoryVersion).where(RepositoryVersion.repository_id == repository_id)
+        )
+    )
+    for version in extra:
+        db.delete(version)
+    db.delete(repo)
+    try:
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+
+
+def _queue_analyze(db: Session, repository_id: str, lang: str | None = None):
+    """Same background analyze the 「开始分析」 button uses. Does not wait."""
+    from recallstack.db.models import RepositoryVersion
+    from recallstack.learning.i18n import normalize_lang
+
+    store = RepositoryStore(db)
+    latest = store.get_latest_version(repository_id)
+    if latest:
+        latest.status = "queued"
+        latest.error_message = None
+        if lang:
+            latest.content_lang = normalize_lang(lang)
+        db.commit()
+        db.refresh(latest)
+    try:
+        get_job_runner().enqueue("analyze", _run_analyze, repository_id, lang)
+    except Exception as exc:  # noqa: BLE001
+        if latest:
+            latest.status = "failed"
+            latest.error_message = (
+                f"Could not start analysis: {exc}. "
+                "Retry 「开始分析」. The import did not finish scanning."
+            )[:2000]
+            try:
+                db.commit()
+            except Exception:  # noqa: BLE001
+                db.rollback()
+        raise
+    if latest:
+        return latest
+    pending = RepositoryVersion(
+        repository_id=repository_id,
+        commit_sha="pending",
+        content_hash="",
+        status="pending",
+        content_lang=normalize_lang(lang) if lang else None,
+    )
+    db.add(pending)
+    db.commit()
+    db.refresh(pending)
+    return pending
+
+
 @router.post("/repositories", response_model=RepositoryOut)
 def create_repository(
     body: RepositoryCreate,
@@ -186,11 +254,25 @@ def create_repository(
         )
         db.commit()
         db.refresh(repo)
-        return repo_out(repo)
     except SecurityError as exc:
         raise api_error(400, exc.code, exc.message) from exc
     except FileNotFoundError as exc:
         raise api_error(400, "path_not_found", str(exc)) from exc
+
+    repo_id = repo.id
+    try:
+        _queue_analyze(db, repo_id, lang=body.lang)
+    except Exception as exc:  # noqa: BLE001
+        _abandon_import(db, repo_id)
+        raise api_error(
+            503,
+            "analyze_start_failed",
+            "Repository was not imported: analysis could not start. "
+            f"{exc}. Fix the queue or retry import — an empty wiki was not left behind.",
+        ) from exc
+    store = RepositoryStore(db)
+    created = store.get_repository(repo_id)
+    return repo_out(created or repo)
 
 
 @router.get("/repositories", response_model=list[RepositoryOut])
@@ -237,42 +319,21 @@ def analyze_repository(
             return version_out(version)
         except SecurityError as exc:
             raise api_error(400, exc.code, exc.message) from exc
+        except GitIngestError as exc:
+            status = 504 if exc.code == "clone_timeout" else 400
+            raise api_error(status, exc.code, exc.message) from exc
         except Exception as exc:  # noqa: BLE001
             raise api_error(500, "analyze_failed", "Analysis failed", {"error": str(exc)[:500]}) from exc
 
-    # Background path. Flip the existing version to "queued" *before* enqueuing so
-    # a poller never sees a stale "ready" and concludes the rescan already finished.
-    latest = store.get_latest_version(repository_id)
-    if latest:
-        latest.status = "queued"
-        latest.error_message = None
-        if lang:
-            from recallstack.learning.i18n import normalize_lang
-
-            latest.content_lang = normalize_lang(lang)
-        db.commit()
-        db.refresh(latest)
-
-    runner = get_job_runner()
-    runner.enqueue("analyze", _run_analyze, repository_id, lang)
-    if latest:
-        return version_out(latest)
-
-    # ensure a pending version exists for UI polling
-    from recallstack.db.models import RepositoryVersion
-    from recallstack.learning.i18n import normalize_lang
-
-    pending = RepositoryVersion(
-        repository_id=repository_id,
-        commit_sha="pending",
-        content_hash="",
-        status="pending",
-        content_lang=normalize_lang(lang) if lang else None,
-    )
-    db.add(pending)
-    db.commit()
-    db.refresh(pending)
-    return version_out(pending)
+    try:
+        queued = _queue_analyze(db, repository_id, lang=lang)
+    except Exception as exc:  # noqa: BLE001
+        raise api_error(
+            503,
+            "analyze_start_failed",
+            f"Analysis could not start: {exc}. Retry 「开始分析」.",
+        ) from exc
+    return version_out(queued)
 
 
 @router.get("/repositories/{repository_id}/versions/latest", response_model=VersionOut)

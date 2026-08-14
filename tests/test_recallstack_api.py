@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import re
 from pathlib import Path
 
@@ -12,6 +13,17 @@ from recallstack.bootstrap import init_recallstack
 from recallstack.db.session import reset_engine
 
 
+class _RecordingRunner:
+    """Capture analyze jobs without running them (avoids racing wait=true)."""
+
+    def __init__(self) -> None:
+        self.jobs: list[tuple] = []
+
+    def enqueue(self, name, func, *args, **kwargs):
+        self.jobs.append((name, func, args, kwargs))
+        return f"{name}-{len(self.jobs)}"
+
+
 @pytest.fixture()
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     db_path = tmp_path / "test.db"
@@ -19,6 +31,10 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # Keep API tests deterministic: never call external LLMs.
     monkeypatch.setenv("RECALLSTACK_LLM_ENABLED", "0")
     monkeypatch.setenv("RECALLSTACK_LLM_EVALUATION", "0")
+    runner = _RecordingRunner()
+    api_router_mod = importlib.import_module("recallstack.api.router")
+    monkeypatch.setattr(api_router_mod, "get_job_runner", lambda: runner)
+    monkeypatch.setattr("recallstack.jobs.get_job_runner", lambda: runner)
     reset_engine()
     init_recallstack(f"sqlite:///{db_path.as_posix()}")
 
@@ -42,6 +58,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     app = create_app()
     with TestClient(app) as c:
         c.fixture_repo = str(repo)  # type: ignore[attr-defined]
+        c.jobs = runner  # type: ignore[attr-defined]
         yield c
     reset_engine()
 
@@ -148,6 +165,82 @@ def test_reject_bad_git_url(client: TestClient):
         json={"source_type": "github", "source_location": "ssh://git@github.com/a/b.git"},
     )
     assert r.status_code == 400
+
+
+def test_create_repository_starts_analyze(client: TestClient):
+    runner: _RecordingRunner = client.jobs  # type: ignore[attr-defined]
+    runner.jobs.clear()
+    created = client.post(
+        "/api/recallstack/repositories",
+        json={
+            "source_type": "local",
+            "source_location": client.fixture_repo,  # type: ignore[attr-defined]
+            "name": "fixture",
+            "lang": "zh",
+        },
+    )
+    assert created.status_code == 200, created.text
+    assert any(job[0] == "analyze" for job in runner.jobs)
+    repo_id = created.json()["id"]
+    latest = client.get(f"/api/recallstack/repositories/{repo_id}/versions/latest")
+    assert latest.status_code == 200
+    assert latest.json()["status"] in {"pending", "queued"}
+    analyze_jobs = [job for job in runner.jobs if job[0] == "analyze"]
+    assert analyze_jobs[0][2][0] == repo_id
+    assert analyze_jobs[0][2][1] == "zh"
+
+
+def test_create_repository_analyze_start_failure_leaves_no_empty_repo(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    class _Boom:
+        def enqueue(self, *args, **kwargs):
+            raise RuntimeError("queue down")
+
+    api_router_mod = importlib.import_module("recallstack.api.router")
+    monkeypatch.setattr(api_router_mod, "get_job_runner", lambda: _Boom())
+    r = client.post(
+        "/api/recallstack/repositories",
+        json={
+            "source_type": "local",
+            "source_location": client.fixture_repo,  # type: ignore[attr-defined]
+        },
+    )
+    assert r.status_code == 503
+    detail = r.json()["detail"]
+    assert detail["code"] == "analyze_start_failed"
+    assert "could not start" in detail["message"].lower()
+    listed = client.get("/api/recallstack/repositories")
+    assert listed.status_code == 200
+    assert listed.json() == []
+
+
+def test_github_analyze_error_is_actionable(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    from repowiki.ingest.github import GitIngestError
+
+    def boom(*_a, **_k):
+        raise GitIngestError(
+            "private_or_not_found",
+            "GitHub returned not found. Private repos need REPOWIKI_GITHUB_TOKEN or GITHUB_TOKEN.",
+        )
+
+    monkeypatch.setattr("repowiki.ingest.github.ingest_github", boom)
+    created = client.post(
+        "/api/recallstack/repositories",
+        json={
+            "source_type": "github",
+            "source_location": "https://github.com/acme/private-demo",
+        },
+    )
+    assert created.status_code == 200, created.text
+    repo_id = created.json()["id"]
+    analyzed = client.post(
+        f"/api/recallstack/repositories/{repo_id}/analyze?wait=true"
+    )
+    assert analyzed.status_code == 400, analyzed.text
+    detail = analyzed.json()["detail"]
+    assert detail["code"] == "private_or_not_found"
+    assert "GITHUB_TOKEN" in detail["message"]
 
 
 def _analyzed_repo(client: TestClient) -> str:

@@ -319,10 +319,11 @@ export const recallstackApi = {
     source_type: "local" | "github";
     source_location: string;
     default_branch?: string;
+    lang?: Lang;
   }) =>
     request<Repository>("/repositories", {
       method: "POST",
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, lang: body.lang ?? currentLang() }),
     }),
   getRepository: (id: string) => request<Repository>(`/repositories/${id}`),
   analyze: (id: string, wait = true, lang: Lang = currentLang()) => {

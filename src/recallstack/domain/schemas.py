@@ -120,6 +120,8 @@ class RepositoryCreate(BaseModel):
     source_type: Literal["local", "github"] = "local"
     source_location: str
     default_branch: str = "main"
+    # UI language for the analyze this create kicks off (en/zh/…).
+    lang: str | None = None
 
 
 class RepositoryOut(BaseModel):

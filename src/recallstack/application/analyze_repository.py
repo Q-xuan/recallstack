@@ -142,8 +142,16 @@ class AnalyzeRepositoryService:
         if not repo:
             raise KeyError("repository_not_found")
 
-        # ingest
-        project, root = self._ingest(repo)
+        try:
+            project, root = self._ingest(repo)
+        except Exception as exc:  # noqa: BLE001
+            latest = self.store.get_latest_version(repo.id)
+            if latest:
+                latest.status = "failed"
+                latest.error_message = str(exc)[:2000]
+                latest.completed_at = utcnow()
+                self.session.commit()
+            raise
         commit_sha = detect_commit_sha(root)
         file_hashes = {
             f.path: _sha256_text(f.content or f.preview or f.path) for f in project.files
