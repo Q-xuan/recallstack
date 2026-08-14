@@ -12,6 +12,8 @@ interface Props {
   questionKey?: number;
   /** Suggested chips stay live whenever the wiki exists. */
   canAsk?: boolean;
+  /** From this wiki (entry / loop / ACP / pager). Never host-product leftovers. */
+  suggestions?: string[];
   onClose: () => void;
   /** Citations in answers are wiki page ids; clicking one opens the page. */
   onOpenPage: (pageId: string) => void;
@@ -23,11 +25,6 @@ interface Turn {
   error?: string;
 }
 
-const SUGGESTIONS: [string, string][] = [
-  ["这个项目的入口在哪?", "Where is the entry point of this project?"],
-  ["依赖图是怎么构建的?", "How is the dependency graph built?"],
-  ["复习调度用了什么算法?", "Which algorithm schedules reviews?"],
-];
 
 /**
  * DeepWiki-style "ask the repository": a right-hand column, not a modal.
@@ -40,6 +37,7 @@ export default function AskPanel({
   initialQuestion,
   questionKey,
   canAsk = true,
+  suggestions = [],
   onClose,
   onOpenPage,
 }: Props) {
@@ -130,12 +128,11 @@ export default function AskPanel({
                 "Answers are grounded in the generated wiki, with clickable page citations.",
               )}
             </p>
-            <div className="rs-ask-suggests">
-              {SUGGESTIONS.map(([zh, en]) => {
-                const label = t(zh, en);
-                return (
+            {suggestions.length > 0 && (
+              <div className="rs-ask-suggests">
+                {suggestions.slice(0, 3).map((label) => (
                   <button
-                    key={en}
+                    key={label}
                     type="button"
                     className="rs-ask-suggest"
                     disabled={!canAsk || busy}
@@ -143,9 +140,9 @@ export default function AskPanel({
                   >
                     {label}
                   </button>
-                );
-              })}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

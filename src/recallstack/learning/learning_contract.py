@@ -750,6 +750,22 @@ def _source_refs_of(concept: Any) -> list[SourceReference]:
     return out
 
 
+def _stamp_definition_line(
+    path: str,
+    line: int,
+    symbol: str,
+    file_texts: dict[str, str] | None,
+) -> tuple[str, int, str]:
+    """Once the file is known, read its text and use the struct/impl/fn line."""
+    name = (symbol or "").strip()
+    text = _file_text_for(file_texts, path)
+    if name and text:
+        found = _definition_line_in_text(text, name)
+        if found:
+            return path, found, name
+    return path, line, name
+
+
 def _format_path_chip(path: str, line: int, symbol: str | None) -> str:
     normalized = path.replace("\\", "/")
     loc = f"{normalized}:{int(line) if line else 1}"
@@ -888,6 +904,17 @@ def _file_text_for(file_texts: dict[str, str] | None, path: str) -> str:
     matches = [p for p in file_texts if p.endswith("/" + key) or p == key]
     if len(matches) == 1:
         return file_texts[matches[0]]
+    base = key.rsplit("/", 1)[-1]
+    if not base or "." not in base:
+        return ""
+    if base.lower() in {"main.rs", "lib.rs", "mod.rs", "index.ts", "index.js", "index.py"}:
+        return ""
+    named = [p for p in file_texts if p.replace("\\", "/").rsplit("/", 1)[-1] == base]
+    if len(named) == 1:
+        return file_texts[named[0]]
+    src = [p for p in named if "/src/" in p.replace("\\", "/")]
+    if len(src) == 1:
+        return file_texts[src[0]]
     return ""
 
 
@@ -914,7 +941,11 @@ def _line_defines_symbol(src_line: str, symbol: str) -> bool:
         return False
     if re.search(_DEFN_KW + re.escape(symbol) + r"\b", src_line):
         return True
-    return bool(re.search(r"\bimpl\b.+\bfor\s+" + re.escape(symbol) + r"\b", src_line))
+    if re.search(r"\b(?:struct|enum|trait|type|class)\s+" + re.escape(symbol) + r"\b", src_line):
+        return True
+    if re.search(r"\bimpl\b.+\bfor\s+" + re.escape(symbol) + r"\b", src_line):
+        return True
+    return bool(re.search(r"\bimpl(?:\s*<[^>]*>)?\s+" + re.escape(symbol) + r"\b", src_line))
 
 
 def _definition_line_in_text(text: str, symbol: str) -> int:
@@ -1204,7 +1235,8 @@ def path_evidence_chip(
     if symbol and store and symbol.lower() not in _WEAK_SYMBOLS:
         hit = _pick_definition_in_store(store, symbol, slug, suffixes)
         if hit:
-            return _format_path_chip(hit[0], hit[1], symbol)
+            path, line, use_sym = _stamp_definition_line(hit[0], hit[1], symbol, store)
+            return _format_path_chip(path, line, use_sym)
         logger.info(
             "learning-path evidence: no production definition of %s for slug=%s (%d files)",
             symbol,
@@ -1214,7 +1246,8 @@ def path_evidence_chip(
     elif symbol and store and symbol.lower() in _WEAK_SYMBOLS:
         hit = _pick_entry_or_weak(store, refs, slug, suffixes, symbol)
         if hit:
-            return _format_path_chip(hit[0], hit[1], hit[2])
+            path, line, use_sym = _stamp_definition_line(hit[0], hit[1], hit[2], store)
+            return _format_path_chip(path, line, use_sym)
 
     candidates = _candidate_paths(refs, slug, file_texts)
     scored: list[tuple[int, str, int, str]] = []
@@ -1257,6 +1290,7 @@ def path_evidence_chip(
         )
         if rust_hit is not None:
             _score, path, line, use_sym = rust_hit
+    path, line, use_sym = _stamp_definition_line(path, line, use_sym, store)
     return _format_path_chip(path, line, use_sym)
 
 
@@ -1315,7 +1349,9 @@ def fill_wiki_key_type_lines(content: str, file_texts: dict[str, str] | None) ->
             path = (parsed.group(1) or "").strip()
             line = (parsed.group(2) or "").strip()
             symbol = (parsed.group(3) or "").strip()
-            if not path or line or not symbol or _is_dummy_symbol(symbol):
+            if not path or not symbol or _is_dummy_symbol(symbol):
+                return match.group(0)
+            if line and line != "1":
                 return match.group(0)
             if is_junk_evidence_path(path):
                 return match.group(0)
@@ -1323,6 +1359,8 @@ def fill_wiki_key_type_lines(content: str, file_texts: dict[str, str] | None) ->
             if not hit:
                 return match.group(0)
             new_path, new_line = hit
+            if line == "1" and new_line <= 1:
+                return match.group(0)
             return f"`{new_path}:{new_line} {symbol}`"
 
         return re.sub(r"`([^`]+)`", pill_repl, section)
@@ -1336,6 +1374,55 @@ def fill_wiki_key_type_lines(content: str, file_texts: dict[str, str] | None) ->
         else:
             out.append(part)
     return "".join(out)
+
+
+_ASK_QUESTION_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("entry-and-boot", "application-entry", "入口", "boot", "connect"), "这个项目的入口在哪，connect 之后谁接手？"),
+    (("agent-loop", "start_turn", "agent loop", "一轮"), "一轮对话里 start_turn 之后谁调模型？"),
+    (("acp", "protocol", "协议"), "ACP 会话是在哪建立的，connect 做了什么？"),
+    (("pager", "terminal-ui", "tui-pager", "终端"), "Pager 把模型流式输出写进哪块缓冲区？"),
+    (("tool-system", "tool_bridge", "toolbridge", "工具"), "模型返回 tool call 之后谁按名字执行？"),
+)
+_ASK_HOST_LEFTOVERS = ("复习调度", "复训调度", "FSRS", "依赖图是怎么构建")
+
+
+def suggested_ask_questions(pages: list[Any] | None) -> list[str]:
+    """Three Chinese questions grounded in THIS wiki. Never host-product leftovers."""
+    items = list(pages or [])
+    if not items:
+        return []
+    blobs: list[str] = []
+    titles: list[str] = []
+    for page in items:
+        if isinstance(page, dict):
+            pid = str(page.get("id") or "")
+            title = str(page.get("title") or "")
+            body = str(page.get("content") or "")[:800]
+        else:
+            pid = str(getattr(page, "id", "") or "")
+            title = str(getattr(page, "title", "") or "")
+            body = str(getattr(page, "content", "") or "")[:800]
+        titles.append(title)
+        blobs.append(f"{pid} {title} {body}".lower())
+    hay = "\n".join(blobs)
+    out: list[str] = []
+    for needles, question in _ASK_QUESTION_RULES:
+        if any(tok.lower() in hay for tok in needles):
+            if question not in out:
+                out.append(question)
+        if len(out) >= 3:
+            break
+    if len(out) < 3:
+        for title in titles:
+            title = (title or "").strip()
+            if not title or title in {"概述", "Overview", "架构概览", "Architecture"}:
+                continue
+            q = f"「{title}」在链路里承担什么？"
+            if q not in out:
+                out.append(q)
+            if len(out) >= 3:
+                break
+    return [q for q in out[:3] if not any(bad in q for bad in _ASK_HOST_LEFTOVERS)]
 
 
 def path_worksheet(

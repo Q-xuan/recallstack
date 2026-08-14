@@ -89,6 +89,47 @@ def save_version_file_texts(version_id: str, files: dict[str, str]) -> None:
     )
 
 
+_HINT_BASENAMES = frozenset(
+    {
+        "tool_bridge.rs",
+        "bridge.rs",
+        "pager.rs",
+        "runtime.rs",
+        "conversation_util.rs",
+        "agent.rs",
+    }
+)
+
+
+def enrich_file_texts_from_working_copy(
+    file_texts: dict[str, str],
+    *,
+    source_type: str = "",
+    source_location: str = "",
+) -> dict[str, str]:
+    """Replace truncated store previews with the on-disk file when it is longer.
+
+    GET-only. Does not re-scan. ``version_id`` is omitted so we do not read
+    the same short cache back.
+    """
+    if not file_texts or not source_location:
+        return file_texts
+    out = dict(file_texts)
+    for path, text in list(file_texts.items()):
+        base = path.replace("\\", "/").rsplit("/", 1)[-1]
+        if base not in _HINT_BASENAMES:
+            continue
+        full = resolve_file_text(
+            source_type=source_type or "local",
+            source_location=source_location,
+            rel_path=path,
+            version_id=None,
+        )
+        if full and len(full.splitlines()) > len((text or "").splitlines()):
+            out[path] = full
+    return out
+
+
 def load_version_file_texts(version_id: str) -> dict[str, str]:
     vid = str(version_id or "").strip()
     if not vid:

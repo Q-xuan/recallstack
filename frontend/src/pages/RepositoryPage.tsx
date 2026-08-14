@@ -805,6 +805,7 @@ export default function RepositoryPage() {
               initialQuestion={askSeed}
               questionKey={askSeedKey}
               canAsk={ready}
+              suggestions={wiki?.suggested_questions || []}
               onClose={() => setAskOpen(false)}
               onOpenPage={openPage}
             />

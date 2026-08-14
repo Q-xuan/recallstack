@@ -48,7 +48,10 @@ from recallstack.domain.schemas import (
     WikiSearchOut,
 )
 from recallstack.jobs import get_job_runner
-from recallstack.learning.code_loader import load_version_file_texts
+from recallstack.learning.code_loader import (
+    enrich_file_texts_from_working_copy,
+    load_version_file_texts,
+)
 from recallstack.security import SecurityError
 
 router = APIRouter(prefix="/recallstack", tags=["recallstack"])
@@ -305,7 +308,13 @@ def get_repository_wiki(
     if not version.wiki_pages or not (version.wiki_pages or {}).get("pages"):
         raise api_error(404, "wiki_not_found", "Wiki not generated yet — re-analyze repository")
     concepts = store.list_concepts(repository_id, version.id)
-    return wiki_out(repository_id, version, concepts)
+    repo = store.get_repository(repository_id)
+    file_texts = enrich_file_texts_from_working_copy(
+        load_version_file_texts(str(version.id)),
+        source_type=getattr(repo, "source_type", "") or "",
+        source_location=getattr(repo, "source_location", "") or "",
+    )
+    return wiki_out(repository_id, version, concepts, file_texts=file_texts)
 
 
 @router.get("/repositories/{repository_id}/wiki/search", response_model=WikiSearchOut)
@@ -428,7 +437,12 @@ def get_learning_path(
     path = store.get_learning_path(version.id)
     if not path:
         raise api_error(404, "path_not_found", "Learning path not found")
-    file_texts = load_version_file_texts(str(version.id))
+    repo = store.get_repository(repository_id)
+    file_texts = enrich_file_texts_from_working_copy(
+        load_version_file_texts(str(version.id)),
+        source_type=getattr(repo, "source_type", "") or "",
+        source_location=getattr(repo, "source_location", "") or "",
+    )
     out = path_out(path, file_texts=file_texts)
     _schedule_path_annotation_prefetch(background_tasks, str(version.id), out, file_texts)
     return out

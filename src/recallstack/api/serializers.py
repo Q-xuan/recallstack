@@ -41,6 +41,7 @@ from recallstack.learning.learning_contract import (
     path_rank,
     path_worksheet,
     step_task_for_slug,
+    suggested_ask_questions,
     upgrade_legacy_concept_markdown,
     wiki_prose_excerpt,
 )
@@ -248,6 +249,7 @@ def wiki_out(
         project_name=payload.get("project_name") or "",
         pages=pages,
         sidebar=mapped_sidebar,
+        suggested_questions=suggested_ask_questions(pages),
     )
 
 

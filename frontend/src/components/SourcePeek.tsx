@@ -116,7 +116,9 @@ export default function SourcePeek({ repositoryId, reference, onClose, slug }: P
       {error ? (
         <p className="rs-peek-error">{error}</p>
       ) : code === null ? (
-        <p className="rs-peek-loading">{t("读取源码…", "Reading source…")}</p>
+        <p className="rs-peek-loading">
+          {slug ? t("在标关键行…", "Marking the load-bearing lines…") : t("读取源码…", "Reading source…")}
+        </p>
       ) : (
         <div className="rs-peek-body">
           {lines.map((src, i) => {

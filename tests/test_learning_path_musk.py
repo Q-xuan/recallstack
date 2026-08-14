@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from types import SimpleNamespace
 
-from recallstack.api.serializers import path_out
+from recallstack.api.serializers import path_out, wiki_out
 from recallstack.domain.schemas import ConceptDraft, SourceReference
 from recallstack.learning.learning_contract import (
     fill_wiki_key_type_lines,
@@ -14,6 +14,7 @@ from recallstack.learning.learning_contract import (
     path_rank,
     path_worksheet,
     step_task_for_slug,
+    suggested_ask_questions,
     upgrade_legacy_concept_markdown,
 )
 from recallstack.learning.path_builder import PathBuilder
@@ -1080,3 +1081,152 @@ def test_wiki_core_subsystems_path_only_unchanged():
     filled = fill_wiki_key_type_lines(md, _live_use_site_store())
     assert "`crates/codegen/xai-grok-agent/src/tool_bridge.rs`" in filled
     assert ":3" not in filled
+
+
+def test_toolbridge_line_comes_from_file_text_not_one():
+    """Store finds the file; chip must use the struct line (Jake: :1 on the right file)."""
+    store = {
+        "crates/codegen/xai-grok-agent/src/tool_bridge.rs": _rs_with_def_at(
+            40, "pub struct ToolBridge {"
+        )
+    }
+    chip = path_evidence_chip(
+        ConceptDraft(
+            slug="tool-system",
+            title="工具层",
+            wiki_page_id="topics/tool-system",
+            source_references=[
+                SourceReference(
+                    path="crates/codegen/xai-grok-agent/src/tool_bridge.rs",
+                    start_line=1,
+                    symbol="ToolBridge",
+                )
+            ],
+        ),
+        file_texts=store,
+    )
+    assert chip == "crates/codegen/xai-grok-agent/src/tool_bridge.rs:40 ToolBridge"
+
+
+def test_toolbridge_reads_store_text_when_path_prefix_differs():
+    store = {
+        "crates/xai-grok-agent/src/tool_bridge.rs": _rs_with_def_at(
+            40, "pub struct ToolBridge {"
+        )
+    }
+    chip = path_evidence_chip(
+        ConceptDraft(
+            slug="tool-system",
+            title="工具层",
+            wiki_page_id="topics/tool-system",
+            source_references=[
+                SourceReference(
+                    path="crates/codegen/xai-grok-agent/src/tool_bridge.rs",
+                    start_line=1,
+                    symbol="ToolBridge",
+                )
+            ],
+        ),
+        file_texts=store,
+    )
+    assert chip.endswith(":40 ToolBridge")
+    assert chip.rsplit("/", 1)[-1] == "tool_bridge.rs:40 ToolBridge"
+
+
+def test_pager_and_runtime_stamp_def_line_not_one():
+    store = {
+        "crates/codegen/xai-grok-pager/src/pager.rs": _rs_with_def_at(
+            88, "pub struct Pager {"
+        ),
+        "crates/codegen/xai-agent-lifecycle/src/runtime.rs": _rs_with_def_at(
+            22, "pub struct AgentRuntime {"
+        ),
+    }
+    pager = path_evidence_chip(
+        ConceptDraft(
+            slug="terminal-ui",
+            title="Terminal UI",
+            wiki_page_id="topics/terminal-ui",
+            source_references=[
+                SourceReference(
+                    path="crates/codegen/xai-grok-pager/src/pager.rs",
+                    start_line=1,
+                    symbol="Pager",
+                )
+            ],
+        ),
+        file_texts=store,
+    )
+    runtime = path_evidence_chip(
+        ConceptDraft(
+            slug="agent-runtime",
+            title="Agent Runtime",
+            wiki_page_id="topics/agent-runtime",
+            source_references=[
+                SourceReference(
+                    path="crates/codegen/xai-agent-lifecycle/src/runtime.rs",
+                    start_line=1,
+                    symbol="AgentRuntime",
+                )
+            ],
+        ),
+        file_texts=store,
+    )
+    assert pager == "crates/codegen/xai-grok-pager/src/pager.rs:88 Pager"
+    assert runtime == "crates/codegen/xai-agent-lifecycle/src/runtime.rs:22 AgentRuntime"
+
+
+def test_suggested_ask_questions_are_wiki_grounded_not_fsrs():
+    grok_pages = [
+        {"id": "topics/entry-and-boot", "title": "入口与启动", "content": "acp connect"},
+        {"id": "topics/agent-loop", "title": "Agent Loop", "content": "start_turn"},
+        {"id": "topics/acp-protocol", "title": "ACP", "content": "protocol"},
+        {"id": "topics/terminal-ui", "title": "Terminal UI", "content": "Pager"},
+    ]
+    qs = suggested_ask_questions(grok_pages)
+    assert len(qs) == 3
+    blob = " ".join(qs)
+    assert "start_turn" in blob or "connect" in blob or "Pager" in blob or "ACP" in blob
+    assert "复习调度" not in blob
+    assert "复训调度" not in blob
+    assert "FSRS" not in blob
+    assert "依赖图是怎么构建" not in blob
+
+    empty = suggested_ask_questions([])
+    assert empty == []
+
+
+def test_wiki_out_applies_key_type_line_from_store(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    md = (
+        "# 工具层\n\n"
+        "## 关键类型\n\n"
+        "- ToolBridge — 按名分发 — "
+        "`crates/codegen/xai-grok-agent/src/tool_bridge.rs ToolBridge`\n"
+        "- Ghost — 无定义 — `crates/ghost/src/lib.rs Ghost`\n"
+    )
+    store = {
+        "crates/codegen/xai-grok-agent/src/tool_bridge.rs": _rs_with_def_at(
+            40, "pub struct ToolBridge {"
+        )
+    }
+
+    class _Version:
+        id = "ver-key-types"
+        wiki_pages = {
+            "project_name": "grok-study",
+            "pages": [
+                {"id": "topics/tool-system", "title": "工具层", "content": md},
+                {"id": "topics/agent-loop", "title": "Agent Loop", "content": "start_turn\n"},
+            ],
+            "sidebar": [],
+        }
+
+    result = wiki_out("repo-1", _Version(), file_texts=store)
+    page = next(p for p in result.pages if p.id == "topics/tool-system")
+    assert "`crates/codegen/xai-grok-agent/src/tool_bridge.rs:40 ToolBridge`" in page.content
+    assert "`crates/ghost/src/lib.rs Ghost`" in page.content
+    assert ":1 Ghost`" not in page.content
+    assert result.suggested_questions
+    assert "复习调度" not in " ".join(result.suggested_questions)
+    assert any("start_turn" in q or "tool call" in q for q in result.suggested_questions)

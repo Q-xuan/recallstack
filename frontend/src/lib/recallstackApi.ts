@@ -133,6 +133,7 @@ export interface Wiki {
   project_name: string;
   pages: WikiPage[];
   sidebar: WikiSidebarItem[];
+  suggested_questions?: string[];
 }
 
 export interface WikiSearchResult {

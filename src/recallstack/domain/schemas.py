@@ -164,6 +164,7 @@ class WikiOut(BaseModel):
     project_name: str
     pages: list[WikiPageOut]
     sidebar: list[WikiSidebarItemOut]
+    suggested_questions: list[str] = Field(default_factory=list)
 
 
 class WikiSearchResultOut(BaseModel):
