@@ -76,8 +76,8 @@ RECALLSTACK_MAX_FILE_SIZE_KB=200
 REPOWIKI_MODEL=
 REPOWIKI_API_KEY=
 REPOWIKI_API_BASE=
-# SourcePeek notes (lazy). Analyze stays on REPOWIKI_MODEL (deepseek-v4-flash).
-# REPOWIKI_ANNOTATE_MODEL=openai/deepseek-v4
+# SourcePeek notes (lazy). Same model as analyze (deepseek-v4-flash).
+# REPOWIKI_ANNOTATE_MODEL=openai/deepseek-v4-flash
 # REPOWIKI_ANNOTATE_API_KEY=   # optional; falls back to REPOWIKI_API_KEY
 # REPOWIKI_ANNOTATE_API_BASE=  # optional; falls back to REPOWIKI_API_BASE
 REPOWIKI_LLM_TIMEOUT_SECONDS=60

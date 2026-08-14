@@ -4,10 +4,10 @@ Overlay only — never writes comments into the scanned repo. Generated on first
 peek, cached by ``(repo_version_id, path, start_line, content_hash)``.
 
 Analyze stays on ``REPOWIKI_MODEL`` (Jake: deepseek-v4-flash). This small call
-uses ``REPOWIKI_ANNOTATE_MODEL`` (default ``openai/deepseek-v4``, the non-flash
-sibling on the same OpenCode-compatible hub). Optional
-``REPOWIKI_ANNOTATE_API_KEY`` / ``REPOWIKI_ANNOTATE_API_BASE`` fall back to the
-existing key and base. Thinking is disabled (same as structured wiki JSON).
+uses ``REPOWIKI_ANNOTATE_MODEL`` (default ``openai/deepseek-v4-flash``, same as
+analyze). Optional ``REPOWIKI_ANNOTATE_API_KEY`` / ``REPOWIKI_ANNOTATE_API_BASE``
+fall back to the existing key and base. Thinking is disabled (same as
+structured wiki JSON).
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from recallstack.learning.learning_contract import pass_gate, path_principles
 logger = logging.getLogger(__name__)
 
 # Non-flash sibling. Do not invent ids that are not on the hub.
-DEFAULT_ANNOTATE_MODEL = "openai/deepseek-v4"
+DEFAULT_ANNOTATE_MODEL = "openai/deepseek-v4-flash"
 MAX_NOTES = 3
 MAX_NOTE_CHARS = 120
 MAX_TOKENS = 280
