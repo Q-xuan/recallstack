@@ -107,7 +107,8 @@ _EVIDENCE_HINTS: dict[str, tuple[tuple[str, ...], str]] = {
     "project-goal": (("README.md", "readme.md"), ""),
 }
 
-# Used only when refs are junk (toml/json/sh) and the scan store has no hit.
+# Hint paths tried only when that exact key exists in version_files.
+# Never emit these if the store is loaded and the key is absent.
 _FALLBACK_FILES: dict[str, tuple[str, ...]] = {
     "entry-and-boot": (
         "crates/codegen/xai-grok-pager/src/lib.rs",
@@ -758,21 +759,42 @@ def _stamp_definition_line(
 ) -> tuple[str, int, str]:
     """Once the file is known, read its text and use the struct/impl/fn line."""
     name = (symbol or "").strip()
+    key = _resolve_store_key(file_texts, path) if file_texts else None
+    if key:
+        path = key
     text = _file_text_for(file_texts, path)
     if name and text:
-        found = _definition_line_in_text(text, name)
+        found = line_of_symbol_in_text(text, name)
         if found:
             return path, found, name
+        return path, 0, name
     return path, line, name
 
 
 def _format_path_chip(path: str, line: int, symbol: str | None) -> str:
     normalized = path.replace("\\", "/")
-    loc = f"{normalized}:{int(line) if line else 1}"
+    loc = f"{normalized}:{int(line)}" if line and int(line) > 0 else normalized
     sym = (symbol or "").strip()
     if sym and not _is_dummy_symbol(sym):
         return f"{loc} {sym}"
     return loc
+
+
+def _emit_store_chip(
+    path: str,
+    line: int,
+    symbol: str,
+    store: dict[str, str] | None,
+) -> str | None:
+    """Never emit a path that is not a version_files key when the store is loaded."""
+    if store:
+        key = _resolve_store_key(store, path)
+        if not key:
+            return None
+        path, line, symbol = _stamp_definition_line(key, line, symbol, store)
+        return _format_path_chip(path, line, symbol)
+    path, line, symbol = _stamp_definition_line(path, line, symbol, store)
+    return _format_path_chip(path, line, symbol)
 
 
 def is_junk_evidence_path(path: str, *, slug: str = "") -> bool:
@@ -893,6 +915,34 @@ def _crate_dir(path: str) -> str:
             return "/".join(parts[: i + 3])
         return "/".join(parts[: i + 2])
     return "/".join(parts[:-1]) if len(parts) > 1 else ""
+
+
+def _resolve_store_key(file_texts: dict[str, str] | None, path: str) -> str | None:
+    """Return the version_files key for ``path``, or None if it is not in the store."""
+    if not file_texts or not path:
+        return None
+    key = path.replace("\\", "/")
+    if key in file_texts:
+        return key
+    matches = [
+        p.replace("\\", "/")
+        for p in file_texts
+        if p.replace("\\", "/") == key or p.replace("\\", "/").endswith("/" + key)
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def line_of_symbol_in_text(text: str, symbol: str) -> int:
+    """Definition line, else first real occurrence. 0 if the name is absent."""
+    name = (symbol or "").strip()
+    if not text or len(name) < 2:
+        return 0
+    found = _definition_line_in_text(text, name)
+    if found:
+        return found
+    return _occurrence_line_in_text(text, name)
 
 
 def _file_text_for(file_texts: dict[str, str] | None, path: str) -> str:
@@ -1041,6 +1091,84 @@ def _pick_definition_in_store(
     return path, line
 
 
+def _pick_symbol_in_store(
+    file_texts: dict[str, str],
+    symbol: str,
+    slug: str,
+    suffixes: tuple[str, ...],
+) -> tuple[str, int] | None:
+    """Symbol in a production store key. Prefer a definition; never invent a path."""
+    hit = _pick_definition_in_store(file_texts, symbol, slug, suffixes)
+    if hit:
+        return hit
+    name = (symbol or "").strip()
+    if not file_texts or len(name) < 2:
+        return None
+    hits: list[tuple[int, str, int]] = []
+    for path, text in file_texts.items():
+        norm = path.replace("\\", "/")
+        if not _is_production_src(norm, slug=slug) or _blocked_for_slug(norm, slug):
+            continue
+        occ = _occurrence_line_in_text(text, name)
+        if not occ:
+            continue
+        score = 50 if norm.lower().endswith(".rs") else 20
+        score += 30
+        if "/src/" in f"/{norm.lower()}/":
+            score += 10
+        score += _prefer_score(norm, slug)
+        for i, suffix in enumerate(suffixes):
+            if _path_matches_hint(norm, suffix):
+                score += 40 - min(i, 12)
+                break
+        hits.append((score, norm, occ))
+    if not hits:
+        return None
+    preferred = [
+        item
+        for item in hits
+        if any(tok in item[1].lower() for tok in _SLUG_PREFER_NEEDLES.get(slug, ()))
+    ]
+    ranked = preferred or hits
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    _score, path, line = ranked[0]
+    return path, line
+
+
+def _best_store_ref(
+    refs: list[SourceReference],
+    slug: str,
+    store: dict[str, str],
+    symbol: str,
+) -> tuple[str, int, str] | None:
+    """Best concept ref whose path is a store key. ``:line`` only if the symbol is in the text."""
+    scored: list[tuple[int, str, int, str]] = []
+    for ref in refs:
+        key = _resolve_store_key(store, ref.path)
+        if not key or is_junk_evidence_path(key, slug=slug) or _blocked_for_slug(key, slug):
+            continue
+        text = store.get(key) or ""
+        ref_sym = (getattr(ref, "symbol", None) or "").strip()
+        line = line_of_symbol_in_text(text, symbol) if symbol else 0
+        emit_sym = symbol if line else ""
+        if not line and ref_sym:
+            line = line_of_symbol_in_text(text, ref_sym)
+            emit_sym = ref_sym if line else ""
+        score = 50 if key.endswith(_SRC_EXT) else 10
+        score += _prefer_score(key, slug)
+        if line:
+            score += 40
+        if ref.start_line and line == ref.start_line:
+            score += 8
+        scored.append((score, key, line, emit_sym))
+    if not scored:
+        return None
+    rust = [item for item in scored if item[1].endswith(_SRC_EXT)]
+    pool = rust if rust else scored
+    pool.sort(key=lambda item: (-item[0], item[1]))
+    return pool[0][1], pool[0][2], pool[0][3]
+
+
 def _candidate_paths(
     refs: list[SourceReference],
     slug: str,
@@ -1055,6 +1183,13 @@ def _candidate_paths(
         if is_junk_evidence_path(path, slug=slug):
             return
         if _blocked_for_slug(path, slug):
+            return
+        if file_texts:
+            key = _resolve_store_key(file_texts, path)
+            if not key:
+                return
+            path = key
+        if path in seen:
             return
         seen.append(path)
 
@@ -1073,8 +1208,8 @@ def _candidate_paths(
             crate = _crate_dir(norm)
             if crate and crate in crates and norm.endswith(_SRC_EXT):
                 add(norm)
-    for fallback in _FALLBACK_FILES.get(slug, ()):
-        add(fallback)
+        for fallback in _FALLBACK_FILES.get(slug, ()):
+            add(fallback)
     return seen
 
 
@@ -1089,14 +1224,14 @@ def _score_path(
 ) -> tuple[int, int, str]:
     """Return (score, line, symbol_to_emit)."""
     score = 0
-    line = 1
+    line = 0
     use_sym = symbol
     in_refs = False
     for ref in refs:
         if ref.path.replace("\\", "/") != path:
             continue
         in_refs = True
-        if ref.start_line and ref.start_line > 1:
+        if ref.start_line and ref.start_line > 0:
             line = ref.start_line
             score += 8
     if path.endswith(".rs"):
@@ -1120,15 +1255,12 @@ def _score_path(
         score -= 80
     if text and symbol:
         line_no, is_defn = _best_symbol_line(text, symbol)
-        if line_no and is_defn:
+        if line_no:
             line = line_no
-            score += 120
-        elif line_no and not _is_type_name(symbol):
-            line = line_no
-            score += 40
+            score += 120 if is_defn else 40
         else:
-            # Use/call site of a type, or the file never names the hint.
             use_sym = ""
+            line = 0
             score -= 50
     elif text and not symbol:
         found_line, found_sym = _first_definition_line(text)
@@ -1233,21 +1365,29 @@ def path_evidence_chip(
     # production *.rs in version_files. Weak names like ``main`` stay on
     # slug-allowed files (grok/pager boot, never ptyctl-cli).
     if symbol and store and symbol.lower() not in _WEAK_SYMBOLS:
-        hit = _pick_definition_in_store(store, symbol, slug, suffixes)
+        hit = _pick_symbol_in_store(store, symbol, slug, suffixes)
         if hit:
-            path, line, use_sym = _stamp_definition_line(hit[0], hit[1], symbol, store)
-            return _format_path_chip(path, line, use_sym)
+            chip = _emit_store_chip(hit[0], hit[1], symbol, store)
+            if chip:
+                return chip
         logger.info(
-            "learning-path evidence: no production definition of %s for slug=%s (%d files)",
+            "learning-path evidence: no store occurrence of %s for slug=%s (%d files)",
             symbol,
             slug,
             len(store),
         )
+        ref_hit = _best_store_ref(refs, slug, store, symbol)
+        if ref_hit:
+            return _format_path_chip(ref_hit[0], ref_hit[1], ref_hit[2])
     elif symbol and store and symbol.lower() in _WEAK_SYMBOLS:
         hit = _pick_entry_or_weak(store, refs, slug, suffixes, symbol)
         if hit:
-            path, line, use_sym = _stamp_definition_line(hit[0], hit[1], hit[2], store)
-            return _format_path_chip(path, line, use_sym)
+            chip = _emit_store_chip(hit[0], hit[1], hit[2], store)
+            if chip:
+                return chip
+        ref_hit = _best_store_ref(refs, slug, store, symbol)
+        if ref_hit:
+            return _format_path_chip(ref_hit[0], ref_hit[1], ref_hit[2])
 
     candidates = _candidate_paths(refs, slug, file_texts)
     scored: list[tuple[int, str, int, str]] = []
@@ -1290,7 +1430,14 @@ def path_evidence_chip(
         )
         if rust_hit is not None:
             _score, path, line, use_sym = rust_hit
-    path, line, use_sym = _stamp_definition_line(path, line, use_sym, store)
+    chip = _emit_store_chip(path, line, use_sym, store)
+    if chip:
+        return chip
+    if store:
+        ref_hit = _best_store_ref(refs, slug, store, symbol)
+        if ref_hit:
+            return _format_path_chip(ref_hit[0], ref_hit[1], ref_hit[2])
+        return None
     return _format_path_chip(path, line, use_sym)
 
 
@@ -1306,25 +1453,35 @@ def resolve_symbol_definition(
     *,
     prefer_path: str = "",
 ) -> tuple[str, int] | None:
-    """Store-wide struct/impl/fn of ``symbol``. Skip toml/json/sh. No use-sites."""
+    """Store-wide struct/impl/fn of ``symbol``. Path must be a version_files key.
+
+    Definitions beat use-sites. ``prefer_path`` only boosts a key that exists;
+    a missing ``tool_bridge.rs`` never wins.
+    """
     name = (symbol or "").strip()
     if not file_texts or len(name) < 2:
         return None
-    prefer = (prefer_path or "").replace("\\", "/")
-    hits: list[tuple[int, str, int]] = []
+    prefer_key = _resolve_store_key(file_texts, prefer_path)
+    defs: list[tuple[int, str, int]] = []
+    occs: list[tuple[int, str, int]] = []
     for path, text in file_texts.items():
         norm = path.replace("\\", "/")
         if is_junk_evidence_path(norm) or not _is_production_src(norm):
             continue
-        line = _definition_line_in_text(text, name)
-        if not line:
+        defn = _definition_line_in_text(text, name)
+        occ = _occurrence_line_in_text(text, name) if not defn else 0
+        if not defn and not occ:
             continue
         score = 50 if norm.lower().endswith(".rs") else 20
-        if prefer and (norm == prefer or norm.endswith("/" + prefer)):
-            score += 80
         if "/src/" in f"/{norm.lower()}/":
             score += 10
-        hits.append((score, norm, line))
+        if prefer_key and norm == prefer_key:
+            score += 80
+        if defn:
+            defs.append((score + 80, norm, defn))
+        else:
+            occs.append((score, norm, occ))
+    hits = defs or occs
     if not hits:
         return None
     hits.sort(key=lambda item: (-item[0], item[1]))
@@ -1352,16 +1509,24 @@ def fill_wiki_key_type_lines(content: str, file_texts: dict[str, str] | None) ->
             if not path or not symbol or _is_dummy_symbol(symbol):
                 return match.group(0)
             if line and line != "1":
-                return match.group(0)
+                store_existing = _resolve_store_key(file_texts, path)
+                if store_existing or not file_texts:
+                    return match.group(0)
             if is_junk_evidence_path(path):
                 return match.group(0)
             hit = resolve_symbol_definition(file_texts, symbol, prefer_path=path)
-            if not hit:
-                return match.group(0)
-            new_path, new_line = hit
-            if line == "1" and new_line <= 1:
-                return match.group(0)
-            return f"`{new_path}:{new_line} {symbol}`"
+            if hit:
+                new_path, new_line = hit
+                if _resolve_store_key(file_texts, new_path):
+                    return f"`{new_path}:{new_line} {symbol}`"
+            store_path = _resolve_store_key(file_texts, path)
+            if store_path:
+                found = line_of_symbol_in_text(file_texts.get(store_path) or "", symbol)
+                if found:
+                    return f"`{store_path}:{found} {symbol}`"
+                if line == "1":
+                    return f"`{store_path} {symbol}`"
+            return match.group(0)
 
         return re.sub(r"`([^`]+)`", pill_repl, section)
 

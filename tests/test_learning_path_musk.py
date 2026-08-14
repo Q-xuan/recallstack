@@ -1230,3 +1230,126 @@ def test_wiki_out_applies_key_type_line_from_store(monkeypatch):
     assert result.suggested_questions
     assert "复习调度" not in " ".join(result.suggested_questions)
     assert any("start_turn" in q or "tool call" in q for q in result.suggested_questions)
+
+
+def test_missing_preferred_file_uses_store_symbol_not_invented_pager():
+    """pager.rs absent; Pager only lives in an existing store key."""
+    store = {
+        "src/app/foo.rs": "// dispatch\n\npub struct Pager {\n    buf: String,\n}\n",
+        "crates/codegen/xai-grok-pager/src/app/dispatch/modes.rs": (
+            "fn draw() {\n    let _ = 1;\n}\n"
+        ),
+    }
+    chip = path_evidence_chip(
+        ConceptDraft(
+            slug="terminal-ui",
+            title="Terminal UI",
+            wiki_page_id="topics/terminal-ui",
+            source_references=[
+                SourceReference(
+                    path="crates/codegen/xai-grok-pager/src/app/dispatch/modes.rs",
+                    start_line=1,
+                    symbol="Pager",
+                )
+            ],
+        ),
+        file_texts=store,
+    )
+    assert chip == "src/app/foo.rs:3 Pager"
+    assert "pager.rs" not in chip
+
+
+def test_symbol_absent_from_store_keeps_existing_ref_not_invented_file():
+    store = {
+        "crates/codegen/xai-grok-agent/src/agent.rs": (
+            "//! Agent types.\n\npub struct Agent;\n"
+        ),
+        "crates/codegen/xai-grok-pager/src/app/agent.rs": _rs_with_def_at(
+            791, "    pub fn start_turn(&mut self) {"
+        ),
+        "crates/codegen/xai-chat-state/src/conversation_util.rs": _rs_with_def_at(
+            27, "pub fn replace_or_insert_system_head(window: &mut Window, head: &str) {"
+        ),
+        "crates/codegen/xai-grok-agent/src/acp/mod.rs": _rs_with_def_at(
+            152, "    pub async fn connect("
+        ),
+    }
+    tools = path_evidence_chip(
+        ConceptDraft(
+            slug="tool-system",
+            title="工具层",
+            wiki_page_id="topics/tool-system",
+            source_references=[
+                SourceReference(
+                    path="crates/codegen/xai-grok-agent/src/agent.rs",
+                    start_line=6,
+                    symbol="ToolBridge",
+                )
+            ],
+        ),
+        file_texts=store,
+    )
+    assert tools is not None
+    assert "tool_bridge.rs" not in tools
+    assert tools.startswith("crates/codegen/xai-grok-agent/src/agent.rs")
+    assert ":1 " not in tools
+
+    tui = path_evidence_chip(
+        ConceptDraft(
+            slug="terminal-ui",
+            title="Terminal UI",
+            wiki_page_id="topics/terminal-ui",
+            source_references=[
+                SourceReference(
+                    path="crates/codegen/xai-grok-pager/src/app/agent.rs",
+                    start_line=791,
+                )
+            ],
+        ),
+        file_texts=store,
+    )
+    assert tui is not None
+    assert "pager.rs" not in tui
+    assert tui.startswith("crates/codegen/xai-grok-pager/src/app/agent.rs")
+
+    runtime = path_evidence_chip(
+        ConceptDraft(
+            slug="agent-runtime",
+            title="Agent Runtime",
+            wiki_page_id="topics/agent-runtime",
+            source_references=[
+                SourceReference(
+                    path="crates/codegen/xai-grok-agent/src/agent.rs",
+                    start_line=1,
+                )
+            ],
+        ),
+        file_texts=store,
+    )
+    assert runtime is not None
+    assert "runtime.rs" not in runtime
+    assert "agent.rs" in runtime
+
+
+def test_wiki_key_types_do_not_invent_missing_store_path():
+    md = (
+        "## 关键类型\n\n"
+        "- ToolBridge — 分发 — "
+        "`crates/codegen/xai-grok-agent/src/tool_bridge.rs ToolBridge`\n"
+    )
+    store = {"crates/codegen/xai-grok-agent/src/agent.rs": "pub struct Agent;\n"}
+    filled = fill_wiki_key_type_lines(md, store)
+    assert "tool_bridge.rs:1" not in filled
+    assert "`crates/codegen/xai-grok-agent/src/tool_bridge.rs ToolBridge`" in filled
+
+
+def test_wiki_key_types_use_existing_store_symbol_not_invented_pager():
+    md = (
+        "## 关键类型\n\n"
+        "- Pager — 画布 — "
+        "`crates/codegen/xai-grok-pager/src/pager.rs Pager`\n"
+    )
+    store = {"src/app/foo.rs": "// dispatch\n\npub struct Pager {\n    buf: String,\n}\n"}
+    filled = fill_wiki_key_type_lines(md, store)
+    assert "pager.rs" not in filled
+    assert "`src/app/foo.rs:3 Pager`" in filled
