@@ -15,6 +15,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from recallstack.learning.i18n import content_lang
 from recallstack.learning.learning_contract import (
     CORE_PATH_CAP,
+    chip_needs_restamp,
     definition_index_scope,
     drop_duplicate_entry_slug,
     fill_wiki_key_type_lines,
@@ -50,6 +51,8 @@ logger = logging.getLogger(__name__)
 # Bump when materialize logic changes so stale persisted pages re-upgrade once.
 WIKI_SERVE_REVISION = 1
 PATH_SERVE_REVISION = 2
+# Bump when leftover chip rules change so GET restamps those two slugs once.
+PATH_CHIP_RESTAMP = 1
 
 
 def wiki_is_materialized(payload: dict[str, Any] | None) -> bool:
@@ -67,6 +70,56 @@ def path_chips_ready(resolved: dict[str, Any] | None) -> bool:
 def path_is_materialized(resolved: dict[str, Any] | None) -> bool:
     """Chips on disk are enough. Revision bumps upgrade in memory, not via store walk."""
     return path_chips_ready(resolved)
+
+
+def path_needs_chip_restamp(path: Any, resolved: dict[str, Any] | None) -> bool:
+    """True when project-goal / agent-runtime leftovers are still on disk."""
+    if not isinstance(resolved, dict) or not path_chips_ready(resolved):
+        return False
+    if int(resolved.get("chip_restamp") or 0) >= PATH_CHIP_RESTAMP:
+        return False
+    chips = resolved.get("chips") or {}
+    if not isinstance(chips, dict):
+        return False
+    for n in getattr(path, "nodes", None) or []:
+        concept = getattr(n, "concept", None)
+        slug = getattr(concept, "slug", "") or ""
+        cid = str(getattr(n, "concept_id", "") or getattr(concept, "id", "") or "")
+        if not cid or not chip_needs_restamp(slug, str(chips.get(cid) or "")):
+            continue
+        return True
+    return False
+
+
+def restamp_weak_path_chips(
+    path: Any,
+    resolved: dict[str, Any],
+    file_texts: dict[str, str] | None,
+) -> dict[str, Any]:
+    """Rewrite only leftover chips, then persist. Later GETs stay cheap."""
+    chips = dict(resolved.get("chips") or {})
+    nodes = dict(resolved.get("nodes") or {}) if isinstance(resolved.get("nodes"), dict) else {}
+    store = file_texts or {}
+    with definition_index_scope(store):
+        for n in getattr(path, "nodes", None) or []:
+            concept = getattr(n, "concept", None)
+            slug = getattr(concept, "slug", "") or ""
+            cid = str(getattr(n, "concept_id", "") or getattr(concept, "id", "") or "")
+            if not cid or not concept:
+                continue
+            if not chip_needs_restamp(slug, str(chips.get(cid) or "")):
+                continue
+            chip = path_evidence_chip(concept, file_texts=store)
+            if not chip:
+                continue
+            chips[cid] = chip
+            nodes[cid] = path_step_contract(concept, chip=chip, file_texts=store)
+    return {
+        "serve_revision": PATH_SERVE_REVISION,
+        "chip_restamp": PATH_CHIP_RESTAMP,
+        "chips": chips,
+        "nodes": nodes,
+    }
 
 
 def kept_wiki_pages(raw_pages: list[Any]) -> list[dict[str, Any]]:
@@ -209,7 +262,12 @@ def materialize_path_resolved(
             if chip:
                 chips[cid] = chip
             nodes[cid] = path_step_contract(concept, chip=chip, file_texts=store)
-    return {"serve_revision": PATH_SERVE_REVISION, "chips": chips, "nodes": nodes}
+    return {
+        "serve_revision": PATH_SERVE_REVISION,
+        "chip_restamp": PATH_CHIP_RESTAMP,
+        "chips": chips,
+        "nodes": nodes,
+    }
 
 
 def cheap_upgrade_path_resolved(path: Any, persisted: dict[str, Any]) -> dict[str, Any]:
@@ -229,11 +287,14 @@ def cheap_upgrade_path_resolved(path: Any, persisted: dict[str, Any]) -> dict[st
         if not chip:
             continue
         nodes[cid] = path_step_contract(concept, chip=chip, file_texts=None)
-    return {
+    out = {
         "serve_revision": PATH_SERVE_REVISION,
         "chips": chips,
         "nodes": nodes,
     }
+    if persisted.get("chip_restamp"):
+        out["chip_restamp"] = persisted["chip_restamp"]
+    return out
 
 
 def persist_path_from_loaded_store(
@@ -242,7 +303,20 @@ def persist_path_from_loaded_store(
     file_texts: dict[str, str] | None,
 ) -> None:
     """While the store is already in memory (wiki materialize), persist path chips too."""
-    if path is None or path_chips_ready(getattr(path, "resolved", None)):
+    if path is None:
+        return
+    resolved = getattr(path, "resolved", None)
+    if path_chips_ready(resolved):
+        if path_needs_chip_restamp(path, resolved):
+            upgraded = restamp_weak_path_chips(path, resolved or {}, file_texts)
+            persist_path_resolved(session, path, upgraded)
+            path.resolved = upgraded
+            sync_path_contract_items(session, path, file_texts)
+            try:
+                session.commit()
+            except Exception:  # noqa: BLE001
+                session.rollback()
+                logger.exception("path leftover chip restamp after store-backed persist failed")
         return
     resolved = materialize_path_resolved(path, file_texts)
     persist_path_resolved(session, path, resolved)
@@ -272,6 +346,28 @@ def _item_has_contract(item: Any) -> bool:
         return False
     contract = rubric.get("contract")
     return isinstance(contract, dict) and bool(contract.get("symbol") or contract.get("chip"))
+
+
+def _item_matches_contract(item: Any, contract: dict[str, Any]) -> bool:
+    """Skip rewrite only when the persisted item already locks the new chip + line."""
+    if not _item_has_contract(item):
+        return False
+    rubric = getattr(item, "rubric", None) or {}
+    existing = rubric.get("contract") if isinstance(rubric, dict) else None
+    if not isinstance(existing, dict):
+        return False
+    new_chip = (contract.get("chip") or "").strip()
+    old_chip = (existing.get("chip") or "").strip()
+    if new_chip and old_chip != new_chip:
+        return False
+    if int(contract.get("line") or 0) < 1:
+        return False
+    refs = getattr(item, "source_references", None) or []
+    if refs:
+        first = refs[0] if isinstance(refs[0], dict) else None
+        if first is not None and not first.get("start_line"):
+            return False
+    return True
 
 
 def sync_path_contract_items(
@@ -320,7 +416,7 @@ def sync_path_contract_items(
                 .order_by(LearningItem.created_at.asc())
             )
         )
-        if existing and all(_item_has_contract(item) for item in existing):
+        if existing and all(_item_matches_contract(item, contract) for item in existing):
             continue
         for item, draft in zip(existing, drafts, strict=False):
             item.item_type = draft.item_type

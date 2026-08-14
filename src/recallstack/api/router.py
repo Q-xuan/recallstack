@@ -60,9 +60,11 @@ from recallstack.learning.wiki_serve import (
     materialize_path_resolved,
     materialize_wiki_payload,
     path_chips_ready,
+    path_needs_chip_restamp,
     persist_path_from_loaded_store,
     persist_path_resolved,
     persist_wiki_payload,
+    restamp_weak_path_chips,
     sync_path_contract_items,
     wiki_is_materialized,
 )
@@ -567,7 +569,22 @@ def get_learning_path(
         raise api_error(404, "path_not_found", "Learning path not found")
     resolved = getattr(path, "resolved", None)
     if path_chips_ready(resolved):
-        if (resolved or {}).get("serve_revision") != PATH_SERVE_REVISION:
+        if path_needs_chip_restamp(path, resolved):
+            repo = store.get_repository(repository_id)
+            file_texts = enrich_file_texts_from_working_copy(
+                load_version_file_texts(str(version.id)),
+                source_type=getattr(repo, "source_type", "") or "",
+                source_location=getattr(repo, "source_location", "") or "",
+            )
+            upgraded = restamp_weak_path_chips(path, resolved or {}, file_texts)
+            persist_path_resolved(db, path, upgraded)
+            path.resolved = upgraded
+            sync_path_contract_items(db, path, file_texts)
+            try:
+                db.commit()
+            except Exception:  # noqa: BLE001
+                db.rollback()
+        elif (resolved or {}).get("serve_revision") != PATH_SERVE_REVISION:
             upgraded = cheap_upgrade_path_resolved(path, resolved or {})
             persist_path_resolved(db, path, upgraded)
             path.resolved = upgraded

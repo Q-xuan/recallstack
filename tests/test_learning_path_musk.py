@@ -8,15 +8,19 @@ from types import SimpleNamespace
 from recallstack.api.serializers import path_out, wiki_out
 from recallstack.domain.schemas import ConceptDraft, SourceReference
 from recallstack.learning.learning_contract import (
+    chip_needs_restamp,
     fill_wiki_key_type_lines,
     is_core_path_concept,
+    parse_path_chip,
     path_evidence_chip,
     path_rank,
+    path_step_contract,
     path_worksheet,
     step_task_for_slug,
     suggested_ask_questions,
     upgrade_legacy_concept_markdown,
 )
+from recallstack.learning.question_generator import QuestionGenerator
 from recallstack.learning.path_builder import PathBuilder
 from recallstack.learning.wiki_generator import append_concept_pages
 from repowiki.core.wiki_builder import Wiki
@@ -524,7 +528,8 @@ def test_live_grok_payload_picks_rs_not_toml_json_sh():
         )
 
     goal = chip("project-goal", "README.md")
-    assert goal is not None and goal.startswith("README.md:")
+    assert goal == "crates/codegen/xai-grok-agent/src/turn.rs:2 start_turn"
+    assert not goal.startswith("README.md")
 
     boot = chip("entry-and-boot", "crates/codegen/xai-grok-pager/npm/grok/bin/grok")
     assert boot is not None
@@ -1442,6 +1447,11 @@ def test_agent_runtime_uses_lifecycle_rs_not_encrypt_script():
     assert "scripts/" not in chip
     assert "xor_encrypt" not in chip
     assert chip.startswith("crates/codegen/xai-agent-lifecycle/src/lib.rs")
+    path, line, symbol = parse_path_chip(chip)
+    assert path.endswith("lib.rs")
+    assert line >= 1
+    assert symbol
+    assert symbol != "Agent Runtime"
 
 
 def test_wiki_key_types_do_not_invent_missing_store_path():
@@ -1466,3 +1476,100 @@ def test_wiki_key_types_use_existing_store_symbol_not_invented_pager():
     filled = fill_wiki_key_type_lines(md, store)
     assert "pager.rs" not in filled
     assert "`src/app/foo.rs:3 Pager`" in filled
+
+
+def test_project_goal_binds_start_turn_not_readme_when_store_has_def():
+    store = _jake_grok_store()
+    chip = path_evidence_chip(
+        ConceptDraft(
+            slug="project-goal",
+            title="项目目标",
+            wiki_page_id="topics/project-goal",
+            source_references=[SourceReference(path="README.md", start_line=1)],
+        ),
+        file_texts=store,
+    )
+    assert chip == "crates/codegen/xai-grok-pager/src/app/agent.rs:791 start_turn"
+    assert chip != "README.md:1"
+    assert not chip.startswith("README.md")
+    path, line, symbol = parse_path_chip(chip)
+    assert path.endswith("app/agent.rs")
+    assert line == 791
+    assert symbol == "start_turn"
+    contract = path_step_contract(
+        ConceptDraft(slug="project-goal", title="项目目标"),
+        chip=chip,
+        file_texts=store,
+    )
+    assert contract["path"] == path
+    assert contract["line"] == 791
+    assert contract["symbol"] == "start_turn"
+    assert "start_turn" in contract["gate"]
+
+
+def test_project_goal_falls_back_to_readme_when_start_turn_absent():
+    store = {
+        "README.md": "# grok\n",
+        "crates/codegen/xai-grok-pager/src/main.rs": "fn main() {}\n",
+    }
+    chip = path_evidence_chip(
+        ConceptDraft(
+            slug="project-goal",
+            title="项目目标",
+            source_references=[SourceReference(path="README.md", start_line=1)],
+        ),
+        file_texts=store,
+    )
+    assert chip == "README.md:1"
+    assert chip_needs_restamp("project-goal", chip)
+
+
+def test_agent_runtime_stamps_runtime_rs_not_file_only_lib():
+    store = {
+        "crates/codegen/xai-agent-lifecycle/src/lib.rs": (
+            "pub mod runtime;\npub use runtime::AgentRuntime;\n"
+        ),
+        "crates/codegen/xai-agent-lifecycle/src/runtime.rs": _rs_with_def_at(
+            22, "pub struct AgentRuntime {"
+        ),
+    }
+    chip = path_evidence_chip(
+        ConceptDraft(
+            slug="agent-runtime",
+            title="Agent Runtime",
+            wiki_page_id="topics/agent-runtime",
+            source_references=[
+                SourceReference(
+                    path="crates/codegen/xai-agent-lifecycle/src/lib.rs",
+                    start_line=1,
+                    symbol=None,
+                )
+            ],
+        ),
+        file_texts=store,
+    )
+    assert chip == "crates/codegen/xai-agent-lifecycle/src/runtime.rs:22 AgentRuntime"
+    path, line, symbol = parse_path_chip(chip)
+    assert line == 22
+    assert symbol == "AgentRuntime"
+    assert not chip_needs_restamp("agent-runtime", chip)
+    assert chip_needs_restamp(
+        "agent-runtime", "crates/codegen/xai-agent-lifecycle/src/lib.rs"
+    )
+
+    contract = path_step_contract(
+        ConceptDraft(slug="agent-runtime", title="Agent Runtime"),
+        chip=chip,
+        file_texts=store,
+    )
+    items = QuestionGenerator().generate_from_contract(
+        title="Agent Runtime",
+        contract=contract,
+    ).items
+    assert items
+    for item in items:
+        assert item.source_references
+        assert item.source_references[0].start_line == 22
+        assert item.source_references[0].symbol == "AgentRuntime"
+        assert item.rubric.contract["line"] == 22
+        assert item.rubric.contract["symbol"] == "AgentRuntime"

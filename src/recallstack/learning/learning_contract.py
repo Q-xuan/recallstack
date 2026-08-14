@@ -119,7 +119,7 @@ _EVIDENCE_HINTS: dict[str, tuple[tuple[str, ...], str]] = {
     "session-lifecycle": (("session_lifecycle.rs", "lifecycle.rs"), "cancel"),
     "acp-protocol": (("channel.rs", "acp/mod.rs"), "AcpChannel"),
     "system-prompt": (("agents_md.rs", "prompt.rs", "system.rs"), ""),
-    "project-goal": (("README.md", "readme.md"), ""),
+    "project-goal": (("agent.rs", "app.rs", "turn.rs"), "start_turn"),
 }
 
 # Hint paths tried only when that exact key exists in version_files.
@@ -166,6 +166,10 @@ _FALLBACK_FILES: dict[str, tuple[str, ...]] = {
         "crates/codegen/xai-grok-agent/src/acp/mod.rs",
     ),
     "system-prompt": ("crates/codegen/xai-grok-agent/src/prompt/agents_md.rs",),
+    "project-goal": (
+        "crates/codegen/xai-grok-pager/src/app/agent.rs",
+        "crates/codegen/xai-grok-agent/src/turn.rs",
+    ),
 }
 
 _JUNK_BASENAMES = frozenset(
@@ -181,12 +185,12 @@ _JUNK_EXTS = (".toml", ".json", ".sh", ".bash", ".zsh")
 _WEAK_SYMBOLS = frozenset({"main", "new", "run", "init", "start"})
 _CHIP_DENY_SYMBOLS = frozenset({"xor_encrypt", "xor_decrypt"})
 _LIFECYCLE_BASENAMES = (
-    "lib.rs",
+    "runtime.rs",
+    "lifecycle.rs",
     "local.rs",
     "send.rs",
     "contributors.rs",
-    "runtime.rs",
-    "lifecycle.rs",
+    "lib.rs",
 )
 _ENTRY_SYMBOLS = ("main", "connect", "boot")
 _PTY_SLUGS = frozenset({"pty-control", "pty"})
@@ -237,6 +241,7 @@ _SLUG_PREFER_NEEDLES: dict[str, tuple[str, ...]] = {
     "session-lifecycle": ("xai-agent-lifecycle", "session_lifecycle"),
     "acp-protocol": ("acp", "channel", "xai-grok-agent"),
     "system-prompt": ("xai-grok-agent", "agents_md", "/prompt/"),
+    "project-goal": ("xai-grok-pager", "xai-grok-agent", "crates/tui"),
 }
 
 _SOURCE_CHIP_RE = re.compile(
@@ -934,11 +939,11 @@ def _emit_store_chip(
             hit = resolve_symbol_definition(store, symbol, prefer_path=path)
             if hit:
                 path, line = hit
-        if symbol and not line:
+        if not line:
             first, emit = _first_definition_line(store.get(path) or "")
             if first and emit and not _is_dummy_symbol(emit):
                 line, symbol = first, symbol or emit
-        if symbol and not line:
+        if not line:
             return None
         return _format_path_chip(path, line, symbol)
     path, line, symbol = _stamp_definition_line(path, line, symbol, store)
@@ -981,6 +986,22 @@ def parse_path_chip(chip: str) -> tuple[str, int, str]:
         int(match.group(2) or 0),
         (match.group(3) or "").strip(),
     )
+
+
+_RESTAMP_SLUGS = frozenset({"project-goal", "agent-runtime"})
+
+
+def chip_needs_restamp(slug: str, chip: str) -> bool:
+    """True when a persisted leftover chip is not a real definition ``path:line Symbol``."""
+    if slug not in _RESTAMP_SLUGS:
+        return False
+    path, line, symbol = parse_path_chip(chip or "")
+    if slug == "project-goal":
+        name = path.rsplit("/", 1)[-1].lower()
+        if name in {"readme.md", "readme"} or "readme.md" in path.lower():
+            return True
+        return symbol != "start_turn" or line < 1
+    return line < 1 or not symbol or _is_dummy_symbol(symbol)
 
 
 def gate_failure_tokens(gate: str) -> list[str]:
@@ -1415,12 +1436,16 @@ def _pick_lifecycle_crate(
             if name == pref or (pref == "contributors.rs" and "contributors" in norm.lower()):
                 score += 40 - min(i, 10) * 3
                 break
-        line = line_of_symbol_in_text(text, "AgentRuntime")
-        emit = "AgentRuntime" if line else ""
-        if not line:
+        defn = _definition_line_in_text(text, "AgentRuntime")
+        if defn:
+            line, emit = defn, "AgentRuntime"
+            score += 80
+        else:
             line, emit = _first_definition_line(text)
             if _is_dummy_symbol(emit):
                 line, emit = 0, ""
+        if not line or not emit:
+            continue
         hits.append((score, norm, line, emit))
     if not hits:
         return None
@@ -1647,15 +1672,28 @@ def path_evidence_chip(
     suffixes, hint_sym = _EVIDENCE_HINTS.get(slug, ((), ""))
     symbol = hint_sym.strip() if hint_sym else ""
 
+    store = file_texts or {}
     if slug == "project-goal":
+        if store:
+            hit = _pick_symbol_in_store(
+                store, "start_turn", slug, suffixes or ("agent.rs", "app.rs", "turn.rs")
+            )
+            if hit:
+                chip = _emit_store_chip(hit[0], hit[1], "start_turn", store)
+                if chip:
+                    return chip
         for ref in refs:
             path = ref.path.replace("\\", "/")
             name = path.rsplit("/", 1)[-1].lower()
             if name in {"readme.md", "readme"}:
                 return _format_path_chip(path, ref.start_line or 1, "")
+        if store:
+            for key in store:
+                name = key.replace("\\", "/").rsplit("/", 1)[-1].lower()
+                if name in {"readme.md", "readme"}:
+                    return _format_path_chip(key.replace("\\", "/"), 1, "")
         return _format_path_chip("README.md", 1, "")
 
-    store = file_texts or {}
     if not store:
         logger.debug("learning-path evidence: empty scan store for slug=%s", slug)
 
@@ -1682,7 +1720,9 @@ def path_evidence_chip(
                     return chip
         ref_hit = _best_store_ref(refs, slug, store, symbol)
         if ref_hit:
-            return _format_path_chip(ref_hit[0], ref_hit[1], ref_hit[2])
+            chip = _emit_store_chip(ref_hit[0], ref_hit[1], ref_hit[2], store)
+            if chip:
+                return chip
     elif symbol and store and symbol.lower() in _WEAK_SYMBOLS:
         hit = _pick_entry_or_weak(store, refs, slug, suffixes, symbol)
         if hit:
@@ -1691,7 +1731,9 @@ def path_evidence_chip(
                 return chip
         ref_hit = _best_store_ref(refs, slug, store, symbol)
         if ref_hit:
-            return _format_path_chip(ref_hit[0], ref_hit[1], ref_hit[2])
+            chip = _emit_store_chip(ref_hit[0], ref_hit[1], ref_hit[2], store)
+            if chip:
+                return chip
 
     candidates = _candidate_paths(refs, slug, file_texts)
     scored: list[tuple[int, str, int, str]] = []
@@ -1740,7 +1782,9 @@ def path_evidence_chip(
     if store:
         ref_hit = _best_store_ref(refs, slug, store, symbol)
         if ref_hit:
-            return _format_path_chip(ref_hit[0], ref_hit[1], ref_hit[2])
+            chip = _emit_store_chip(ref_hit[0], ref_hit[1], ref_hit[2], store)
+            if chip:
+                return chip
         return None
     return _format_path_chip(path, line, use_sym)
 

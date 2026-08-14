@@ -7,14 +7,19 @@ from types import SimpleNamespace
 from recallstack.api.serializers import path_out, wiki_out
 from recallstack.learning.learning_contract import fill_wiki_key_type_lines
 from recallstack.learning.wiki_generator import link_reading_guide_markdown
+from recallstack.domain.schemas import ConceptDraft, SourceReference
+from recallstack.learning.question_generator import QuestionGenerator
 from recallstack.learning.wiki_serve import (
+    PATH_CHIP_RESTAMP,
     PATH_SERVE_REVISION,
     WIKI_SERVE_REVISION,
     cheap_upgrade_path_resolved,
     materialize_wiki_payload,
     path_chips_ready,
     path_is_materialized,
+    path_needs_chip_restamp,
     persist_path_from_loaded_store,
+    restamp_weak_path_chips,
     wiki_is_materialized,
 )
 from repowiki.core.wiki_builder import (
@@ -374,3 +379,174 @@ def test_persist_path_from_loaded_store_writes_chips_once(monkeypatch):
     assert wrote.get("commit")
     assert "c-loop" in (wrote.get("resolved") or {}).get("chips", {})
     assert "start_turn" in wrote["resolved"]["chips"]["c-loop"]
+
+
+def _leftover_path(resolved):
+    goal = SimpleNamespace(
+        id="c-goal",
+        repository_id="r",
+        repository_version_id="v",
+        slug="project-goal",
+        title="项目目标",
+        description="",
+        difficulty=1,
+        importance=1.0,
+        source_references=[{"path": "README.md", "start_line": 1}],
+        content_hash="",
+        stale=False,
+        why_learn="",
+        estimated_minutes=10,
+        wiki_page_id="topics/project-goal",
+    )
+    runtime = SimpleNamespace(
+        id="c-runtime",
+        repository_id="r",
+        repository_version_id="v",
+        slug="agent-runtime",
+        title="Agent Runtime",
+        description="",
+        difficulty=2,
+        importance=0.8,
+        source_references=[
+            {"path": "crates/codegen/xai-agent-lifecycle/src/lib.rs", "start_line": None}
+        ],
+        content_hash="",
+        stale=False,
+        why_learn="",
+        estimated_minutes=15,
+        wiki_page_id="topics/agent-runtime",
+    )
+    return SimpleNamespace(
+        id="p1",
+        repository_version_id="v",
+        title="路径",
+        description="",
+        estimated_minutes=40,
+        resolved=resolved,
+        nodes=[
+            SimpleNamespace(id="n1", concept_id="c-goal", position=1, reason="", concept=goal),
+            SimpleNamespace(
+                id="n2", concept_id="c-runtime", position=2, reason="", concept=runtime
+            ),
+        ],
+    )
+
+
+def test_path_needs_chip_restamp_only_for_leftover_chips():
+    good = _agent_loop_path(
+        {"serve_revision": PATH_SERVE_REVISION, "chips": {"c-loop": "crates/tui/src/app.rs:791 start_turn"}}
+    )
+    assert not path_needs_chip_restamp(good, good.resolved)
+
+    leftover = _leftover_path(
+        {
+            "serve_revision": PATH_SERVE_REVISION,
+            "chips": {
+                "c-goal": "README.md:1",
+                "c-runtime": "crates/codegen/xai-agent-lifecycle/src/lib.rs",
+            },
+        }
+    )
+    assert path_needs_chip_restamp(leftover, leftover.resolved)
+    leftover.resolved["chip_restamp"] = PATH_CHIP_RESTAMP
+    assert not path_needs_chip_restamp(leftover, leftover.resolved)
+
+
+def test_restamp_weak_path_chips_binds_start_turn_and_agent_runtime():
+    path = _leftover_path(
+        {
+            "serve_revision": PATH_SERVE_REVISION,
+            "chips": {
+                "c-goal": "README.md:1",
+                "c-runtime": "crates/codegen/xai-agent-lifecycle/src/lib.rs",
+            },
+        }
+    )
+    store = {
+        "README.md": "# grok\n",
+        "crates/codegen/xai-grok-pager/src/app/agent.rs": ("\n" * 790)
+        + "    pub fn start_turn(&mut self) {\n",
+        "crates/codegen/xai-agent-lifecycle/src/lib.rs": (
+            "pub mod runtime;\npub use runtime::AgentRuntime;\n"
+        ),
+        "crates/codegen/xai-agent-lifecycle/src/runtime.rs": (
+            "// pad\n" * 21 + "pub struct AgentRuntime {\n"
+        ),
+    }
+    upgraded = restamp_weak_path_chips(path, path.resolved, store)
+    assert upgraded["chip_restamp"] == PATH_CHIP_RESTAMP
+    assert upgraded["chips"]["c-goal"] == (
+        "crates/codegen/xai-grok-pager/src/app/agent.rs:791 start_turn"
+    )
+    assert upgraded["chips"]["c-runtime"] == (
+        "crates/codegen/xai-agent-lifecycle/src/runtime.rs:22 AgentRuntime"
+    )
+    goal_node = upgraded["nodes"]["c-goal"]
+    assert goal_node["symbol"] == "start_turn"
+    assert goal_node["line"] == 791
+    runtime_node = upgraded["nodes"]["c-runtime"]
+    assert runtime_node["symbol"] == "AgentRuntime"
+    assert runtime_node["line"] == 22
+
+    items = QuestionGenerator().generate_from_contract(
+        title="Agent Runtime",
+        contract=runtime_node,
+        concept=ConceptDraft(
+            slug="agent-runtime",
+            title="Agent Runtime",
+            source_references=[
+                SourceReference(
+                    path="crates/codegen/xai-agent-lifecycle/src/lib.rs",
+                    start_line=None,
+                )
+            ],
+        ),
+        file_texts=store,
+    ).items
+    assert items[0].source_references[0].start_line == 22
+    assert items[0].source_references[0].symbol == "AgentRuntime"
+
+
+def test_persist_path_from_loaded_store_restamps_leftovers(monkeypatch):
+    wrote: dict = {}
+
+    def fake_persist(_session, path, resolved):
+        wrote["resolved"] = resolved
+        path.resolved = resolved
+
+    monkeypatch.setattr(
+        "recallstack.learning.wiki_serve.persist_path_resolved", fake_persist
+    )
+    monkeypatch.setattr(
+        "recallstack.learning.wiki_serve.sync_path_contract_items",
+        lambda *_a, **_k: None,
+    )
+    path = _leftover_path(
+        {
+            "serve_revision": PATH_SERVE_REVISION,
+            "chips": {
+                "c-goal": "README.md:1",
+                "c-runtime": "crates/codegen/xai-agent-lifecycle/src/lib.rs",
+            },
+        }
+    )
+    store = {
+        "README.md": "# grok\n",
+        "crates/codegen/xai-grok-pager/src/app/agent.rs": ("\n" * 790)
+        + "    pub fn start_turn(&mut self) {\n",
+        "crates/codegen/xai-agent-lifecycle/src/lib.rs": "pub mod runtime;\n",
+        "crates/codegen/xai-agent-lifecycle/src/runtime.rs": (
+            "// pad\n" * 21 + "pub struct AgentRuntime {\n"
+        ),
+    }
+    persist_path_from_loaded_store(
+        SimpleNamespace(commit=lambda: wrote.setdefault("commit", True), rollback=lambda: None),
+        path,
+        store,
+    )
+    assert wrote.get("commit")
+    chips = wrote["resolved"]["chips"]
+    assert chips["c-goal"] == "crates/codegen/xai-grok-pager/src/app/agent.rs:791 start_turn"
+    assert chips["c-runtime"] == (
+        "crates/codegen/xai-agent-lifecycle/src/runtime.rs:22 AgentRuntime"
+    )
