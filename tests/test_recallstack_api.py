@@ -585,3 +585,51 @@ def test_ask_unknown_repo_is_404(client: TestClient):
         "/api/recallstack/repositories/nope/ask", json={"question": "hi"}
     )
     assert resp.status_code == 404
+
+
+def test_ask_stream_falls_back_without_llm(client: TestClient):
+    """No API key: /ask/stream still exists and yields the extractive answer."""
+    repo_id = _analyzed_repo(client)
+    resp = client.post(
+        f"/api/recallstack/repositories/{repo_id}/ask/stream",
+        json={"question": "boot 函数在哪里定义?"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert "text/event-stream" in resp.headers.get("content-type", "")
+    body = resp.text
+    assert '"engine": "search"' in body or '"engine":"search"' in body
+    assert '"type": "content"' in body or '"type":"content"' in body
+    assert '"type": "done"' in body or '"type":"done"' in body
+
+
+def test_ask_stream_before_analysis_is_409(client: TestClient):
+    repo = client.post(
+        "/api/recallstack/repositories",
+        json={"source_type": "local", "source_location": client.fixture_repo},
+    ).json()
+    resp = client.post(
+        f"/api/recallstack/repositories/{repo['id']}/ask/stream",
+        json={"question": "anything"},
+    )
+    assert resp.status_code == 409
+
+
+def test_analyze_accepts_and_persists_lang(client: TestClient):
+    created = client.post(
+        "/api/recallstack/repositories",
+        json={
+            "source_type": "local",
+            "source_location": client.fixture_repo,
+            "name": "fixture",
+        },
+    )
+    assert created.status_code == 200, created.text
+    repo_id = created.json()["id"]
+    analyzed = client.post(
+        f"/api/recallstack/repositories/{repo_id}/analyze?wait=true&lang=zh"
+    )
+    assert analyzed.status_code == 200, analyzed.text
+    assert analyzed.json()["content_lang"] == "zh"
+    latest = client.get(f"/api/recallstack/repositories/{repo_id}/versions/latest")
+    assert latest.status_code == 200
+    assert latest.json()["content_lang"] == "zh"

@@ -141,6 +141,7 @@ class VersionOut(BaseModel):
     progress_message: str | None = None
     error_message: str | None = None
     has_wiki: bool = False
+    content_lang: str | None = None
     created_at: datetime
     completed_at: datetime | None = None
 

@@ -88,16 +88,65 @@ export default function AskPanel({
       .slice(-4)
       .map((t) => ({ question: t.question, answer: t.answer!.answer.slice(0, 4000) }));
     setTurns((prev) => [...prev, { question }]);
+    const patchLast = (next: Partial<Turn> | ((turn: Turn) => Turn)) => {
+      setTurns((prev) =>
+        prev.map((row, i) => {
+          if (i !== prev.length - 1) return row;
+          return typeof next === "function" ? next(row) : { ...row, ...next };
+        }),
+      );
+    };
     try {
-      const res = await recallstackApi.askWiki(repositoryId, question, history);
-      setTurns((prev) =>
-        prev.map((t, i) => (i === prev.length - 1 ? { ...t, answer: res } : t)),
-      );
+      let streamed = "";
+      await recallstackApi.askWikiStream(repositoryId, question, history, {
+        onMeta: (meta) => {
+          patchLast((row) => ({
+            ...row,
+            answer: {
+              question,
+              answer: row.answer?.answer ?? "",
+              engine: meta.engine,
+              sources: meta.sources,
+            },
+          }));
+        },
+        onToken: (chunk) => {
+          streamed += chunk;
+          const text = streamed;
+          patchLast((row) => ({
+            ...row,
+            answer: {
+              question,
+              answer: text,
+              engine: row.answer?.engine ?? "llm",
+              sources: row.answer?.sources ?? [],
+            },
+          }));
+        },
+        onFallback: (res) => {
+          streamed = res.content;
+          patchLast({
+            answer: {
+              question,
+              answer: res.content,
+              engine: res.engine,
+              sources: res.sources,
+            },
+          });
+        },
+      });
+      if (!streamed) {
+        const res = await recallstackApi.askWiki(repositoryId, question, history);
+        patchLast({ answer: res });
+      }
     } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : tNow("提问失败", "Request failed");
-      setTurns((prev) =>
-        prev.map((t, i) => (i === prev.length - 1 ? { ...t, error: message } : t)),
-      );
+      try {
+        const res = await recallstackApi.askWiki(repositoryId, question, history);
+        patchLast({ answer: res });
+      } catch {
+        const message = e instanceof Error ? e.message : tNow("提问失败", "Request failed");
+        patchLast({ error: message });
+      }
     } finally {
       setBusy(false);
       inputRef.current?.focus();
@@ -150,7 +199,7 @@ export default function AskPanel({
             <div className="rs-ask-q">{turn.question}</div>
             {turn.error ? (
               <div className="rs-alert">{turn.error}</div>
-            ) : !turn.answer ? (
+            ) : !turn.answer || !turn.answer.answer ? (
               <div className="rs-ask-thinking">{t("思考中…", "Thinking…")}</div>
             ) : (
               <div className="rs-ask-a">

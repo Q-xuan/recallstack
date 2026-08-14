@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from recallstack import __version__
@@ -206,12 +208,12 @@ def get_repository(repository_id: str, db: Session = Depends(get_db_session)) ->
     return repo_out(repo)
 
 
-def _run_analyze(repository_id: str) -> None:
+def _run_analyze(repository_id: str, lang: str | None = None) -> None:
     from recallstack.db.session import session_scope
 
     with session_scope() as session:
         svc = AnalyzeRepositoryService(session)
-        svc.analyze(repository_id)
+        svc.analyze(repository_id, lang=lang)
 
 
 @router.post("/repositories/{repository_id}/analyze", response_model=VersionOut)
@@ -221,6 +223,7 @@ def analyze_repository(
     db: Session = Depends(get_db_session),
     config: RecallStackConfig = Depends(get_config),
     wait: bool = False,
+    lang: str | None = None,
 ) -> VersionOut:
     store = RepositoryStore(db)
     repo = store.get_repository(repository_id)
@@ -230,7 +233,7 @@ def analyze_repository(
     if wait:
         try:
             svc = AnalyzeRepositoryService(db, config)
-            version = svc.analyze(repository_id)
+            version = svc.analyze(repository_id, lang=lang)
             return version_out(version)
         except SecurityError as exc:
             raise api_error(400, exc.code, exc.message) from exc
@@ -243,22 +246,28 @@ def analyze_repository(
     if latest:
         latest.status = "queued"
         latest.error_message = None
+        if lang:
+            from recallstack.learning.i18n import normalize_lang
+
+            latest.content_lang = normalize_lang(lang)
         db.commit()
         db.refresh(latest)
 
     runner = get_job_runner()
-    runner.enqueue("analyze", _run_analyze, repository_id)
+    runner.enqueue("analyze", _run_analyze, repository_id, lang)
     if latest:
         return version_out(latest)
 
     # ensure a pending version exists for UI polling
     from recallstack.db.models import RepositoryVersion
+    from recallstack.learning.i18n import normalize_lang
 
     pending = RepositoryVersion(
         repository_id=repository_id,
         commit_sha="pending",
         content_hash="",
         status="pending",
+        content_lang=normalize_lang(lang) if lang else None,
     )
     db.add(pending)
     db.commit()
@@ -426,6 +435,46 @@ async def ask_repository_wiki(
         answer=result["answer"],
         engine=result["engine"],
         sources=result["sources"],
+    )
+
+
+@router.post("/repositories/{repository_id}/ask/stream")
+async def ask_repository_wiki_stream(
+    repository_id: str,
+    body: WikiAskIn,
+    db: Session = Depends(get_db_session),
+    config: RecallStackConfig = Depends(get_config),
+) -> StreamingResponse:
+    """SSE token stream. No key / LLM failure yields the extractive fallback."""
+    from recallstack.learning.wiki_qa import stream_answer_question
+
+    store = RepositoryStore(db)
+    repo = store.get_repository(repository_id)
+    if not repo:
+        raise api_error(404, "repository_not_found", "Repository not found")
+    docs = _wiki_documents(store, repository_id)
+    if not docs:
+        raise api_error(409, "wiki_not_ready", "Analyze the repository first")
+
+    question = body.question.strip()
+    history = [{"question": t.question, "answer": t.answer} for t in body.history]
+    llm = _qa_llm_client(config)
+    project_name = repo.name
+
+    async def event_stream():
+        async for event in stream_answer_question(
+            question,
+            docs,
+            project_name=project_name,
+            llm=llm,
+            history=history,
+        ):
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 

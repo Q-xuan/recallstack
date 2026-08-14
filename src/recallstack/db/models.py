@@ -72,6 +72,8 @@ class RepositoryVersion(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     # RepoWiki-compatible payload: {project_name, pages[], sidebar[]}
     wiki_pages: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # UI language used for this analyze (en/zh/…). Serving does not rescan.
+    content_lang: Mapped[str | None] = mapped_column(String(8), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

@@ -362,6 +362,11 @@ def test_content_lang_follows_repowiki_codes(monkeypatch):
     assert i18n.content_lang() == "en"  # explicit override wins
     assert i18n.t("Project goal", "项目目标") == "Project goal"
 
+    with i18n.content_lang_scope("zh"):
+        assert i18n.content_lang() == "zh"
+        assert i18n.t("Project goal", "项目目标") == "项目目标"
+    assert i18n.content_lang() == "en"
+
 
 def test_question_generator_has_rubric():
     q = QuestionGenerator().generate_deterministic(

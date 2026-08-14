@@ -130,7 +130,14 @@ class AnalyzeRepositoryService:
             default_branch=default_branch,
         )
 
-    def analyze(self, repository_id: str) -> RepositoryVersion:
+    def analyze(self, repository_id: str, lang: str | None = None) -> RepositoryVersion:
+        from recallstack.learning.i18n import content_lang, content_lang_scope, normalize_lang
+
+        resolved_lang = normalize_lang(lang) if lang else content_lang()
+        with content_lang_scope(resolved_lang):
+            return self._analyze_in_lang(repository_id, resolved_lang)
+
+    def _analyze_in_lang(self, repository_id: str, resolved_lang: str) -> RepositoryVersion:
         repo = self.store.get_repository(repository_id)
         if not repo:
             raise KeyError("repository_not_found")
@@ -143,8 +150,11 @@ class AnalyzeRepositoryService:
         }
         content_hash = compute_repo_content_hash(file_hashes)
         existing = self.store.get_version_by_commit(repo.id, commit_sha)
+        existing_lang = getattr(existing, "content_lang", None) if existing else None
+        lang_mismatch = bool(existing_lang and existing_lang != resolved_lang)
         if (
             existing
+            and not lang_mismatch
             and existing.content_hash == content_hash
             and existing.status == "ready"
             and existing.wiki_pages
@@ -170,7 +180,9 @@ class AnalyzeRepositoryService:
                 materialize_analyzed_version(
                     self.session, existing, self.store.list_concepts(repo.id, existing.id), texts
                 )
-                self.session.commit()
+            if not existing_lang:
+                existing.content_lang = resolved_lang
+            self.session.commit()
             return existing
 
         old_version = self.store.get_latest_version(repo.id)
@@ -187,6 +199,7 @@ class AnalyzeRepositoryService:
                 content_hash=content_hash,
                 status="pending",
             )
+        version.content_lang = resolved_lang
         self.session.commit()
 
         try:

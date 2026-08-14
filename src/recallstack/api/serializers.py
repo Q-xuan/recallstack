@@ -74,6 +74,7 @@ def version_out(v: RepositoryVersion) -> VersionOut:
         progress_message=v.progress_message,
         error_message=v.error_message,
         has_wiki=bool(v.wiki_pages and (v.wiki_pages or {}).get("pages")),
+        content_lang=getattr(v, "content_lang", None),
         created_at=v.created_at,
         completed_at=v.completed_at,
     )

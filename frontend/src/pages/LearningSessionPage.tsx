@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import AppShell from "../components/AppShell";
+import { tNow, useT } from "../lib/i18n";
 import {
   AttemptResult,
   LearningItem,
@@ -12,6 +13,7 @@ export default function LearningSessionPage() {
   const { itemId } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const t = useT();
   const mode = searchParams.get("mode") === "review" ? "review" : "concept";
 
   const [queue, setQueue] = useState<SessionQueue | null>(null);
@@ -55,7 +57,7 @@ export default function LearningSessionPage() {
         setQueue(session);
         setItem(session.current_item || (await recallstackApi.getItem(itemId)));
       } catch (e: unknown) {
-        if (!cancelled) setError(e instanceof Error ? e.message : "加载失败");
+        if (!cancelled) setError(e instanceof Error ? e.message : tNow("加载失败", "Failed to load"));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -71,8 +73,11 @@ export default function LearningSessionPage() {
   );
 
   const progressLabel = queue
-    ? `第 ${queue.position}/${queue.total} 题 · ${queue.concept_title}`
-    : "练习会话";
+    ? t(
+        `第 ${queue.position}/${queue.total} 题 · ${queue.concept_title}`,
+        `Item ${queue.position}/${queue.total} · ${queue.concept_title}`,
+      )
+    : t("练习会话", "Practice session");
 
   async function requestHint() {
     if (!itemId || result) return;
@@ -91,7 +96,7 @@ export default function LearningSessionPage() {
       setCurrentLevel(h.level);
       setHintText(h.content);
     } catch (e: any) {
-      setError(e.message || "获取提示失败");
+      setError(e.message || tNow("获取提示失败", "Failed to get a hint"));
     }
   }
 
@@ -113,7 +118,7 @@ export default function LearningSessionPage() {
       setHintText(h.content);
       setRevealed(true);
     } catch (e: any) {
-      setError(e.message || "显示解释失败");
+      setError(e.message || tNow("显示解释失败", "Failed to show the explanation"));
     }
   }
 
@@ -137,7 +142,7 @@ export default function LearningSessionPage() {
       setResult(r);
       if (r.session) setQueue(r.session);
     } catch (e: any) {
-      setError(e.message || "提交失败");
+      setError(e.message || tNow("提交失败", "Submit failed"));
     } finally {
       setSubmitting(false);
     }
@@ -154,22 +159,22 @@ export default function LearningSessionPage() {
 
   if (loading) {
     return (
-      <AppShell title="练习会话">
-        <p className="text-[var(--rs-muted)]">加载题目…</p>
+      <AppShell title={t("练习会话", "Practice session")}>
+        <p className="text-[var(--rs-muted)]">{t("加载题目…", "Loading item…")}</p>
       </AppShell>
     );
   }
   if (error && !item) {
     return (
-      <AppShell title="练习会话">
+      <AppShell title={t("练习会话", "Practice session")}>
         <p className="text-[var(--rs-danger)]">{error}</p>
       </AppShell>
     );
   }
   if (!item) {
     return (
-      <AppShell title="练习会话">
-        <p className="text-[var(--rs-muted)]">题目不存在</p>
+      <AppShell title={t("练习会话", "Practice session")}>
+        <p className="text-[var(--rs-muted)]">{t("题目不存在", "Item not found")}</p>
       </AppShell>
     );
   }
@@ -178,16 +183,16 @@ export default function LearningSessionPage() {
   const isLast = !nextId;
 
   return (
-    <AppShell title="练习会话" subtitle={progressLabel}>
+    <AppShell title={t("练习会话", "Practice session")} subtitle={progressLabel}>
       <div className="mb-4 text-sm text-[var(--rs-muted)] flex items-center justify-between gap-3 flex-wrap">
         <div className="flex gap-3 items-center">
           <Link to={`/concepts/${item.concept_id}`} className="hover:underline text-[var(--rs-accent)]">
-            返回词条
+            {t("返回词条", "Back to entry")}
           </Link>
           {queue && (
             <span className="text-xs text-[var(--rs-muted)]">
-              已完成 {queue.completed_count}/{queue.total}
-              {mode === "review" ? " · 复习模式" : ""}
+              {t("已完成", "Completed")} {queue.completed_count}/{queue.total}
+              {mode === "review" ? t(" · 复习模式", " · review mode") : ""}
             </span>
           )}
         </div>
@@ -219,12 +224,12 @@ export default function LearningSessionPage() {
 
       {item.stale && (
         <div className="mb-4 text-sm text-[var(--rs-warning)] bg-[var(--rs-warning-soft)] border border-[var(--rs-warning)] rounded-lg px-3 py-2">
-          这个题目对应旧版本代码。
+          {t("这个题目对应旧版本代码。", "This item matches an older version of the code.")}
         </div>
       )}
 
       <div className="rs-card rounded-xl p-5 mb-4">
-        <h1 className="text-xl font-semibold text-[var(--rs-ink)] mb-2">问题</h1>
+        <h1 className="text-xl font-semibold text-[var(--rs-ink)] mb-2">{t("问题", "Question")}</h1>
         <p className="text-[var(--rs-ink)] whitespace-pre-wrap">{item.prompt}</p>
       </div>
 
@@ -236,13 +241,16 @@ export default function LearningSessionPage() {
             onClick={() => setEvidenceOpen((v) => !v)}
           >
             <div>
-              <h2 className="text-sm font-semibold text-[var(--rs-ink)]">可引用证据</h2>
+              <h2 className="text-sm font-semibold text-[var(--rs-ink)]">{t("可引用证据", "Citable evidence")}</h2>
               <p className="text-xs text-[var(--rs-muted)] mt-0.5">
-                先主动回忆；卡住再展开。作答请点名文件或符号。
+                {t(
+                  "先主动回忆；卡住再展开。作答请点名文件或符号。",
+                  "Recall first; open this if you are stuck. Name a file or symbol in your answer.",
+                )}
               </p>
             </div>
             <span className="text-xs text-[var(--rs-accent)] shrink-0 ml-3">
-              {evidenceOpen ? "收起" : "展开"}
+              {evidenceOpen ? t("收起", "Collapse") : t("展开", "Expand")}
             </span>
           </button>
           {evidenceOpen && (
@@ -269,8 +277,11 @@ export default function LearningSessionPage() {
                   ) : (
                     <p className="text-xs text-[var(--rs-muted)]">
                       {ref.available === false
-                        ? "本地片段暂不可用（可能是远程仓库或路径失效）"
-                        : "仅路径引用"}
+                        ? t(
+                            "本地片段暂不可用（可能是远程仓库或路径失效）",
+                            "Local snippet is unavailable (remote repo or a stale path)",
+                          )
+                        : t("仅路径引用", "Path reference only")}
                     </p>
                   )}
                 </li>
@@ -282,18 +293,23 @@ export default function LearningSessionPage() {
 
       {!result ? (
         <>
-          <label className="block text-sm font-medium text-[var(--rs-ink-2)] mb-2">你的回答</label>
+          <label className="block text-sm font-medium text-[var(--rs-ink-2)] mb-2">
+            {t("你的回答", "Your answer")}
+          </label>
           <textarea
             value={answer}
             onChange={(e) => setAnswer(e.target.value)}
             rows={8}
             className="w-full border border-[var(--rs-line-strong)] rounded-xl p-3 text-[var(--rs-ink)] focus:ring-2 focus:ring-[var(--rs-accent-soft)] outline-none"
-            placeholder="用自己的话作答，尽量引用源码中的模块/符号…"
+            placeholder={t(
+              "用自己的话作答，尽量引用源码中的模块/符号…",
+              "Answer in your own words. Name a module or symbol from the source…",
+            )}
           />
 
           <div className="mt-4 flex flex-wrap items-center gap-4">
             <label className="text-sm text-[var(--rs-ink-2)]">
-              自信度
+              {t("自信度", "Confidence")}
               <select
                 value={confidence}
                 onChange={(e) => setConfidence(Number(e.target.value))}
@@ -306,7 +322,10 @@ export default function LearningSessionPage() {
                 ))}
               </select>
             </label>
-            <div className="text-sm text-[var(--rs-muted)]">提示等级：{currentLevel}/5</div>
+            <div className="text-sm text-[var(--rs-muted)]">
+              {t("提示等级：", "Hint level: ")}
+              {currentLevel}/5
+            </div>
           </div>
 
           {hintText && (
@@ -323,20 +342,20 @@ export default function LearningSessionPage() {
               className="px-4 py-2 border border-[var(--rs-line-strong)] rounded-lg text-sm hover:bg-[var(--rs-hover)]"
               disabled={currentLevel >= 5}
             >
-              申请提示
+              {t("申请提示", "Request a hint")}
             </button>
             <button
               onClick={revealAnswer}
               className="px-4 py-2 border border-[var(--rs-warning)] text-[var(--rs-warning)] rounded-lg text-sm hover:bg-[var(--rs-warning-soft)]"
             >
-              显示完整解释
+              {t("显示完整解释", "Show full explanation")}
             </button>
             <button
               onClick={submit}
               disabled={!canSubmit}
               className="px-4 py-2 bg-[var(--rs-accent)] text-white rounded-lg text-sm disabled:opacity-50"
             >
-              {submitting ? "提交中…" : "提交回答"}
+              {submitting ? t("提交中…", "Submitting…") : t("提交回答", "Submit answer")}
             </button>
           </div>
         </>
@@ -344,7 +363,7 @@ export default function LearningSessionPage() {
         <div className="space-y-4">
           <div className="rs-card rounded-xl p-5">
             <div className="flex items-center justify-between gap-3 mb-2">
-              <h2 className="font-semibold text-[var(--rs-ink)]">评价</h2>
+              <h2 className="font-semibold text-[var(--rs-ink)]">{t("评价", "Evaluation")}</h2>
               {result.evaluation_source && (
                 <span className="text-[11px] uppercase tracking-wide text-[var(--rs-muted)]">
                   {result.evaluation_source === "llm" ? "LLM + rubric" : "deterministic"}
@@ -353,32 +372,34 @@ export default function LearningSessionPage() {
             </div>
             <p className="text-[var(--rs-ink)] mb-2">{result.evaluation.feedback}</p>
             <div className="text-sm text-[var(--rs-ink-2)] space-y-1">
-              <div>得分：{result.score.toFixed(2)}</div>
-              <div>FSRS Rating：{result.fsrs_rating}</div>
-              <div>掌握度：{result.mastery_score?.toFixed(2) ?? "—"}</div>
+              <div>{t("得分：", "Score: ")}{result.score.toFixed(2)}</div>
+              <div>{t("FSRS Rating：", "FSRS Rating: ")}{result.fsrs_rating}</div>
+              <div>{t("掌握度：", "Mastery: ")}{result.mastery_score?.toFixed(2) ?? "—"}</div>
               <div>
-                下次复习：
+                {t("下次复习：", "Next review: ")}
                 {result.next_review_at
                   ? new Date(result.next_review_at).toLocaleString()
                   : "—"}
               </div>
-              <div>覆盖点：{(result.evaluation.covered_points || []).join(", ") || "—"}</div>
-              <div>遗漏点：{(result.evaluation.missing_points || []).join(", ") || "—"}</div>
+              <div>{t("覆盖点：", "Covered: ")}{(result.evaluation.covered_points || []).join(", ") || "—"}</div>
+              <div>{t("遗漏点：", "Missing: ")}{(result.evaluation.missing_points || []).join(", ") || "—"}</div>
             </div>
             {result.evaluation.suggested_revision && (
               <p className="mt-3 text-sm text-[var(--rs-accent)]">
-                改进建议：{result.evaluation.suggested_revision}
+                {t("改进建议：", "Suggested revision: ")}
+                {result.evaluation.suggested_revision}
               </p>
             )}
             {result.evaluation.follow_up_question && (
               <p className="mt-2 text-sm text-[var(--rs-ink-2)]">
-                追问：{result.evaluation.follow_up_question}
+                {t("追问：", "Follow-up: ")}
+                {result.evaluation.follow_up_question}
               </p>
             )}
           </div>
 
           <div className="rs-card rounded-xl p-5">
-            <h2 className="font-semibold text-[var(--rs-ink)] mb-2">源码证据</h2>
+            <h2 className="font-semibold text-[var(--rs-ink)] mb-2">{t("源码证据", "Source evidence")}</h2>
             <ul className="text-sm text-[var(--rs-ink-2)] space-y-1">
               {(result.evaluation.source_evidence || []).map((ref, i) => (
                 <li key={i}>
@@ -392,7 +413,7 @@ export default function LearningSessionPage() {
 
           {result.expected_answer_outline && (
             <div className="bg-[var(--rs-surface-2)] border border-[var(--rs-line)] rounded-xl p-5">
-              <h2 className="font-semibold text-[var(--rs-ink)] mb-2">答案提纲</h2>
+              <h2 className="font-semibold text-[var(--rs-ink)] mb-2">{t("答案提纲", "Answer outline")}</h2>
               <pre className="text-sm text-[var(--rs-ink-2)] whitespace-pre-wrap">
                 {result.expected_answer_outline}
               </pre>
@@ -406,27 +427,27 @@ export default function LearningSessionPage() {
                 onClick={goNext}
                 className="px-4 py-2 bg-[var(--rs-accent)] text-white rounded-lg text-sm"
               >
-                下一题
+                {t("下一题", "Next item")}
               </button>
             ) : (
               <Link
                 to={`/concepts/${item.concept_id}`}
                 className="px-4 py-2 bg-[var(--rs-accent)] text-white rounded-lg text-sm"
               >
-                完成本轮 · 返回词条
+                {t("完成本轮 · 返回词条", "Round done · back to entry")}
               </Link>
             )}
             <Link
               to={`/concepts/${item.concept_id}`}
               className="px-4 py-2 border border-[var(--rs-line-strong)] rounded-lg text-sm"
             >
-              返回词条
+              {t("返回词条", "Back to entry")}
             </Link>
             <Link
               to="/reviews"
               className="px-4 py-2 border border-[var(--rs-line-strong)] rounded-lg text-sm"
             >
-              查看复习队列
+              {t("查看复习队列", "View review queue")}
             </Link>
           </div>
         </div>

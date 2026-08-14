@@ -80,6 +80,7 @@ _OPTIONAL_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("repository_versions", "progress_message", "VARCHAR(255)"),
     ("concepts", "wiki_page_id", "VARCHAR(255)"),
     ("learning_paths", "resolved", "JSON"),
+    ("repository_versions", "content_lang", "VARCHAR(8)"),
 )
 
 

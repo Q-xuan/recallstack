@@ -13,7 +13,9 @@ Missing translations fall back to English (same spirit as RepoWiki defaults).
 from __future__ import annotations
 
 import os
-from typing import Literal
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Iterator, Literal
 
 ContentLang = Literal["en", "zh", "ja", "ko"]
 SUPPORTED_LANGS: tuple[ContentLang, ...] = ("en", "zh", "ja", "ko")
@@ -45,8 +47,14 @@ def normalize_lang(raw: str | None) -> ContentLang:
     return "en"
 
 
+_lang_override: ContextVar[ContentLang | None] = ContextVar("content_lang_override", default=None)
+
+
 def content_lang() -> ContentLang:
     """Resolve active content language (no process-wide cache — tests can override env)."""
+    pinned = _lang_override.get()
+    if pinned:
+        return pinned
     override = os.getenv("RECALLSTACK_CONTENT_LANG")
     if override and override.strip():
         return normalize_lang(override)
@@ -61,6 +69,17 @@ def content_lang() -> ContentLang:
         return normalize_lang(Config.load().language)
     except Exception:  # noqa: BLE001
         return "en"
+
+
+@contextmanager
+def content_lang_scope(language: str | None) -> Iterator[ContentLang]:
+    """Pin content language for this task (analyze / generate). Does not mutate env."""
+    resolved = normalize_lang(language or content_lang())
+    token = _lang_override.set(resolved)
+    try:
+        yield resolved
+    finally:
+        _lang_override.reset(token)
 
 
 def lang_instruction(language: str | None = None) -> str:
