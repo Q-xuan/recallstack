@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, Iterator
 
 from recallstack.domain.schemas import ConceptDraft, SourceReference
 from recallstack.learning.i18n import t
@@ -1197,17 +1199,30 @@ def _pick_definition_in_store(
     if not file_texts or len(name) < 2:
         return None
     hits: list[tuple[int, str, int]] = []
-    for path, text in file_texts.items():
+    cached = _DEFINITION_INDEX.get()
+    indexed = cached.definitions(name) if cached is not None else None
+    if indexed:
+        candidates: list[tuple[str, int]] = indexed
+    else:
+        candidates = []
+        for path, text in file_texts.items():
+            norm = path.replace("\\", "/")
+            if not _is_production_src(norm, slug=slug) or _blocked_for_slug(norm, slug):
+                continue
+            defn, is_defn = _best_symbol_line(text, name)
+            if not defn or not is_defn:
+                continue
+            candidates.append((norm, defn))
+    for path, defn in candidates:
         norm = path.replace("\\", "/")
         if not _is_production_src(norm, slug=slug) or _blocked_for_slug(norm, slug):
-            continue
-        defn, is_defn = _best_symbol_line(text, name)
-        if not defn or not is_defn:
             continue
         score = 50 if norm.lower().endswith(".rs") else 20
         score += 120
         if "/src/" in f"/{norm.lower()}/":
             score += 10
+        if _is_bin_path(norm):
+            score -= 40
         score += _prefer_score(norm, slug)
         for i, suffix in enumerate(suffixes):
             if _path_matches_hint(norm, suffix):
@@ -1631,7 +1646,99 @@ def path_evidence_chip(
 _WIKI_PILL_RE = re.compile(
     r"^([A-Za-z0-9_./\-]+?\.[A-Za-z0-9]+)(?::(\d+)(?:-\d+)?)?(?:[ \t]+(.+))?$"
 )
-_WIKI_KEY_TYPE_HEADING_RE = re.compile(r"(?im)^#{2,3}[ \t]+(关键类型|Key types)\b")
+_INDEX_DEFN_RE = re.compile(
+    r"(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|struct|enum|trait|type|class)\s+"
+    r"([A-Za-z_][A-Za-z0-9_]*)"
+    r"|impl(?:\s*<[^>]*>)?\s+([A-Za-z_][A-Za-z0-9_]*)"
+    r"|impl\b.+\bfor\s+([A-Za-z_][A-Za-z0-9_]*)"
+)
+
+_DEFINITION_INDEX: ContextVar["DefinitionIndex | None"] = ContextVar(
+    "recallstack_definition_index", default=None
+)
+
+
+def _is_bin_path(path: str) -> bool:
+    low = (path or "").replace("\\", "/").lower()
+    wrapped = f"/{low}/"
+    return low.startswith("bin/") or "/bin/" in wrapped or "/src/bin/" in wrapped
+
+
+def _path_resolve_score(norm: str, *, prefer_key: str = "") -> int:
+    score = 50 if norm.lower().endswith(".rs") else 20
+    if "/src/" in f"/{norm.lower()}/":
+        score += 10
+    if _is_bin_path(norm):
+        score -= 40
+    if prefer_key and norm == prefer_key:
+        score += 80
+    return score
+
+
+class DefinitionIndex:
+    """One pass over the scan store: symbol → definition (path, line)."""
+
+    def __init__(self, file_texts: dict[str, str] | None):
+        self.file_texts = file_texts or {}
+        self._defs: dict[str, list[tuple[str, int]]] = {}
+        self._build()
+
+    def _build(self) -> None:
+        for path, text in self.file_texts.items():
+            norm = path.replace("\\", "/")
+            if is_junk_evidence_path(norm) or not _is_production_src(norm):
+                continue
+            seen: set[str] = set()
+            for i, line in enumerate((text or "").splitlines(), 1):
+                stripped = line.strip()
+                if stripped.startswith(("//", "/*", "*", "#", "//!", "///")):
+                    continue
+                if re.match(r"(?:pub\s+)?use\b", stripped):
+                    continue
+                for match in _INDEX_DEFN_RE.finditer(line):
+                    name = next((g for g in match.groups() if g), "")
+                    if not name or name in seen or _is_dummy_symbol(name):
+                        continue
+                    if not _line_defines_symbol(line, name):
+                        continue
+                    seen.add(name)
+                    self._defs.setdefault(name, []).append((norm, i))
+
+    def definitions(self, symbol: str) -> list[tuple[str, int]]:
+        return list(self._defs.get((symbol or "").strip(), ()))
+
+    def resolve(self, symbol: str, *, prefer_path: str = "") -> tuple[str, int] | None:
+        name = (symbol or "").strip()
+        if len(name) < 2:
+            return None
+        prefer_key = _resolve_store_key(self.file_texts, prefer_path)
+        hits = [
+            (_path_resolve_score(path, prefer_key=prefer_key or "") + 80, path, line)
+            for path, line in self.definitions(name)
+        ]
+        if not hits:
+            return None
+        hits.sort(key=lambda item: (-item[0], item[1]))
+        _score, path, line = hits[0]
+        return path, line
+
+
+@contextmanager
+def definition_index_scope(file_texts: dict[str, str] | None) -> Iterator[DefinitionIndex | None]:
+    """Build a store index once so pill/chip resolution is not O(files × symbols)."""
+    if not file_texts:
+        token = _DEFINITION_INDEX.set(None)
+        try:
+            yield None
+        finally:
+            _DEFINITION_INDEX.reset(token)
+        return
+    index = DefinitionIndex(file_texts)
+    token = _DEFINITION_INDEX.set(index)
+    try:
+        yield index
+    finally:
+        _DEFINITION_INDEX.reset(token)
 
 
 def resolve_symbol_definition(
@@ -1648,6 +1755,11 @@ def resolve_symbol_definition(
     name = (symbol or "").strip()
     if not file_texts or len(name) < 2:
         return None
+    cached = _DEFINITION_INDEX.get()
+    if cached is not None:
+        hit = cached.resolve(name, prefer_path=prefer_path)
+        if hit:
+            return hit
     prefer_key = _resolve_store_key(file_texts, prefer_path)
     defs: list[tuple[int, str, int]] = []
     occs: list[tuple[int, str, int]] = []
@@ -1659,11 +1771,7 @@ def resolve_symbol_definition(
         occ = _occurrence_line_in_text(text, name) if not defn else 0
         if not defn and not occ:
             continue
-        score = 50 if norm.lower().endswith(".rs") else 20
-        if "/src/" in f"/{norm.lower()}/":
-            score += 10
-        if prefer_key and norm == prefer_key:
-            score += 80
+        score = _path_resolve_score(norm, prefer_key=prefer_key or "")
         if defn:
             defs.append((score + 80, norm, defn))
         else:
@@ -1677,55 +1785,45 @@ def resolve_symbol_definition(
 
 
 def fill_wiki_key_type_lines(content: str, file_texts: dict[str, str] | None) -> str:
-    """GET: `` `path Symbol` `` → `` `path:line Symbol` `` from the scan store.
+    """Stamp `` `path Symbol` `` / `` `path:1 Symbol` `` from the scan store.
 
-    Only ``## 关键类型``. Overview 核心子系统 path-only pills stay as-is.
+    Path-only pills (no symbol) stay as-is. Runs on the whole page so overview
+    核心子系统 and architecture cites get definition lines, not just 关键类型.
     """
     if not content or not file_texts or "`" not in content:
         return content
 
-    def rewrite_section(section: str) -> str:
-        def pill_repl(match: re.Match[str]) -> str:
-            inner = (match.group(1) or "").strip()
-            parsed = _WIKI_PILL_RE.match(inner)
-            if not parsed:
-                return match.group(0)
-            path = (parsed.group(1) or "").strip()
-            line = (parsed.group(2) or "").strip()
-            symbol = (parsed.group(3) or "").strip()
-            if not path or not symbol or _is_dummy_symbol(symbol):
-                return match.group(0)
-            if line and line != "1":
-                store_existing = _resolve_store_key(file_texts, path)
-                if store_existing or not file_texts:
-                    return match.group(0)
-            if is_junk_evidence_path(path):
-                return match.group(0)
-            hit = resolve_symbol_definition(file_texts, symbol, prefer_path=path)
-            if hit:
-                new_path, new_line = hit
-                if _resolve_store_key(file_texts, new_path):
-                    return f"`{new_path}:{new_line} {symbol}`"
-            store_path = _resolve_store_key(file_texts, path)
-            if store_path:
-                found = line_of_symbol_in_text(file_texts.get(store_path) or "", symbol)
-                if found:
-                    return f"`{store_path}:{found} {symbol}`"
-                if line == "1":
-                    return f"`{store_path} {symbol}`"
+    def pill_repl(match: re.Match[str]) -> str:
+        inner = (match.group(1) or "").strip()
+        parsed = _WIKI_PILL_RE.match(inner)
+        if not parsed:
             return match.group(0)
+        path = (parsed.group(1) or "").strip()
+        line = (parsed.group(2) or "").strip()
+        symbol = (parsed.group(3) or "").strip()
+        if not path or not symbol or _is_dummy_symbol(symbol):
+            return match.group(0)
+        if line and line != "1":
+            store_existing = _resolve_store_key(file_texts, path)
+            if store_existing or not file_texts:
+                return match.group(0)
+        if is_junk_evidence_path(path):
+            return match.group(0)
+        hit = resolve_symbol_definition(file_texts, symbol, prefer_path=path)
+        if hit:
+            new_path, new_line = hit
+            if _resolve_store_key(file_texts, new_path):
+                return f"`{new_path}:{new_line} {symbol}`"
+        store_path = _resolve_store_key(file_texts, path)
+        if store_path:
+            found = line_of_symbol_in_text(file_texts.get(store_path) or "", symbol)
+            if found:
+                return f"`{store_path}:{found} {symbol}`"
+            if line == "1":
+                return f"`{store_path} {symbol}`"
+        return match.group(0)
 
-        return re.sub(r"`([^`]+)`", pill_repl, section)
-
-    parts = re.split(r"(?m)(?=^## )", content)
-    out: list[str] = []
-    for part in parts:
-        first, _, _rest = part.partition("\n")
-        if _WIKI_KEY_TYPE_HEADING_RE.match(first):
-            out.append(rewrite_section(part))
-        else:
-            out.append(part)
-    return "".join(out)
+    return re.sub(r"`([^`]+)`", pill_repl, content)
 
 
 _ASK_QUESTION_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
@@ -1901,13 +1999,18 @@ def path_worksheet(
     concept: Any,
     project_name: str = "",
     file_texts: dict[str, str] | None = None,
+    evidence_chip: str | None = None,
 ) -> str:
     """Learning-path page only. Never mixed into the reading wiki."""
     title = getattr(concept, "title", None) or getattr(concept, "slug", "") or ""
     slug = getattr(concept, "slug", "") or ""
     task = step_task_for_slug(slug, title)
     principles = path_principles(concept, project_name)
-    chip = path_evidence_chip(concept, file_texts=file_texts)
+    chip = (
+        evidence_chip
+        if evidence_chip is not None
+        else path_evidence_chip(concept, file_texts=file_texts)
+    )
     gate = pass_gate(concept)
     reading = evidence_reading(concept, chip)
     judge = t(

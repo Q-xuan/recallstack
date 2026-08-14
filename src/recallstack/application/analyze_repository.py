@@ -152,6 +152,25 @@ class AnalyzeRepositoryService:
         ):
             logger.info("idempotent hit for %s@%s", repo.id, commit_sha)
             self._save_version_file_texts(existing, project)
+            from recallstack.learning.wiki_serve import (
+                materialize_analyzed_version,
+                path_is_materialized,
+                wiki_is_materialized,
+            )
+
+            path = self.store.get_learning_path(existing.id)
+            if not wiki_is_materialized(existing.wiki_pages) or not path_is_materialized(
+                getattr(path, "resolved", None) if path else None
+            ):
+                texts = {
+                    f.path: (f.content or f.preview or "")
+                    for f in project.files
+                    if (f.content or f.preview)
+                }
+                materialize_analyzed_version(
+                    self.session, existing, self.store.list_concepts(repo.id, existing.id), texts
+                )
+                self.session.commit()
             return existing
 
         old_version = self.store.get_latest_version(repo.id)
@@ -350,6 +369,16 @@ class AnalyzeRepositoryService:
             # recompute from concepts is enough for stale next time if we persist hashes in JSON file under data/.
             self._save_version_file_hashes(version, file_hashes)
             self._save_version_file_texts(version, project)
+            texts = {
+                f.path: (f.content or f.preview or "")
+                for f in project.files
+                if (f.content or f.preview)
+            }
+            from recallstack.learning.wiki_serve import materialize_analyzed_version
+
+            materialize_analyzed_version(
+                self.session, version, list(concept_rows.values()), texts
+            )
 
             version.status = "ready"
             version.completed_at = utcnow()

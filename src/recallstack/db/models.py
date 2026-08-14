@@ -137,6 +137,8 @@ class LearningPath(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     estimated_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    # {serve_revision, chips: {concept_id: "path:line Symbol"}} — GET skips store walk
+    resolved: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     repository_version: Mapped[RepositoryVersion] = relationship(back_populates="learning_paths")

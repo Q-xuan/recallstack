@@ -52,6 +52,14 @@ from recallstack.learning.code_loader import (
     enrich_file_texts_from_working_copy,
     load_version_file_texts,
 )
+from recallstack.learning.wiki_serve import (
+    materialize_path_resolved,
+    materialize_wiki_payload,
+    path_is_materialized,
+    persist_path_resolved,
+    persist_wiki_payload,
+    wiki_is_materialized,
+)
 from recallstack.security import SecurityError
 
 router = APIRouter(prefix="/recallstack", tags=["recallstack"])
@@ -308,13 +316,18 @@ def get_repository_wiki(
     if not version.wiki_pages or not (version.wiki_pages or {}).get("pages"):
         raise api_error(404, "wiki_not_found", "Wiki not generated yet — re-analyze repository")
     concepts = store.list_concepts(repository_id, version.id)
-    repo = store.get_repository(repository_id)
-    file_texts = enrich_file_texts_from_working_copy(
-        load_version_file_texts(str(version.id)),
-        source_type=getattr(repo, "source_type", "") or "",
-        source_location=getattr(repo, "source_location", "") or "",
-    )
-    return wiki_out(repository_id, version, concepts, file_texts=file_texts)
+    payload = version.wiki_pages or {}
+    if not wiki_is_materialized(payload):
+        repo = store.get_repository(repository_id)
+        file_texts = enrich_file_texts_from_working_copy(
+            load_version_file_texts(str(version.id)),
+            source_type=getattr(repo, "source_type", "") or "",
+            source_location=getattr(repo, "source_location", "") or "",
+        )
+        payload = materialize_wiki_payload(payload, concepts, file_texts)
+        persist_wiki_payload(db, version, payload)
+        version.wiki_pages = payload
+    return wiki_out(repository_id, version, concepts)
 
 
 @router.get("/repositories/{repository_id}/wiki/search", response_model=WikiSearchOut)
@@ -437,12 +450,19 @@ def get_learning_path(
     path = store.get_learning_path(version.id)
     if not path:
         raise api_error(404, "path_not_found", "Learning path not found")
+    if path_is_materialized(getattr(path, "resolved", None)):
+        out = path_out(path)
+        _schedule_path_annotation_prefetch(background_tasks, str(version.id), out, {})
+        return out
     repo = store.get_repository(repository_id)
     file_texts = enrich_file_texts_from_working_copy(
         load_version_file_texts(str(version.id)),
         source_type=getattr(repo, "source_type", "") or "",
         source_location=getattr(repo, "source_location", "") or "",
     )
+    resolved = materialize_path_resolved(path, file_texts)
+    persist_path_resolved(db, path, resolved)
+    path.resolved = resolved
     out = path_out(path, file_texts=file_texts)
     _schedule_path_annotation_prefetch(background_tasks, str(version.id), out, file_texts)
     return out

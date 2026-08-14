@@ -44,7 +44,7 @@ from repowiki.core.topics import (
     subsystems_from_topics,
     topic_wiki_links,
 )
-from repowiki.core.wiki_builder import Wiki, WikiBuilder, WikiPage
+from repowiki.core.wiki_builder import Wiki, WikiBuilder, WikiPage, structural_title
 
 logger = logging.getLogger(__name__)
 
@@ -574,9 +574,67 @@ def append_concept_pages(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
         )
         concept_sidebar.children.append(SidebarItem(title=c.title, page_id=page_id))
     has_topics = any(p.id.startswith("topics/") for p in wiki.pages)
-    if concept_sidebar.children and not has_topics:
-        wiki.sidebar.append(concept_sidebar)
+    if concept_sidebar.children:
+        if has_topics:
+            deep_title = structural_title("deep-dive", content_lang())
+            placed = False
+            for item in wiki.sidebar:
+                if item.title == deep_title:
+                    item.children.append(concept_sidebar)
+                    placed = True
+                    break
+            if not placed:
+                wiki.sidebar.append(concept_sidebar)
+        else:
+            wiki.sidebar.append(concept_sidebar)
     return wiki
+
+
+_STEP_HEADING_RE = re.compile(
+    r"^(##[ \t]+(?:Step|步骤|ステップ|단계)[ \t]+(\d+):)[ \t]+(.+?)$"
+)
+_STEP_TIME_SUFFIX_RE = re.compile(r"[ \t]+(\([^)]*\))\s*$")
+
+
+def link_reading_guide_markdown(content: str, concepts: list[Any]) -> str:
+    """Turn 步骤/Step headings into ``](concepts/slug)`` links (zh and en)."""
+    if not content or not concepts:
+        return content
+    slug_by_title = {
+        str(getattr(c, "title", "") or ""): str(getattr(c, "slug", "") or "")
+        for c in concepts
+        if getattr(c, "title", None) and getattr(c, "slug", None)
+    }
+    ordered = [c for c in concepts if getattr(c, "slug", None)]
+    out: list[str] = []
+    for line in content.split("\n"):
+        if "](concepts/" in line:
+            out.append(line)
+            continue
+        match = _STEP_HEADING_RE.match(line)
+        if not match:
+            out.append(line)
+            continue
+        prefix, number_s, rest = match.group(1), match.group(2), match.group(3)
+        suffix = ""
+        time_m = _STEP_TIME_SUFFIX_RE.search(rest)
+        title = rest
+        if time_m:
+            title = rest[: time_m.start()].strip()
+            suffix = rest[time_m.start() :]
+        slug = slug_by_title.get(title)
+        if not slug:
+            try:
+                idx = int(number_s) - 1
+            except ValueError:
+                idx = -1
+            if 0 <= idx < len(ordered):
+                slug = str(getattr(ordered[idx], "slug", "") or "")
+        if slug:
+            out.append(f"{prefix} [{title}](concepts/{slug}){suffix}")
+        else:
+            out.append(line)
+    return "\n".join(out)
 
 
 def link_reading_guide(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
@@ -587,21 +645,10 @@ def link_reading_guide(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
     """
     if not concepts:
         return wiki
-    slug_by_title = {c.title: c.slug for c in concepts}
     for page in wiki.pages:
         if page.id != "reading-guide":
             continue
-        out: list[str] = []
-        for line in page.content.split("\n"):
-            match = re.match(r"^## Step (\d+): (.+?)( \(~[^)]*\))?$", line)
-            if match:
-                number, title, suffix = match.group(1), match.group(2), match.group(3) or ""
-                slug = slug_by_title.get(title)
-                if slug:
-                    out.append(f"## Step {number}: [{title}](concepts/{slug}){suffix}")
-                    continue
-            out.append(line)
-        page.content = "\n".join(out)
+        page.content = link_reading_guide_markdown(page.content, concepts)
     return wiki
 
 

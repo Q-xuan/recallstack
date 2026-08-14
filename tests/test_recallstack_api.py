@@ -231,10 +231,10 @@ def test_concept_pages_cross_link_and_cite_evidence(client: TestClient):
         re.search(r"`[\w./\-]+\.\w+:\d+", p["content"]) for p in concept_pages
     ), "expected at least one path:line source citation"
 
-    # Reading Guide steps link to the concept pages they describe.
+    # Reading Guide steps link to the concept pages they describe (zh 步骤 / en Step).
     guide = pages.get("reading-guide")
-    if guide:
-        assert "](concepts/" in guide["content"]
+    assert guide, "analyze should emit a reading-guide page"
+    assert "](concepts/" in guide["content"]
 
 
 def test_background_analyze_marks_version_queued(client: TestClient):

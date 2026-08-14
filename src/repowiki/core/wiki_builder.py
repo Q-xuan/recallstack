@@ -519,6 +519,13 @@ class WikiBuilder:
                     page_id="getting-started",
                 )
             )
+        if "reading-guide" in page_ids:
+            getting.append(
+                SidebarItem(
+                    title=structural_title("reading-guide", lang),
+                    page_id="reading-guide",
+                )
+            )
         deep: list[SidebarItem] = []
         if "architecture" in page_ids:
             deep.append(
@@ -992,6 +999,7 @@ def upgrade_wiki_page_content(
     content = upgrade_key_type_chip_markdown(content)
     content = fill_key_type_chip_lines(content)
     content = upgrade_mermaid_fences(content)
+    content = thicken_subsystem_diagrams(content)
     content = shorten_mermaid_node_labels(content)
     content = strip_reading_wiki_homework(content, page_id=page_id)
     content = upgrade_architecture_loop_wording(content)
@@ -1339,6 +1347,213 @@ def upgrade_mermaid_fences(content: str) -> str:
         return f"```mermaid\n{body}\n```"
 
     return _MERMAID_FENCE_RE.sub(fence_repl, content)
+
+
+_TYPE_NAME_BULLET_RE = re.compile(
+    r"^[-*][ \t]+`?([A-Za-z_][A-Za-z0-9_]*)`?[ \t]+—"
+)
+_PILL_SYMBOL_RE = re.compile(r"`[^`]+[ \t]+([A-Za-z_][A-Za-z0-9_]*)`")
+
+
+def mermaid_is_toy(source: str) -> bool:
+    """True when a subsystem diagram is missing, one-edge, or has fewer than 3 types."""
+    text = normalize_mermaid_source(source)
+    if not text:
+        return True
+    low = text.lstrip().lower()
+    if low.startswith("sequencediagram"):
+        return len(re.findall(r"(?i)\bparticipant\b", text)) < 3
+    nodes = _MERMAID_NODE_RE.findall(text)
+    edges = len(re.findall(r"-->", text))
+    return len(nodes) < 3 or edges < 2
+
+
+def flowchart_lr_from_types(names: list[str]) -> str:
+    """Typed flowchart LR from on-page types. Does not invent names."""
+    labels: list[str] = []
+    seen: set[str] = set()
+    for raw in names:
+        name = (raw or "").strip()
+        if not name or is_dummy_symbol(name) or name in seen:
+            continue
+        seen.add(name)
+        labels.append(clip_mermaid_label(name) or name)
+        if len(labels) >= 6:
+            break
+    if len(labels) < 2:
+        return ""
+    lines = ["flowchart LR"]
+    ids = [chr(ord("A") + i) for i in range(len(labels))]
+    for nid, lab in zip(ids, labels, strict=True):
+        lines.append(f'  {nid}["{lab}"]')
+    for src, dst in zip(ids, ids[1:], strict=False):
+        lines.append(f"  {src} --> {dst}")
+    return "\n".join(lines)
+
+
+def _types_in_subsystem_chunk(chunk: str) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for line in (chunk or "").splitlines():
+        match = _TYPE_NAME_BULLET_RE.match(line.strip())
+        if match and match.group(1) not in seen and not is_dummy_symbol(match.group(1)):
+            seen.add(match.group(1))
+            names.append(match.group(1))
+    for match in _PILL_SYMBOL_RE.finditer(chunk or ""):
+        name = match.group(1)
+        if name not in seen and not is_dummy_symbol(name):
+            seen.add(name)
+            names.append(name)
+    return names
+
+
+def _thicken_one_subsystem(chunk: str) -> str:
+    if not chunk.startswith("###"):
+        return chunk
+    types = _types_in_subsystem_chunk(chunk)
+    diagram = flowchart_lr_from_types(types)
+    if not diagram:
+        return chunk
+    fence = _MERMAID_FENCE_RE.search(chunk)
+    if fence:
+        if not mermaid_is_toy(fence.group(1)):
+            return chunk
+        return chunk[: fence.start()] + f"```mermaid\n{diagram}\n```" + chunk[fence.end() :]
+    lines = chunk.splitlines(keepends=True)
+    insert_at = 1
+    while insert_at < len(lines) and not lines[insert_at].strip():
+        insert_at += 1
+    if insert_at < len(lines) and not lines[insert_at].lstrip().startswith(("#", "-", "*", "```")):
+        insert_at += 1
+        while insert_at < len(lines) and not lines[insert_at].strip():
+            insert_at += 1
+    injection = "```mermaid\n" + diagram + "\n```\n\n"
+    return "".join(lines[:insert_at]) + injection + "".join(lines[insert_at:])
+
+
+def thicken_subsystem_diagrams(content: str) -> str:
+    """Replace toy 核心子系统 mermaids with typed flowchart LR from on-page types."""
+    if not content:
+        return content
+    if "## 核心子系统" not in content and "## Core subsystems" not in content:
+        return content
+    parts = re.split(r"(?m)(?=^## )", content)
+    out: list[str] = []
+    for part in parts:
+        first, _, _rest = part.partition("\n")
+        if re.match(r"(?im)^##[ \t]+(核心子系统|Core subsystems)\b", first):
+            chunks = re.split(r"(?m)(?=^### )", part)
+            out.append("".join(_thicken_one_subsystem(chunk) for chunk in chunks))
+        else:
+            out.append(part)
+    return "".join(out)
+
+
+def _topic_lookup(pages: list[dict]) -> dict[str, dict]:
+    found: dict[str, dict] = {}
+    for page in pages:
+        pid = str(page.get("id") or "")
+        if not pid.startswith("topics/"):
+            continue
+        slug = pid.split("/", 1)[-1]
+        found[slug] = page
+        found[slug.replace("-", " ")] = page
+        title = str(page.get("title") or "").strip()
+        if title:
+            found[title] = page
+            found[title.lower()] = page
+    return found
+
+
+def _match_topic_page(name: str, topics: dict[str, dict]) -> dict | None:
+    raw = (name or "").strip()
+    if not raw:
+        return None
+    for key in (raw, raw.lower(), raw.replace(" ", "-").lower()):
+        if key in topics:
+            return topics[key]
+    for key, page in topics.items():
+        if raw.lower() in key.lower() or key.lower() in raw.lower():
+            return page
+    return None
+
+
+def _topic_type_lines(content: str) -> list[str]:
+    lines: list[str] = []
+    in_types = False
+    for line in (content or "").splitlines():
+        if re.match(r"(?im)^##[ \t]+(关键类型|Key types)\b", line):
+            in_types = True
+            continue
+        if in_types and re.match(r"(?m)^## ", line):
+            break
+        if in_types and line.strip().startswith(("-", "*")):
+            lines.append(line.rstrip())
+    return lines
+
+
+def _topic_mermaid(content: str) -> str:
+    match = _MERMAID_FENCE_RE.search(content or "")
+    if not match:
+        return ""
+    body = normalize_mermaid_source(match.group(1))
+    return body if body and not mermaid_is_toy(body) else ""
+
+
+def enrich_overview_from_topic_pages(pages: list[dict]) -> None:
+    """Copy real diagrams / type-as-role lines from existing topic pages.
+
+    Does not invent topics. Overview 核心子系统 headings must already exist.
+    """
+    topics = _topic_lookup(pages)
+    if not topics:
+        return
+    for page in pages:
+        if str(page.get("id") or "") != "index":
+            continue
+        content = page.get("content") or ""
+        if "## 核心子系统" not in content and "## Core subsystems" not in content:
+            continue
+        parts = re.split(r"(?m)(?=^## )", content)
+        out: list[str] = []
+        for part in parts:
+            first, _, _rest = part.partition("\n")
+            if not re.match(r"(?im)^##[ \t]+(核心子系统|Core subsystems)\b", first):
+                out.append(part)
+                continue
+            chunks = re.split(r"(?m)(?=^### )", part)
+            rebuilt: list[str] = []
+            for chunk in chunks:
+                if not chunk.startswith("###"):
+                    rebuilt.append(chunk)
+                    continue
+                heading = chunk.split("\n", 1)[0]
+                name = re.sub(r"^###\s+", "", heading).strip()
+                topic = _match_topic_page(name, topics)
+                if topic is None:
+                    rebuilt.append(_thicken_one_subsystem(chunk))
+                    continue
+                topic_md = str(topic.get("content") or "")
+                diagram = _topic_mermaid(topic_md)
+                type_lines = _topic_type_lines(topic_md)
+                chunk = _thicken_one_subsystem(chunk)
+                if diagram and mermaid_is_toy(
+                    (m.group(1) if (m := _MERMAID_FENCE_RE.search(chunk)) else "")
+                ):
+                    if _MERMAID_FENCE_RE.search(chunk):
+                        chunk = _MERMAID_FENCE_RE.sub(
+                            f"```mermaid\n{diagram}\n```", chunk, count=1
+                        )
+                    else:
+                        chunk = _thicken_one_subsystem(
+                            chunk.rstrip() + "\n\n```mermaid\n" + diagram + "\n```\n"
+                        )
+                if type_lines and not _types_in_subsystem_chunk(chunk):
+                    chunk = chunk.rstrip() + "\n\n" + "\n".join(type_lines) + "\n"
+                    chunk = _thicken_one_subsystem(chunk)
+                rebuilt.append(chunk)
+            out.append("".join(rebuilt))
+        page["content"] = "".join(out)
 
 
 def clip_mermaid_label(text: str) -> str:
@@ -1997,6 +2212,114 @@ _GENERIC_WEB_PAGE_SLUGS = {
     "error-handling",
     "background-tasks",
 }
+_CONCEPT_NAV_SKIP = {"module-inventory", "file-inventory"}
+
+
+def is_concept_nav_slug(slug: str) -> bool:
+    raw = (slug or "").strip()
+    if not raw or raw in _CONCEPT_NAV_SKIP or raw in _GENERIC_WEB_PAGE_SLUGS:
+        return False
+    if raw.startswith(("module-", "file-", "focus-")):
+        return False
+    return True
+
+
+def _concept_nav_leaves(pages: list[dict], titles: dict[str, str]) -> list[dict]:
+    leaves: list[dict] = []
+    for page in pages:
+        pid = str(page.get("id") or "")
+        if not pid.startswith("concepts/"):
+            continue
+        slug = pid.split("/", 1)[-1]
+        if not is_concept_nav_slug(slug):
+            continue
+        leaves.append({
+            "title": titles.get(pid) or str(page.get("title") or slug),
+            "page_id": pid,
+            "children": [],
+        })
+    return leaves
+
+
+def ensure_reading_ia_sidebar(
+    sidebar: list,
+    pages: list[dict],
+    *,
+    language: str = "zh",
+) -> list:
+    """Put 导读 in 入门指南 and 词条 in 深入探索 without reshuffling topics."""
+    lang = normalize_wiki_lang(language)
+    page_ids = {str(p.get("id") or "") for p in pages}
+    titles = {
+        str(p.get("id") or ""): str(p.get("title") or p.get("id") or "")
+        for p in pages
+    }
+
+    def leaf(page_id: str, title: str | None = None) -> dict:
+        return {
+            "title": title or titles.get(page_id, page_id),
+            "page_id": page_id,
+            "children": [],
+        }
+
+    items = [dict(item) if isinstance(item, dict) else item for item in (sidebar or [])]
+    getting_title = structural_title("getting-started", lang)
+    deep_title = structural_title("deep-dive", lang)
+    guide_title = structural_title("reading-guide", lang)
+    concepts_title = structural_title("concepts", lang)
+
+    def find_group(title: str) -> dict | None:
+        for item in items:
+            if isinstance(item, dict) and str(item.get("title") or "") == title:
+                return item
+        return None
+
+    getting = find_group(getting_title)
+    if getting is None and ("index" in page_ids or "getting-started" in page_ids or "reading-guide" in page_ids):
+        getting = {"title": getting_title, "page_id": "", "children": []}
+        items.insert(0, getting)
+    if getting is not None:
+        kids = list(getting.get("children") or [])
+        have = {str(c.get("page_id") or "") for c in kids if isinstance(c, dict)}
+        if "reading-guide" in page_ids and "reading-guide" not in have:
+            kids.append(leaf("reading-guide", guide_title))
+        getting["children"] = kids
+
+    glossary = _concept_nav_leaves(pages, titles)
+    if glossary:
+        deep = find_group(deep_title)
+        if deep is None:
+            deep = {"title": deep_title, "page_id": "", "children": []}
+            items.append(deep)
+        kids = list(deep.get("children") or [])
+        existing_group = next(
+            (
+                c
+                for c in kids
+                if isinstance(c, dict)
+                and not c.get("page_id")
+                and str(c.get("title") or "") == concepts_title
+            ),
+            None,
+        )
+        have_ids = {str(c.get("page_id") or "") for c in kids if isinstance(c, dict)}
+        if existing_group is not None:
+            nested = list(existing_group.get("children") or [])
+            nested_ids = {str(c.get("page_id") or "") for c in nested if isinstance(c, dict)}
+            for item in glossary:
+                if item["page_id"] not in nested_ids:
+                    nested.append(item)
+            existing_group["children"] = nested
+        else:
+            missing = [item for item in glossary if item["page_id"] not in have_ids]
+            if missing:
+                kids.append({
+                    "title": concepts_title,
+                    "page_id": "",
+                    "children": missing,
+                })
+        deep["children"] = kids
+    return items
 
 
 def rebuild_topic_sidebar(
@@ -2024,6 +2347,8 @@ def rebuild_topic_sidebar(
         getting.append(leaf("index", structural_title("overview", lang)))
     if "getting-started" in page_ids:
         getting.append(leaf("getting-started", structural_title("quick-start", lang)))
+    if "reading-guide" in page_ids:
+        getting.append(leaf("reading-guide", structural_title("reading-guide", lang)))
 
     deep: list[dict] = []
     if "architecture" in page_ids:
@@ -2039,19 +2364,16 @@ def rebuild_topic_sidebar(
             continue
         deep.append(leaf(pid))
         kept_topics += 1
-    if kept_topics == 0:
-        for page in pages:
-            pid = str(page.get("id") or "")
-            if not pid.startswith("concepts/"):
-                continue
-            slug = pid.split("/", 1)[-1]
-            if slug in {"project-goal", "module-inventory", "file-inventory"}:
-                continue
-            if slug in _GENERIC_WEB_PAGE_SLUGS:
-                continue
-            if slug.startswith("module-") or slug.startswith("file-") or slug.startswith("focus-"):
-                continue
-            deep.append(leaf(pid))
+    glossary = _concept_nav_leaves(pages, titles)
+    if glossary:
+        if kept_topics:
+            deep.append({
+                "title": structural_title("concepts", lang),
+                "page_id": "",
+                "children": glossary,
+            })
+        else:
+            deep.extend(glossary)
 
     items: list[dict] = []
     if getting:

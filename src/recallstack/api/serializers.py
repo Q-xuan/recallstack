@@ -27,11 +27,10 @@ from recallstack.domain.schemas import (
     WikiPageOut,
     WikiSidebarItemOut,
 )
-from recallstack.learning.i18n import content_lang
 from recallstack.learning.learning_contract import (
     CORE_PATH_CAP,
+    definition_index_scope,
     drop_duplicate_entry_slug,
-    fill_wiki_key_type_lines,
     is_filler_slug_title,
     is_shallow_path_leaf,
     is_web_filler_path_slug,
@@ -43,23 +42,13 @@ from recallstack.learning.learning_contract import (
     path_worksheet,
     step_task_for_slug,
     suggested_ask_questions,
-    upgrade_legacy_concept_markdown,
-    wiki_prose_excerpt,
 )
-from repowiki.core.topics import (
-    is_generic_web_slug,
-    omit_generic_web_wiki_page,
-    omit_unusable_topic_stub,
+from recallstack.learning.wiki_serve import (
+    materialize_wiki_payload,
+    path_is_materialized,
+    wiki_is_materialized,
 )
-from repowiki.core.wiki_builder import (
-    prune_generic_web_sidebar,
-    prune_sidebar_missing_pages,
-    rank_and_cap_directory_sidebar,
-    rebuild_topic_sidebar,
-    sidebar_has_topic_groups,
-    upgrade_legacy_module_markdown,
-    upgrade_wiki_page_content,
-)
+from repowiki.core.topics import is_generic_web_slug
 
 logger = logging.getLogger(__name__)
 
@@ -133,70 +122,43 @@ def wiki_out(
     file_texts: dict[str, str] | None = None,
 ) -> WikiOut:
     payload = version.wiki_pages or {}
-    if file_texts is None:
-        from recallstack.learning.code_loader import load_version_file_texts
+    if wiki_is_materialized(payload):
+        # Cheap pass: markdown/IA only. Never load or walk the scan store.
+        payload = materialize_wiki_payload(payload, concepts, None)
+    else:
+        if file_texts is None:
+            from recallstack.learning.code_loader import load_version_file_texts
 
-        file_texts = load_version_file_texts(str(getattr(version, "id", "") or ""))
-    file_texts = file_texts or {}
+            file_texts = load_version_file_texts(str(getattr(version, "id", "") or ""))
+        payload = materialize_wiki_payload(payload, concepts, file_texts or {})
+    return _wiki_response(repository_id, version, payload, concepts)
+
+
+def _wiki_response(
+    repository_id: str,
+    version: RepositoryVersion,
+    payload: dict,
+    concepts: list[Concept] | None,
+) -> WikiOut:
     concept_by_slug = {c.slug: c for c in (concepts or [])}
-    raw_pages = payload.get("pages") or []
-    kept_pages = [
-        item
-        for item in raw_pages
-        if not omit_generic_web_wiki_page(
-            str(item.get("id") or ""), str(item.get("content") or "")
-        )
-        and not omit_unusable_topic_stub(
-            str(item.get("id") or ""),
-            str(item.get("content") or ""),
-            title=str(item.get("title") or ""),
-        )
-    ]
-    page_ids = {item.get("id") for item in kept_pages}
-    known_ids = {str(i) for i in page_ids if i}
-    overview_excerpt = wiki_prose_excerpt(
-        next(
-            (item.get("content") or "" for item in kept_pages if item.get("id") == "index"),
-            "",
-        )
-    )
+    concept_by_page = {
+        getattr(c, "wiki_page_id", None): c
+        for c in (concepts or [])
+        if getattr(c, "wiki_page_id", None)
+    }
     pages: list[WikiPageOut] = []
-    for p in kept_pages:
+    for p in payload.get("pages") or []:
         page_id = p.get("id") or ""
         concept = None
-        content = p.get("content") or ""
         if page_id.startswith("concepts/"):
-            slug = page_id.split("/", 1)[1]
-            concept = concept_by_slug.get(slug)
-            content = upgrade_legacy_concept_markdown(
-                content,
-                slug=slug,
-                title=(concept.title if concept else p.get("title")) or "",
-                has_overview="index" in page_ids,
-                has_architecture="architecture" in page_ids,
-                overview_excerpt=overview_excerpt if slug == "project-goal" else "",
-            )
-        elif page_id.startswith("modules/"):
-            content = upgrade_legacy_module_markdown(content, language=content_lang())
+            concept = concept_by_slug.get(page_id.split("/", 1)[1])
         else:
-            concept = next(
-                (
-                    c
-                    for c in (concepts or [])
-                    if getattr(c, "wiki_page_id", None) == page_id
-                ),
-                None,
-            )
-        content = upgrade_wiki_page_content(
-            content, known_ids, language=content_lang(), page_id=page_id
-        )
-        if file_texts:
-            content = fill_wiki_key_type_lines(content, file_texts)
+            concept = concept_by_page.get(page_id)
         pages.append(
             WikiPageOut(
                 id=page_id,
                 title=p.get("title") or page_id,
-                content=content,
+                content=p.get("content") or "",
                 parent_id=p.get("parent_id") or "",
                 order=int(p.get("order") or 0),
                 concept_id=concept.id if concept else None,
@@ -216,40 +178,12 @@ def wiki_out(
             )
         return out
 
-    raw_sidebar = payload.get("sidebar") or []
-    content_by_id = {item.get("id") or "": item.get("content") or "" for item in kept_pages}
-    page_id_set = {str(i) for i in page_ids if i}
-    # Rebuild unless this payload already has 入门指南 / 深入探索. Do not wait
-    # for sidebar_looks_like_module_tree: the old Overview/Architecture/Modules
-    # tree is easy to miss, and the UI relabels 模块 → 按目录 so it looks done.
-    if not sidebar_has_topic_groups(raw_sidebar):
-        ranked = rank_and_cap_directory_sidebar(
-            prune_sidebar_missing_pages(
-                prune_generic_web_sidebar(
-                    rebuild_topic_sidebar(kept_pages, language=content_lang()),
-                    content_by_id,
-                ),
-                page_id_set,
-            ),
-            pages=kept_pages,
-        )
-        mapped_sidebar = map_sidebar(ranked)
-    else:
-        ranked = rank_and_cap_directory_sidebar(
-            prune_sidebar_missing_pages(
-                prune_generic_web_sidebar(raw_sidebar, content_by_id),
-                page_id_set,
-            ),
-            pages=kept_pages,
-        )
-        mapped_sidebar = map_sidebar(ranked)
-
     return WikiOut(
         repository_id=repository_id,
         repository_version_id=version.id,
         project_name=payload.get("project_name") or "",
         pages=pages,
-        sidebar=mapped_sidebar,
+        sidebar=map_sidebar(payload.get("sidebar") or []),
         suggested_questions=suggested_ask_questions(pages),
     )
 
@@ -260,19 +194,21 @@ def path_out(
 ) -> LearningPathOut:
     """GET-upgrade the learning path: rank, filter fillers, rebuild worksheets.
 
-    Concept wiki pages are untouched. Refresh is enough when source_references
-    already exist and the scan store still has the file text (so a ``:1`` chip
-    can be resolved to ``start_turn``). Re-scan only if refs are empty or
-    point at the wrong file.
+    Chips are persisted at analyze / first upgrade. A materialized path skips
+    the scan store. Templates (principles / gate / worksheet) stay live.
     """
-    if file_texts is None:
+    resolved = getattr(path, "resolved", None)
+    cheap = path_is_materialized(resolved)
+    chips = (resolved or {}).get("chips") if cheap else {}
+    chips = chips if isinstance(chips, dict) else {}
+    if not cheap and file_texts is None:
         version_id = getattr(path, "repository_version_id", None)
         if version_id:
             from recallstack.learning.code_loader import load_version_file_texts
 
             file_texts = load_version_file_texts(str(version_id))
-    file_texts = file_texts or {}
-    if not file_texts:
+    file_texts = {} if cheap else (file_texts or {})
+    if not cheap and not file_texts:
         logger.warning(
             "learning-path GET: scan store empty for version %s; "
             "will not emit toml/json/sh chips — re-scan if file texts were never persisted",
@@ -301,23 +237,31 @@ def path_out(
     candidates.sort(key=lambda item: (item[0], item[1]))
 
     nodes: list[LearningPathNodeOut] = []
-    for _rank, slug, n, concept in candidates[:CORE_PATH_CAP]:
-        title = concept.title if concept else ""
-        nodes.append(
-            LearningPathNodeOut(
-                id=n.id,
-                concept_id=n.concept_id,
-                position=len(nodes) + 1,
-                reason=step_task_for_slug(slug, title) if slug else (n.reason or ""),
-                concept=concept_out(concept) if concept else None,
-                principles=path_principles(concept) if concept else "",
-                evidence_chip=path_evidence_chip(concept, file_texts=file_texts)
-                if concept
-                else None,
-                pass_gate=pass_gate(concept) if concept else "",
-                worksheet=path_worksheet(concept, file_texts=file_texts) if concept else "",
+    with definition_index_scope(file_texts if not cheap else None):
+        for _rank, slug, n, concept in candidates[:CORE_PATH_CAP]:
+            title = concept.title if concept else ""
+            cached = chips.get(str(getattr(n, "concept_id", "") or "")) if cheap else None
+            if cached:
+                chip = cached
+            elif concept:
+                chip = path_evidence_chip(
+                    concept, file_texts=None if cheap else file_texts
+                )
+            else:
+                chip = None
+            nodes.append(
+                LearningPathNodeOut(
+                    id=n.id,
+                    concept_id=n.concept_id,
+                    position=len(nodes) + 1,
+                    reason=step_task_for_slug(slug, title) if slug else (n.reason or ""),
+                    concept=concept_out(concept) if concept else None,
+                    principles=path_principles(concept) if concept else "",
+                    evidence_chip=chip,
+                    pass_gate=pass_gate(concept) if concept else "",
+                    worksheet=path_worksheet(concept, evidence_chip=chip) if concept else "",
+                )
             )
-        )
     return LearningPathOut(
         id=path.id,
         repository_version_id=path.repository_version_id,

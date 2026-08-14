@@ -982,12 +982,19 @@ def subsystems_from_topics(topics: list[TopicOutline], *, limit: int = 8) -> lis
         title = topic.title or topic.id
         if "上下文装配" in title and "Agent Loop" in title:
             title = "Agent Loop"
+        type_names = [kt.name for kt in types if (kt.name or "").strip()]
+        mermaid = ""
+        if len(type_names) >= 2:
+            from repowiki.core.wiki_builder import flowchart_lr_from_types
+
+            mermaid = flowchart_lr_from_types(type_names)
         out.append(
             Subsystem(
                 name=title,
                 role=topic.purpose,
                 key_types=types,
                 files=list(topic.key_files[:4]),
+                mermaid=mermaid,
             )
         )
         if len(out) >= limit:

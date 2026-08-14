@@ -890,6 +890,8 @@ def test_wiki_out_fills_key_type_line_and_strips_guide_homework(monkeypatch):
     assert "可练习概念" not in guide_page.content
     assert "再跟一次调用" in guide_page.content
     assert "## 步骤 1: 渲染" in guide_page.content
+    getting = next(item for item in out.sidebar if item.title == "入门指南")
+    assert any(c.page_id == "reading-guide" for c in getting.children)
 
 
 def test_wiki_out_wraps_bare_overview_mermaid():

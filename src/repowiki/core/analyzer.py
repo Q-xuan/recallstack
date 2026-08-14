@@ -817,6 +817,19 @@ class Analyzer:
             ]
         if not overview.subsystems and outline:
             overview.subsystems = subsystems_from_topics(outline.topics)
+        if overview.subsystems:
+            from repowiki.core.wiki_builder import flowchart_lr_from_types, mermaid_is_toy
+
+            for sub in overview.subsystems:
+                if mermaid_is_toy(sub.mermaid or ""):
+                    names = [
+                        (kt.name or "").strip()
+                        for kt in (sub.key_types or [])
+                        if (kt.name or "").strip()
+                    ]
+                    filled = flowchart_lr_from_types(names)
+                    if filled:
+                        sub.mermaid = filled
         if not overview.see_also and outline:
             overview.see_also = topic_wiki_links(outline.topics)
         if overview.tech_stack:
