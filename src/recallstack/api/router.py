@@ -53,9 +53,12 @@ from recallstack.learning.code_loader import (
     load_version_file_texts,
 )
 from recallstack.learning.wiki_serve import (
+    PATH_SERVE_REVISION,
+    cheap_upgrade_path_resolved,
     materialize_path_resolved,
     materialize_wiki_payload,
-    path_is_materialized,
+    path_chips_ready,
+    persist_path_from_loaded_store,
     persist_path_resolved,
     persist_wiki_payload,
     sync_path_contract_items,
@@ -328,6 +331,7 @@ def get_repository_wiki(
         payload = materialize_wiki_payload(payload, concepts, file_texts)
         persist_wiki_payload(db, version, payload)
         version.wiki_pages = payload
+        persist_path_from_loaded_store(db, store.get_learning_path(version.id), file_texts)
     return wiki_out(repository_id, version, concepts)
 
 
@@ -451,7 +455,17 @@ def get_learning_path(
     path = store.get_learning_path(version.id)
     if not path:
         raise api_error(404, "path_not_found", "Learning path not found")
-    if path_is_materialized(getattr(path, "resolved", None)):
+    resolved = getattr(path, "resolved", None)
+    if path_chips_ready(resolved):
+        if (resolved or {}).get("serve_revision") != PATH_SERVE_REVISION:
+            upgraded = cheap_upgrade_path_resolved(path, resolved or {})
+            persist_path_resolved(db, path, upgraded)
+            path.resolved = upgraded
+            sync_path_contract_items(db, path, None)
+            try:
+                db.commit()
+            except Exception:  # noqa: BLE001
+                db.rollback()
         out = path_out(path)
         _schedule_path_annotation_prefetch(background_tasks, str(version.id), out, {})
         return out

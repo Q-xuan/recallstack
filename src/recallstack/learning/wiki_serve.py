@@ -56,8 +56,17 @@ def wiki_is_materialized(payload: dict[str, Any] | None) -> bool:
     return isinstance(payload, dict) and payload.get("serve_revision") == WIKI_SERVE_REVISION
 
 
+def path_chips_ready(resolved: dict[str, Any] | None) -> bool:
+    """True when a prior write already persisted chips — later GETs must not walk the store."""
+    if not isinstance(resolved, dict):
+        return False
+    chips = resolved.get("chips")
+    return isinstance(chips, dict) and bool(chips)
+
+
 def path_is_materialized(resolved: dict[str, Any] | None) -> bool:
-    return isinstance(resolved, dict) and resolved.get("serve_revision") == PATH_SERVE_REVISION
+    """Chips on disk are enough. Revision bumps upgrade in memory, not via store walk."""
+    return path_chips_ready(resolved)
 
 
 def kept_wiki_pages(raw_pages: list[Any]) -> list[dict[str, Any]]:
@@ -203,6 +212,49 @@ def materialize_path_resolved(
     return {"serve_revision": PATH_SERVE_REVISION, "chips": chips, "nodes": nodes}
 
 
+def cheap_upgrade_path_resolved(path: Any, persisted: dict[str, Any]) -> dict[str, Any]:
+    """Fill missing node contracts from existing chips. Never walks the scan store."""
+    chips = persisted.get("chips") if isinstance(persisted.get("chips"), dict) else {}
+    nodes_in = persisted.get("nodes") if isinstance(persisted.get("nodes"), dict) else {}
+    nodes: dict[str, dict[str, Any]] = dict(nodes_in)
+    for n in getattr(path, "nodes", None) or []:
+        concept = getattr(n, "concept", None)
+        cid = str(getattr(n, "concept_id", "") or getattr(concept, "id", "") or "")
+        if not cid or not concept:
+            continue
+        existing = nodes.get(cid)
+        if isinstance(existing, dict) and (existing.get("chip") or existing.get("symbol")):
+            continue
+        chip = chips.get(cid)
+        if not chip:
+            continue
+        nodes[cid] = path_step_contract(concept, chip=chip, file_texts=None)
+    return {
+        "serve_revision": PATH_SERVE_REVISION,
+        "chips": chips,
+        "nodes": nodes,
+    }
+
+
+def persist_path_from_loaded_store(
+    session: Any,
+    path: Any,
+    file_texts: dict[str, str] | None,
+) -> None:
+    """While the store is already in memory (wiki materialize), persist path chips too."""
+    if path is None or path_chips_ready(getattr(path, "resolved", None)):
+        return
+    resolved = materialize_path_resolved(path, file_texts)
+    persist_path_resolved(session, path, resolved)
+    path.resolved = resolved
+    sync_path_contract_items(session, path, file_texts)
+    try:
+        session.commit()
+    except Exception:  # noqa: BLE001
+        session.rollback()
+        logger.exception("path contract sync after store-backed persist failed")
+
+
 def persist_wiki_payload(session: Any, version: Any, payload: dict[str, Any]) -> None:
     version.wiki_pages = payload
     flag_modified(version, "wiki_pages")
@@ -240,15 +292,19 @@ def sync_path_contract_items(
     resolved = getattr(path, "resolved", None) or {}
     nodes = resolved.get("nodes") if isinstance(resolved, dict) else {}
     nodes = nodes if isinstance(nodes, dict) else {}
+    chips = resolved.get("chips") if isinstance(resolved, dict) else {}
+    chips = chips if isinstance(chips, dict) else {}
     qgen = QuestionGenerator()
     for n in getattr(path, "nodes", None) or []:
         concept = getattr(n, "concept", None)
         cid = str(getattr(n, "concept_id", "") or "")
         if not concept or not cid:
             continue
-        contract = nodes.get(cid) or path_step_contract(
-            concept, file_texts=file_texts
-        )
+        contract = nodes.get(cid)
+        if not isinstance(contract, dict) or not (contract.get("chip") or contract.get("symbol")):
+            contract = path_step_contract(
+                concept, chip=chips.get(cid), file_texts=file_texts
+            )
         if not contract.get("chip") and not contract.get("symbol"):
             continue
         drafts = qgen.generate_from_contract(

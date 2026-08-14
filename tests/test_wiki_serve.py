@@ -10,7 +10,11 @@ from recallstack.learning.wiki_generator import link_reading_guide_markdown
 from recallstack.learning.wiki_serve import (
     PATH_SERVE_REVISION,
     WIKI_SERVE_REVISION,
+    cheap_upgrade_path_resolved,
     materialize_wiki_payload,
+    path_chips_ready,
+    path_is_materialized,
+    persist_path_from_loaded_store,
     wiki_is_materialized,
 )
 from repowiki.core.wiki_builder import (
@@ -231,3 +235,142 @@ def test_path_out_uses_persisted_chips_without_store(monkeypatch):
     out = path_out(path)
     assert out.nodes[0].evidence_chip == "crates/tui/src/app.rs:791 start_turn"
     assert "`crates/tui/src/app.rs:791 start_turn`" in out.nodes[0].worksheet
+
+
+def _agent_loop_path(resolved):
+    concept = SimpleNamespace(
+        id="c-loop",
+        repository_id="r",
+        repository_version_id="v",
+        slug="agent-loop",
+        title="Agent Loop",
+        description="",
+        difficulty=2,
+        importance=0.9,
+        source_references=[],
+        content_hash="",
+        stale=False,
+        why_learn="",
+        estimated_minutes=15,
+        wiki_page_id="topics/agent-loop",
+    )
+    return SimpleNamespace(
+        id="p1",
+        repository_version_id="v",
+        title="路径",
+        description="",
+        estimated_minutes=40,
+        resolved=resolved,
+        nodes=[
+            SimpleNamespace(
+                id="n1",
+                concept_id="c-loop",
+                position=1,
+                reason="",
+                concept=concept,
+            )
+        ],
+    )
+
+
+def test_path_chips_ready_accepts_stale_revision():
+    stale = {"serve_revision": 1, "chips": {"c-loop": "crates/tui/src/app.rs:791 start_turn"}}
+    assert path_chips_ready(stale)
+    assert path_is_materialized(stale)
+    assert not path_chips_ready({"serve_revision": PATH_SERVE_REVISION})
+    assert not path_chips_ready({"serve_revision": PATH_SERVE_REVISION, "chips": {}})
+
+
+def test_path_out_uses_rev1_chips_without_store(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+
+    def boom_load(_vid):
+        raise AssertionError("scan store must not load when chips are already persisted")
+
+    def boom_chip(*_a, **_k):
+        raise AssertionError("path_evidence_chip must not walk the store on a cheap GET")
+
+    monkeypatch.setattr(
+        "recallstack.learning.code_loader.load_version_file_texts", boom_load
+    )
+    monkeypatch.setattr(
+        "recallstack.api.serializers.path_evidence_chip", boom_chip
+    )
+    monkeypatch.setattr(
+        "recallstack.learning.learning_contract.path_evidence_chip", boom_chip
+    )
+
+    path = _agent_loop_path(
+        {
+            "serve_revision": 1,
+            "chips": {"c-loop": "crates/tui/src/app.rs:791 start_turn"},
+        }
+    )
+    out = path_out(path)
+    assert out.nodes[0].evidence_chip == "crates/tui/src/app.rs:791 start_turn"
+    assert "`crates/tui/src/app.rs:791 start_turn`" in out.nodes[0].worksheet
+    assert "你签字" in out.nodes[0].pass_gate
+
+
+def test_cheap_upgrade_path_fills_contract_without_store(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+
+    def boom_chip(*_a, **_k):
+        raise AssertionError("cheap upgrade must use the persisted chip")
+
+    monkeypatch.setattr(
+        "recallstack.learning.learning_contract.path_evidence_chip", boom_chip
+    )
+    path = _agent_loop_path(
+        {
+            "serve_revision": 1,
+            "chips": {"c-loop": "crates/tui/src/app.rs:791 start_turn"},
+        }
+    )
+    upgraded = cheap_upgrade_path_resolved(path, path.resolved)
+    assert upgraded["serve_revision"] == PATH_SERVE_REVISION
+    assert upgraded["chips"]["c-loop"] == "crates/tui/src/app.rs:791 start_turn"
+    contract = upgraded["nodes"]["c-loop"]
+    assert contract["chip"] == "crates/tui/src/app.rs:791 start_turn"
+    assert contract["symbol"] == "start_turn"
+
+
+def test_persist_path_from_loaded_store_skips_when_chips_ready():
+    class _Session:
+        def commit(self):
+            raise AssertionError("must not persist when chips already exist")
+
+        def rollback(self):
+            raise AssertionError("must not persist when chips already exist")
+
+    path = _agent_loop_path(
+        {"serve_revision": 1, "chips": {"c-loop": "crates/tui/src/app.rs:791 start_turn"}}
+    )
+    persist_path_from_loaded_store(_Session(), path, {"app.rs": "fn start_turn() {}"})
+    persist_path_from_loaded_store(_Session(), None, {})
+
+
+def test_persist_path_from_loaded_store_writes_chips_once(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    wrote: dict = {}
+
+    def fake_persist(_session, path, resolved):
+        wrote["resolved"] = resolved
+        path.resolved = resolved
+
+    monkeypatch.setattr(
+        "recallstack.learning.wiki_serve.persist_path_resolved", fake_persist
+    )
+    monkeypatch.setattr(
+        "recallstack.learning.wiki_serve.sync_path_contract_items",
+        lambda *_a, **_k: None,
+    )
+    path = _agent_loop_path(None)
+    persist_path_from_loaded_store(
+        SimpleNamespace(commit=lambda: wrote.setdefault("commit", True), rollback=lambda: None),
+        path,
+        {"crates/tui/src/app.rs": ("\n" * 790) + "pub fn start_turn() {}\n"},
+    )
+    assert wrote.get("commit")
+    assert "c-loop" in (wrote.get("resolved") or {}).get("chips", {})
+    assert "start_turn" in wrote["resolved"]["chips"]["c-loop"]

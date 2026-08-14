@@ -45,7 +45,6 @@ from recallstack.learning.learning_contract import (
 )
 from recallstack.learning.wiki_serve import (
     materialize_wiki_payload,
-    path_is_materialized,
     wiki_is_materialized,
 )
 from repowiki.core.topics import is_generic_web_slug
@@ -194,13 +193,14 @@ def path_out(
 ) -> LearningPathOut:
     """GET-upgrade the learning path: rank, filter fillers, rebuild worksheets.
 
-    Chips are persisted at analyze / first upgrade. A materialized path skips
-    the scan store. Templates (principles / gate / worksheet) stay live.
+    Chips persisted at analyze / wiki materialize / first path GET skip the
+    scan store on later reads — any serve_revision with chips is enough.
+    Templates (principles / gate / worksheet) stay live and cheap.
     """
     resolved = getattr(path, "resolved", None)
-    cheap = path_is_materialized(resolved)
-    chips = (resolved or {}).get("chips") if cheap else {}
-    chips = chips if isinstance(chips, dict) else {}
+    chips = (resolved or {}).get("chips") if isinstance(resolved, dict) else None
+    cheap = isinstance(chips, dict) and bool(chips)
+    chips = chips if cheap else {}
     if not cheap and file_texts is None:
         version_id = getattr(path, "repository_version_id", None)
         if version_id:
