@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from recallstack.api.serializers import path_out
 from recallstack.domain.schemas import ConceptDraft, SourceReference
 from recallstack.learning.learning_contract import (
+    fill_wiki_key_type_lines,
     is_core_path_concept,
     path_evidence_chip,
     path_rank,
@@ -890,3 +891,192 @@ def test_pager_struct_line_not_one():
         file_texts=store,
     )
     assert chip == "crates/codegen/xai-grok-pager/src/pager.rs:88 Pager"
+
+
+def _live_use_site_store() -> dict[str, str]:
+    """Jake's grok-study GET after 8ac69a9: refs are import/call sites."""
+    agent = ["//! Agent types."] + [f"// pad {i}" for i in range(2, 6)]
+    agent.append("use crate::tool_bridge::ToolBridge;")
+    modes = [f"// pad {i}" for i in range(1, 341)]
+    modes.append("    let pager = Pager::new();")
+    return {
+        "crates/codegen/xai-grok-agent/src/agent.rs": "\n".join(agent) + "\n",
+        "crates/codegen/xai-grok-agent/src/tool_bridge.rs": (
+            "/// Dispatches tool calls by name.\n\n"
+            "pub struct ToolBridge {\n    tools: Vec<String>,\n}\n\n"
+            "impl ToolBridge {\n    pub fn dispatch(&self, name: &str) {}\n}\n"
+        ),
+        "crates/codegen/xai-grok-pager/src/app/dispatch/modes.rs": "\n".join(modes) + "\n",
+        "crates/codegen/xai-grok-pager/src/pager.rs": (
+            "/// Terminal canvas.\n\n"
+            "pub struct Pager {\n    buf: String,\n}\n"
+        ),
+        "crates/codegen/xai-agent-lifecycle/src/session_lifecycle.rs": (
+            "//! Session lifecycle hooks.\n\n"
+            "use crate::runtime::AgentRuntime;\n"
+        ),
+        "crates/codegen/xai-agent-lifecycle/src/runtime.rs": (
+            "pub struct AgentRuntime {\n    session: u64,\n}\n"
+        ),
+        "crates/codegen/xai-grok-agent/src/acp/mod.rs": _rs_with_def_at(
+            152, "    pub async fn connect("
+        ),
+        "crates/codegen/ptyctl-cli/src/main.rs": _rs_with_def_at(12, "fn main() {"),
+        "crates/codegen/xai-chat-state/src/conversation_util.rs": _rs_with_def_at(
+            27, "pub fn replace_or_insert_system_head(window: &mut Window, head: &str) {"
+        ),
+        "crates/codegen/xai-grok-pager/src/app/agent.rs": _rs_with_def_at(
+            791, "    pub fn start_turn(&mut self) {"
+        ),
+    }
+
+
+def test_toolbridge_import_loses_to_tool_bridge_struct():
+    store = _live_use_site_store()
+    assert "use crate::tool_bridge::ToolBridge;" in store[
+        "crates/codegen/xai-grok-agent/src/agent.rs"
+    ].splitlines()[5]
+    chip = path_evidence_chip(
+        ConceptDraft(
+            slug="tool-system",
+            title="工具层",
+            wiki_page_id="topics/tool-system",
+            source_references=[
+                SourceReference(
+                    path="crates/codegen/xai-grok-agent/src/agent.rs",
+                    start_line=6,
+                    symbol="ToolBridge",
+                )
+            ],
+        ),
+        file_texts=store,
+    )
+    assert chip == "crates/codegen/xai-grok-agent/src/tool_bridge.rs:3 ToolBridge"
+    assert "agent.rs" not in chip
+
+
+def test_pager_call_site_loses_to_pager_rs_struct():
+    store = _live_use_site_store()
+    assert "Pager::new()" in store[
+        "crates/codegen/xai-grok-pager/src/app/dispatch/modes.rs"
+    ].splitlines()[340]
+    chip = path_evidence_chip(
+        ConceptDraft(
+            slug="terminal-ui",
+            title="Terminal UI",
+            wiki_page_id="topics/terminal-ui",
+            source_references=[
+                SourceReference(
+                    path="crates/codegen/xai-grok-pager/src/app/dispatch/modes.rs",
+                    start_line=341,
+                    symbol="Pager",
+                )
+            ],
+        ),
+        file_texts=store,
+    )
+    assert chip == "crates/codegen/xai-grok-pager/src/pager.rs:3 Pager"
+    assert "modes.rs" not in chip
+
+
+def test_session_lifecycle_line_one_loses_to_agent_runtime_struct():
+    store = _live_use_site_store()
+    chip = path_evidence_chip(
+        ConceptDraft(
+            slug="agent-runtime",
+            title="Agent Runtime",
+            wiki_page_id="topics/agent-runtime",
+            source_references=[
+                SourceReference(
+                    path="crates/codegen/xai-agent-lifecycle/src/session_lifecycle.rs",
+                    start_line=1,
+                )
+            ],
+        ),
+        file_texts=store,
+    )
+    assert chip == "crates/codegen/xai-agent-lifecycle/src/runtime.rs:1 AgentRuntime"
+    assert "session_lifecycle" not in chip
+
+
+def test_kept_live_chips_entry_loop_context():
+    store = _live_use_site_store()
+    entry = path_evidence_chip(
+        ConceptDraft(
+            slug="entry-and-boot",
+            title="入口与启动",
+            wiki_page_id="topics/entry-and-boot",
+            source_references=[
+                SourceReference(
+                    path="crates/codegen/xai-grok-agent/src/acp/mod.rs",
+                    start_line=152,
+                    symbol="connect",
+                )
+            ],
+        ),
+        file_texts=store,
+    )
+    assert entry == "crates/codegen/xai-grok-agent/src/acp/mod.rs:152 connect"
+    assert "ptyctl" not in entry
+
+    loop = path_evidence_chip(
+        ConceptDraft(
+            slug="agent-loop",
+            title="Agent Loop",
+            wiki_page_id="topics/agent-loop",
+            source_references=[
+                SourceReference(
+                    path="crates/codegen/xai-grok-pager/src/app/agent.rs",
+                    start_line=791,
+                    symbol="start_turn",
+                )
+            ],
+        ),
+        file_texts=store,
+    )
+    assert loop == "crates/codegen/xai-grok-pager/src/app/agent.rs:791 start_turn"
+
+    ctx = path_evidence_chip(
+        ConceptDraft(
+            slug="context-assembly",
+            title="上下文装配",
+            wiki_page_id="topics/context-assembly",
+            source_references=[
+                SourceReference(
+                    path="crates/codegen/xai-chat-state/src/conversation_util.rs",
+                    start_line=27,
+                    symbol="replace_or_insert_system_head",
+                )
+            ],
+        ),
+        file_texts=store,
+    )
+    assert ctx == (
+        "crates/codegen/xai-chat-state/src/conversation_util.rs:27 "
+        "replace_or_insert_system_head"
+    )
+
+
+def test_wiki_key_types_get_line_from_store_not_use_site():
+    md = (
+        "## 关键类型\n\n"
+        "- ToolBridge — 按名分发 — "
+        "`crates/codegen/xai-grok-agent/src/agent.rs ToolBridge`\n"
+        "- Pager — 画布 — "
+        "`crates/codegen/xai-grok-pager/src/pager.rs Pager`\n"
+    )
+    store = _live_use_site_store()
+    filled = fill_wiki_key_type_lines(md, store)
+    assert "`crates/codegen/xai-grok-agent/src/tool_bridge.rs:3 ToolBridge`" in filled
+    assert "`crates/codegen/xai-grok-pager/src/pager.rs:3 Pager`" in filled
+    assert "`crates/codegen/xai-grok-agent/src/agent.rs ToolBridge`" not in filled
+
+
+def test_wiki_core_subsystems_path_only_unchanged():
+    md = (
+        "## 核心子系统\n\n"
+        "- 工具层 — `crates/codegen/xai-grok-agent/src/tool_bridge.rs`\n"
+    )
+    filled = fill_wiki_key_type_lines(md, _live_use_site_store())
+    assert "`crates/codegen/xai-grok-agent/src/tool_bridge.rs`" in filled
+    assert ":3" not in filled

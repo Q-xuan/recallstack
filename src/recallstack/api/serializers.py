@@ -31,6 +31,7 @@ from recallstack.learning.i18n import content_lang
 from recallstack.learning.learning_contract import (
     CORE_PATH_CAP,
     drop_duplicate_entry_slug,
+    fill_wiki_key_type_lines,
     is_filler_slug_title,
     is_web_filler_path_slug,
     pass_gate,
@@ -127,8 +128,14 @@ def wiki_out(
     repository_id: str,
     version: RepositoryVersion,
     concepts: list[Concept] | None = None,
+    file_texts: dict[str, str] | None = None,
 ) -> WikiOut:
     payload = version.wiki_pages or {}
+    if file_texts is None:
+        from recallstack.learning.code_loader import load_version_file_texts
+
+        file_texts = load_version_file_texts(str(getattr(version, "id", "") or ""))
+    file_texts = file_texts or {}
     concept_by_slug = {c.slug: c for c in (concepts or [])}
     raw_pages = payload.get("pages") or []
     kept_pages = [
@@ -181,6 +188,8 @@ def wiki_out(
         content = upgrade_wiki_page_content(
             content, known_ids, language=content_lang(), page_id=page_id
         )
+        if file_texts:
+            content = fill_wiki_key_type_lines(content, file_texts)
         pages.append(
             WikiPageOut(
                 id=page_id,

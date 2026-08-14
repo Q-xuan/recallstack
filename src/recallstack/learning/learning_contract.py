@@ -822,6 +822,27 @@ def _prefer_score(path: str, slug: str) -> int:
     return 0
 
 
+def _path_matches_hint(path: str, suffix: str) -> bool:
+    """True when ``path`` is the hinted file, not a longer lookalike.
+
+    ``lifecycle.rs`` must not match ``session_lifecycle.rs``.
+    ``app/agent.rs`` still matches ``.../src/app/agent.rs``.
+    """
+    if not suffix:
+        return False
+    norm = path.replace("\\", "/")
+    suf = suffix.replace("\\", "/").lstrip("./")
+    if not suf:
+        return False
+    if "/" in suf:
+        return norm.endswith("/" + suf) or norm.endswith(suf)
+    return norm.rsplit("/", 1)[-1] == suf
+
+
+def _is_type_name(symbol: str) -> bool:
+    return bool(symbol) and symbol[0].isupper() and symbol[0].isascii()
+
+
 def _narrow_preferred_paths(
     paths: list[str],
     slug: str,
@@ -964,19 +985,15 @@ def _pick_definition_in_store(
         if not _is_production_src(norm, slug=slug) or _blocked_for_slug(norm, slug):
             continue
         defn, is_defn = _best_symbol_line(text, name)
-        if not defn:
+        if not defn or not is_defn:
             continue
-        if not is_defn:
-            hinted = any(suffix and norm.endswith(suffix) for suffix in suffixes)
-            if not hinted and _prefer_score(norm, slug) <= 0:
-                continue
         score = 50 if norm.lower().endswith(".rs") else 20
-        score += 120 if is_defn else 30
+        score += 120
         if "/src/" in f"/{norm.lower()}/":
             score += 10
         score += _prefer_score(norm, slug)
         for i, suffix in enumerate(suffixes):
-            if suffix and norm.endswith(suffix):
+            if _path_matches_hint(norm, suffix):
                 score += 40 - min(i, 12)
                 break
         hits.append((score, norm, defn))
@@ -1019,7 +1036,7 @@ def _candidate_paths(
             norm = path.replace("\\", "/")
             if is_junk_evidence_path(norm, slug=slug):
                 continue
-            if any(norm.endswith(suffix) for suffix in suffixes):
+            if any(_path_matches_hint(norm, suffix) for suffix in suffixes):
                 add(norm)
                 continue
             crate = _crate_dir(norm)
@@ -1064,7 +1081,7 @@ def _score_path(
         score -= 25
     score += _prefer_score(path, slug)
     for i, suffix in enumerate(suffixes):
-        if path.endswith(suffix):
+        if _path_matches_hint(path, suffix):
             score += 40 - min(i, 12)
             break
     text = _file_text_for(file_texts, path)
@@ -1072,11 +1089,14 @@ def _score_path(
         score -= 80
     if text and symbol:
         line_no, is_defn = _best_symbol_line(text, symbol)
-        if line_no:
+        if line_no and is_defn:
             line = line_no
-            score += 120 if is_defn else 40
+            score += 120
+        elif line_no and not _is_type_name(symbol):
+            line = line_no
+            score += 40
         else:
-            # File is in the store and does not name the hint — never stamp it.
+            # Use/call site of a type, or the file never names the hint.
             use_sym = ""
             score -= 50
     elif text and not symbol:
@@ -1139,7 +1159,7 @@ def _pick_entry_or_weak(
         if path.endswith("main.rs") or path.endswith("bin/grok.rs"):
             score += 15
         for i, suffix in enumerate(suffixes):
-            if suffix and path.endswith(suffix):
+            if _path_matches_hint(path, suffix):
                 score += 12 - min(i, 8)
                 break
         scored.append((score, path, line, use_sym))
@@ -1238,6 +1258,84 @@ def path_evidence_chip(
         if rust_hit is not None:
             _score, path, line, use_sym = rust_hit
     return _format_path_chip(path, line, use_sym)
+
+
+_WIKI_PILL_RE = re.compile(
+    r"^([A-Za-z0-9_./\-]+?\.[A-Za-z0-9]+)(?::(\d+)(?:-\d+)?)?(?:[ \t]+(.+))?$"
+)
+_WIKI_KEY_TYPE_HEADING_RE = re.compile(r"(?im)^#{2,3}[ \t]+(关键类型|Key types)\b")
+
+
+def resolve_symbol_definition(
+    file_texts: dict[str, str],
+    symbol: str,
+    *,
+    prefer_path: str = "",
+) -> tuple[str, int] | None:
+    """Store-wide struct/impl/fn of ``symbol``. Skip toml/json/sh. No use-sites."""
+    name = (symbol or "").strip()
+    if not file_texts or len(name) < 2:
+        return None
+    prefer = (prefer_path or "").replace("\\", "/")
+    hits: list[tuple[int, str, int]] = []
+    for path, text in file_texts.items():
+        norm = path.replace("\\", "/")
+        if is_junk_evidence_path(norm) or not _is_production_src(norm):
+            continue
+        line = _definition_line_in_text(text, name)
+        if not line:
+            continue
+        score = 50 if norm.lower().endswith(".rs") else 20
+        if prefer and (norm == prefer or norm.endswith("/" + prefer)):
+            score += 80
+        if "/src/" in f"/{norm.lower()}/":
+            score += 10
+        hits.append((score, norm, line))
+    if not hits:
+        return None
+    hits.sort(key=lambda item: (-item[0], item[1]))
+    _score, path, line = hits[0]
+    return path, line
+
+
+def fill_wiki_key_type_lines(content: str, file_texts: dict[str, str] | None) -> str:
+    """GET: `` `path Symbol` `` → `` `path:line Symbol` `` from the scan store.
+
+    Only ``## 关键类型``. Overview 核心子系统 path-only pills stay as-is.
+    """
+    if not content or not file_texts or "`" not in content:
+        return content
+
+    def rewrite_section(section: str) -> str:
+        def pill_repl(match: re.Match[str]) -> str:
+            inner = (match.group(1) or "").strip()
+            parsed = _WIKI_PILL_RE.match(inner)
+            if not parsed:
+                return match.group(0)
+            path = (parsed.group(1) or "").strip()
+            line = (parsed.group(2) or "").strip()
+            symbol = (parsed.group(3) or "").strip()
+            if not path or line or not symbol or _is_dummy_symbol(symbol):
+                return match.group(0)
+            if is_junk_evidence_path(path):
+                return match.group(0)
+            hit = resolve_symbol_definition(file_texts, symbol, prefer_path=path)
+            if not hit:
+                return match.group(0)
+            new_path, new_line = hit
+            return f"`{new_path}:{new_line} {symbol}`"
+
+        return re.sub(r"`([^`]+)`", pill_repl, section)
+
+    parts = re.split(r"(?m)(?=^## )", content)
+    out: list[str] = []
+    for part in parts:
+        first, _, _rest = part.partition("\n")
+        if _WIKI_KEY_TYPE_HEADING_RE.match(first):
+            out.append(rewrite_section(part))
+        else:
+            out.append(part)
+    return "".join(out)
 
 
 def path_worksheet(
