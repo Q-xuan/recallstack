@@ -78,6 +78,13 @@ export interface SourceRef {
   commit_sha?: string;
 }
 
+/** Overlay teaching note. Never written into the scanned repo. */
+export interface SourceAnnotation {
+  path: string;
+  line: number;
+  note: string;
+}
+
 export interface Concept {
   id: string;
   repository_id: string;
@@ -401,14 +408,20 @@ export const recallstackApi = {
     path: string;
     start_line?: number;
     end_line?: number;
+    slug?: string;
   }) => {
     const q = new URLSearchParams();
     q.set("repository_id", params.repository_id);
     q.set("path", params.path);
     if (params.start_line) q.set("start_line", String(params.start_line));
     if (params.end_line) q.set("end_line", String(params.end_line));
-    return request<{ path: string; start_line: number; end_line: number; content: string }>(
-      `/source?${q.toString()}`
-    );
+    if (params.slug) q.set("slug", params.slug);
+    return request<{
+      path: string;
+      start_line: number;
+      end_line: number;
+      content: string;
+      annotations?: SourceAnnotation[];
+    }>(`/source?${q.toString()}`);
   },
 };

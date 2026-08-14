@@ -1,12 +1,13 @@
-import { useEffect, useState } from "react";
-import CodeBlock from "./CodeBlock";
+import { useEffect, useMemo, useState } from "react";
 import { tNow, useT } from "../lib/i18n";
-import { recallstackApi } from "../lib/recallstackApi";
+import { recallstackApi, type SourceAnnotation } from "../lib/recallstackApi";
 
 interface Props {
   repositoryId?: string;
   reference: string;
   onClose: () => void;
+  /** Learning-path slug so 过关 / 先回到原理 can ground the overlay notes. */
+  slug?: string;
 }
 
 export interface ParsedRef {
@@ -30,53 +31,18 @@ export function parseRef(raw: string): ParsedRef | null {
   };
 }
 
-const EXT_TO_LANG: Record<string, string> = {
-  ts: "typescript",
-  tsx: "tsx",
-  js: "javascript",
-  jsx: "jsx",
-  py: "python",
-  rs: "rust",
-  go: "go",
-  java: "java",
-  rb: "ruby",
-  php: "php",
-  cs: "csharp",
-  c: "c",
-  h: "c",
-  cpp: "cpp",
-  hpp: "cpp",
-  kt: "kotlin",
-  swift: "swift",
-  sh: "bash",
-  bash: "bash",
-  yml: "yaml",
-  yaml: "yaml",
-  json: "json",
-  toml: "toml",
-  sql: "sql",
-  css: "css",
-  html: "html",
-  md: "markdown",
-};
-
-function langFor(path: string): string {
-  const ext = path.split(".").pop()?.toLowerCase() || "";
-  return EXT_TO_LANG[ext] || "text";
-}
-
 /**
- * Inline source viewer for a wiki citation.
+ * Inline source viewer for a wiki / 学习路径 citation.
  *
- * Every concept claim in this wiki is backed by a file reference; being able to
- * open the actual lines without leaving the article is what makes the evidence
- * worth citing.
+ * Teaching notes are an overlay (CodeTour-shaped `{path, line, note}`). They
+ * are never written into the scanned repo.
  */
-export default function SourcePeek({ repositoryId, reference, onClose }: Props) {
+export default function SourcePeek({ repositoryId, reference, onClose, slug }: Props) {
   const t = useT();
   const parsed = parseRef(reference);
   const [code, setCode] = useState<string | null>(null);
   const [range, setRange] = useState<{ start: number; end: number } | null>(null);
+  const [notes, setNotes] = useState<SourceAnnotation[]>([]);
   const [error, setError] = useState<string | null>(null);
   const missing = tNow("找不到工作副本里的这个文件", "This file is not in the scanned working copy.");
 
@@ -84,6 +50,7 @@ export default function SourcePeek({ repositoryId, reference, onClose }: Props) 
     let cancelled = false;
     setCode(null);
     setRange(null);
+    setNotes([]);
     if (!parsed) {
       setError(missing);
       return;
@@ -100,10 +67,12 @@ export default function SourcePeek({ repositoryId, reference, onClose }: Props) 
           path: parsed.path,
           start_line: parsed.startLine,
           end_line: parsed.endLine,
+          slug,
         });
         if (cancelled) return;
         setCode(res.content);
         setRange({ start: res.start_line, end: res.end_line });
+        setNotes(res.annotations || []);
       } catch (e: unknown) {
         if (!cancelled) {
           setError(e instanceof Error && e.message ? e.message : missing);
@@ -113,9 +82,19 @@ export default function SourcePeek({ repositoryId, reference, onClose }: Props) 
     return () => {
       cancelled = true;
     };
-  }, [repositoryId, reference]);
+  }, [repositoryId, reference, slug]);
+
+  const lines = useMemo(() => (code == null ? [] : code.split("\n")), [code]);
+  const noteByLine = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const item of notes) {
+      if (item.line && item.note) map.set(item.line, item.note);
+    }
+    return map;
+  }, [notes]);
 
   const pathLabel = parsed?.path || reference;
+  const start = range?.start ?? 1;
 
   return (
     <div className="rs-peek">
@@ -139,7 +118,19 @@ export default function SourcePeek({ repositoryId, reference, onClose }: Props) 
       ) : code === null ? (
         <p className="rs-peek-loading">{t("读取源码…", "Reading source…")}</p>
       ) : (
-        <CodeBlock code={code} lang={langFor(parsed?.path || "")} />
+        <div className="rs-peek-body">
+          {lines.map((src, i) => {
+            const lineNo = start + i;
+            const note = noteByLine.get(lineNo);
+            return (
+              <div key={lineNo} className={note ? "rs-peek-row is-noted" : "rs-peek-row"}>
+                <span className="rs-peek-ln rs-tabular">{lineNo}</span>
+                <code className="rs-peek-src">{src || " "}</code>
+                {note ? <aside className="rs-peek-note">{note}</aside> : null}
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );

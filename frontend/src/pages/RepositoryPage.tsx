@@ -6,7 +6,7 @@ import AskPanel from "../components/AskPanel";
 import CommandPalette from "../components/CommandPalette";
 import ConceptPracticePanel from "../components/ConceptPracticePanel";
 import FolderPicker from "../components/FolderPicker";
-import SourcePeek from "../components/SourcePeek";
+import SourcePeek, { parseRef } from "../components/SourcePeek";
 import SourceRail from "../components/SourceRail";
 import TableOfContents from "../components/TableOfContents";
 import WikiContent from "../components/WikiContent";
@@ -151,6 +151,21 @@ export default function RepositoryPage() {
   useEffect(() => {
     refreshList().catch((e: unknown) => setError(e instanceof Error ? e.message : tNow("加载失败", "Failed to load")));
   }, []);
+
+  useEffect(() => {
+    if (!id || !path?.nodes?.length) return;
+    const node = path.nodes[0];
+    const parsed = parseRef(node.evidence_chip || "");
+    if (!parsed) return;
+    recallstackApi
+      .sourceSnippet({
+        repository_id: id,
+        path: parsed.path,
+        start_line: parsed.startLine,
+        slug: node.concept?.slug,
+      })
+      .catch(() => undefined);
+  }, [id, path?.id]);
 
   useEffect(() => {
     if (id) loadRepo(id);
@@ -711,6 +726,7 @@ export default function RepositoryPage() {
                         : currentPage.title
                     }
                     repositoryId={id}
+                    learnSlug={mode === "learn" ? currentPathNode?.concept?.slug : undefined}
                     onNavigatePage={openPage}
                     onTocChange={setToc}
                     onLookup={({ selection }) => {

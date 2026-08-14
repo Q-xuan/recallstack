@@ -18,6 +18,8 @@ interface Props {
   title: string;
   /** Enables the inline source viewer for `path:line` citations. */
   repositoryId?: string;
+  /** Learning-path slug for first-principles peek notes. */
+  learnSlug?: string;
   /** Called with an internal wiki page id when a relative link is clicked. */
   onNavigatePage?: (pageId: string) => void;
   /** Called when the reader selects text and asks to look it up. */
@@ -34,6 +36,7 @@ export default function WikiContent({
   content,
   title,
   repositoryId,
+  learnSlug,
   onNavigatePage,
   onLookup,
   onTocChange,
@@ -219,6 +222,7 @@ export default function WikiContent({
                   <SourcePeek
                     repositoryId={repositoryId}
                     reference={peek.ref}
+                    slug={learnSlug}
                     onClose={closePeek}
                   />
                 </div>

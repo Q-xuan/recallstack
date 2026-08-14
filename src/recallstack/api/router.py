@@ -414,7 +414,11 @@ def get_repository_wiki_page(
 
 
 @router.get("/repositories/{repository_id}/learning-path", response_model=LearningPathOut)
-def get_learning_path(repository_id: str, db: Session = Depends(get_db_session)) -> LearningPathOut:
+def get_learning_path(
+    repository_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db_session),
+) -> LearningPathOut:
     store = RepositoryStore(db)
     if not store.get_repository(repository_id):
         raise api_error(404, "repository_not_found", "Repository not found")
@@ -424,7 +428,10 @@ def get_learning_path(repository_id: str, db: Session = Depends(get_db_session))
     path = store.get_learning_path(version.id)
     if not path:
         raise api_error(404, "path_not_found", "Learning path not found")
-    return path_out(path, file_texts=load_version_file_texts(str(version.id)))
+    file_texts = load_version_file_texts(str(version.id))
+    out = path_out(path, file_texts=file_texts)
+    _schedule_path_annotation_prefetch(background_tasks, str(version.id), out, file_texts)
+    return out
 
 
 @router.get("/concepts/{concept_id}", response_model=ConceptOut)
@@ -758,18 +765,62 @@ def dashboard(
     )
 
 
+def _schedule_path_annotation_prefetch(
+    background_tasks: BackgroundTasks,
+    version_id: str,
+    out: LearningPathOut,
+    file_texts: dict[str, str],
+) -> None:
+    """Warm the first 过关 chip so the first peek is instant. Never blocks GET."""
+    from recallstack.learning.code_loader import slice_lines
+    from recallstack.learning.peek_annotations import (
+        build_annotate_llm,
+        parse_evidence_chip,
+        prefetch_annotations_sync,
+    )
+
+    if build_annotate_llm() is None:
+        return
+    for node in out.nodes or []:
+        chip = getattr(node, "evidence_chip", None) or ""
+        parsed = parse_evidence_chip(chip)
+        if not parsed:
+            continue
+        rel, start = parsed
+        text = file_texts.get(rel) or ""
+        if not text:
+            continue
+        snippet, s, e = slice_lines(text, start, None)
+        slug = ""
+        concept = getattr(node, "concept", None)
+        if concept is not None:
+            slug = getattr(concept, "slug", "") or ""
+        background_tasks.add_task(
+            prefetch_annotations_sync,
+            version_id=version_id,
+            path=rel,
+            start_line=s,
+            end_line=e,
+            snippet=snippet,
+            slug=slug,
+        )
+        return
+
+
 @router.get("/source")
-def get_source_snippet(
+async def get_source_snippet(
     path: str,
     repository_id: str,
     start_line: int | None = None,
     end_line: int | None = None,
+    slug: str | None = None,
     db: Session = Depends(get_db_session),
 ) -> dict[str, Any]:
     """Return a short source snippet for a repository-relative path.
 
     Uses scanned file text from the last analyze (so GitHub clones work), then
     the local working copy / clone cache. Blocked files are never served.
+    Teaching annotations are generated lazily on first peek and cached.
     """
     store = RepositoryStore(db)
     repo = store.get_repository(repository_id)
@@ -781,6 +832,7 @@ def get_source_snippet(
         resolve_file_text,
         slice_lines,
     )
+    from recallstack.learning.peek_annotations import annotations_for_snippet
     from recallstack.security import is_blocked_filename, normalize_repo_path
 
     rel = normalize_repo_path(path)
@@ -799,9 +851,20 @@ def get_source_snippet(
     if text is None:
         raise api_error(404, "file_not_found", missing_working_copy_message())
     snippet, s, e = slice_lines(text, start_line, end_line)
+    notes: list[dict[str, Any]] = []
+    if snippet.strip():
+        notes = await annotations_for_snippet(
+            version_id=str(version.id) if version else "",
+            path=rel,
+            start_line=s,
+            end_line=e,
+            snippet=snippet,
+            slug=(slug or "").strip(),
+        )
     return {
         "path": rel,
         "start_line": s,
         "end_line": e,
         "content": snippet,
+        "annotations": notes,
     }

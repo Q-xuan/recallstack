@@ -1289,6 +1289,71 @@ html[lang="zh-CN"] .rs-wiki-nav-group {
   color: var(--rs-danger);
 }
 
+.rs-peek-body {
+  margin: 0;
+  padding: 6px 0 8px;
+  overflow-x: auto;
+  background: var(--rs-surface);
+  font-family: var(--rs-mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.rs-peek-row {
+  display: grid;
+  grid-template-columns: 3.2rem minmax(0, 1fr);
+  column-gap: 8px;
+  padding: 0 10px;
+}
+
+.rs-peek-row.is-noted {
+  background: var(--rs-surface-2);
+  padding-bottom: 4px;
+}
+
+.rs-peek-ln {
+  color: var(--rs-muted);
+  text-align: right;
+  user-select: none;
+}
+
+.rs-peek-src {
+  display: block;
+  white-space: pre;
+  color: var(--rs-ink-2);
+  overflow: hidden;
+}
+
+.rs-peek-note {
+  grid-column: 2;
+  margin: 2px 0 6px;
+  padding: 5px 8px;
+  border-left: 2px solid var(--rs-accent);
+  background: var(--rs-surface-2);
+  color: var(--rs-ink);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+@media (min-width: 880px) {
+  .rs-peek-row.is-noted {
+    grid-template-columns: 3.2rem minmax(0, 1fr) minmax(11rem, 17rem);
+    align-items: start;
+  }
+  .rs-peek-note {
+    grid-column: 3;
+    grid-row: 1;
+    margin: 0 0 0 4px;
+  }
+}
+
+.rs-ident {
+  pointer-events: none;
+  cursor: default;
+  color: var(--rs-muted);
+}
+
 .rs-peek .rs-code {
   margin: 0;
   border: 0;

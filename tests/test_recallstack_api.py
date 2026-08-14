@@ -255,6 +255,7 @@ def test_source_preview_reads_a_nested_file(client: TestClient):
 
     assert r.status_code == 200, r.text
     assert "def main" in r.json()["content"] or "boot" in r.json()["content"]
+    assert r.json().get("annotations") == []
 
 
 def test_source_preview_serves_scanned_text_without_working_copy(client: TestClient, monkeypatch):

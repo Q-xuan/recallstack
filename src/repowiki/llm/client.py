@@ -208,10 +208,15 @@ class LLMClient:
         temperature: float = 0.3,
         max_tokens: int = 4096,
         response_format: dict | None = None,
+        timeout: float | None = None,
     ) -> str:
         """non-streaming completion, returns the full response text."""
         await self._throttle()
-        timeout = float(os.getenv("REPOWIKI_LLM_TIMEOUT_SECONDS", "90"))
+        timeout = float(
+            timeout
+            if timeout is not None
+            else os.getenv("REPOWIKI_LLM_TIMEOUT_SECONDS", "90")
+        )
         retries = int(os.getenv("REPOWIKI_LLM_MAX_RETRIES", "1"))
 
         body: dict = {

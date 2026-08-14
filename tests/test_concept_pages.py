@@ -371,6 +371,9 @@ def test_wiki_content_peek_is_react_sibling_not_portal():
     assert "[data-md-block-index] > [data-peek-slot]" in css
     assert "ul.rs-md-item" in css
     assert "if (!parsed) return null" not in peek
+    assert "bg-white" not in peek
+    assert "rs-peek-note" in peek
+    assert "rs-ident" in md
     assert "normalizeMermaidSource" in md
     assert 'data-md-block="list-item"' in md
     assert ".rs-related-source" in css

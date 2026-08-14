@@ -122,7 +122,7 @@ function renderCodeChip(content: string): string {
   const dataRef = isRef ? sourceRefValue(trimmed) : "";
   const attrs = isRef
     ? ` class="rs-ref" data-ref="${escapeHtml(dataRef)}" role="button" tabindex="0"`
-    : "";
+    : ` class="rs-ident"`;
   let inner = escapeHtml(trimmed);
   if (isRef && refMatch) {
     const loc = chipVisibleLocation(refMatch);
