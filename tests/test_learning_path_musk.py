@@ -62,13 +62,41 @@ def test_path_worksheet_has_four_headings_and_one_chip(monkeypatch):
     assert chip == "crates/tui/src/app.rs:142 start_turn"
     assert f"`{chip}`" in text
     assert "调模型" in text.split("## 过关", 1)[1]
+    assert "若这不成立" in text.split("## 先回到原理", 1)[1]
+    assert "while True" in text.split("## 先回到原理", 1)[1]
+    evidence = text.split("## 只看这一处证据", 1)[1].split("## 过关", 1)[0]
+    assert "闸门" in evidence or "模型" in evidence
+    gate = text.split("## 过关", 1)[1]
+    assert "函数" in gate
+    assert "一句话概括" not in gate
+    assert "离开终端循环还能不能完成它声称的事" not in gate
+
+
+def test_path_worksheet_is_deep_not_shallow(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    text = path_worksheet(_loop_draft())
+    principle = text.split("## 先回到原理", 1)[1].split("## 只看这一处证据", 1)[0]
+    sentences = [s for s in re.split(r"[。！？.!?]", principle) if s.strip()]
+    assert 4 <= len(sentences) <= 8
+    assert "若这不成立" in principle
+    assert "不要把这当成" in principle
+    assert path_worksheet(_loop_draft()).count("`") == 2
+    wiki = upgrade_legacy_concept_markdown(text, slug="agent-loop", title="Agent Loop")
+    assert "## 本步要你干什么" not in wiki
+    assert "## 先回到原理" not in wiki
+    assert "## 过关" not in wiki
+    assert "若这不成立" not in wiki
+    assert "while True" not in wiki
 
 
 def test_path_rank_trunk_before_leaves():
     assert path_rank("project-goal") < path_rank("entry-and-boot")
     assert path_rank("entry-and-boot") < path_rank("agent-loop")
     assert path_rank("agent-loop") < path_rank("tool-system")
+    assert path_rank("tool-system") < path_rank("session-lifecycle")
+    assert path_rank("session-lifecycle") < path_rank("acp-protocol")
     assert path_rank("tool-system") < path_rank("acp-protocol")
+    assert path_rank("acp-protocol") < path_rank("codebase-graph")
     assert path_rank("agent-loop") < path_rank("codebase-graph")
 
 
@@ -146,12 +174,18 @@ def test_filler_slugs_excluded_from_path():
     assert slugs[:3] == ["project-goal", "entry-and-boot", "agent-loop"]
     assert "application-entry" not in slugs
     assert slugs.index("agent-loop") < slugs.index("tool-system")
+    assert slugs.index("tool-system") < slugs.index("acp-protocol")
     assert "caching" not in slugs
     assert "request-routing" not in slugs
     assert "module-foo" not in slugs
-    assert len(slugs) <= 8
+    assert "codebase-graph" not in slugs
+    assert "pty-control" not in slugs
+    assert "headless-modes" not in slugs
+    assert "encrypt_templates" not in slugs
+    assert len(slugs) <= 10
     assert "agent-loop" in slugs
     assert slugs.index("agent-loop") < 4
+    assert "acp-protocol" in slugs
 
 
 def test_concept_wiki_pages_stay_handbook(monkeypatch):
@@ -167,6 +201,8 @@ def test_concept_wiki_pages_stay_handbook(monkeypatch):
     assert "## 只看这一处证据" not in page.content
     assert "## 过关" not in page.content
     assert "start_turn 之后调模型" not in page.content
+    assert "若这不成立" not in page.content
+    assert "不要把这当成" not in page.content
 
 
 def test_upgrade_legacy_concept_markdown_still_strips_path_homework(monkeypatch):
@@ -282,8 +318,11 @@ def test_path_out_rebuilds_worksheet_on_get(monkeypatch):
     loop_node = next(n for n in out.nodes if n.concept and n.concept.slug == "agent-loop")
     assert loop_node.reason.startswith("打开证据")
     assert "不变量" in loop_node.principles
+    assert "若这不成立" in loop_node.principles
+    assert "while True" in loop_node.principles
     assert loop_node.evidence_chip == "crates/tui/src/app.rs:142 start_turn"
-    assert "调模型" in loop_node.pass_gate
+    assert "函数" in loop_node.pass_gate
+    assert "离开终端循环还能不能完成它声称的事" not in loop_node.pass_gate
     ws = loop_node.worksheet
     assert "## 本步要你干什么" in ws
     assert "## 先回到原理" in ws

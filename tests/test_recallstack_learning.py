@@ -152,9 +152,10 @@ def test_learning_path_excludes_file_inventory_filler():
     assert "file-package-json" not in slugs
     assert "caching" not in slugs
     assert "request-routing" not in slugs
-    assert len(slugs) <= 8
+    assert len(slugs) <= 10
     goal = next(n for n in path.nodes if n.concept_slug == "project-goal")
-    assert "一句话" in goal.reason or "one sentence" in goal.reason.lower()
+    assert "指出" in goal.reason or "point" in goal.reason.lower()
+    assert "了解" not in goal.reason
 
 
 def test_hint_level_increments_and_no_skip():

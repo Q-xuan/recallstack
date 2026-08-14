@@ -340,7 +340,10 @@ def test_learning_path_api_omits_filler_and_states_mission(client: TestClient, m
     titles = [n["concept"]["title"] for n in body["nodes"] if n.get("concept")]
     assert all(not s.startswith(("module-", "focus-", "file-")) for s in slugs)
     assert all("README.md" not in t and "Cargo.toml" not in t for t in titles)
-    assert any("一句话" in (n.get("reason") or "") or "one sentence" in (n.get("reason") or "").lower() for n in body["nodes"])
+    assert any(
+        "指出" in (n.get("reason") or "") or "point" in (n.get("reason") or "").lower()
+        for n in body["nodes"]
+    )
     assert all(n.get("worksheet") for n in body["nodes"])
     worksheet = body["nodes"][0]["worksheet"]
     assert "## 本步要你干什么" in worksheet or "## What this step asks of you" in worksheet

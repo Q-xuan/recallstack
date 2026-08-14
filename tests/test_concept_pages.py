@@ -220,7 +220,8 @@ grok-study 是本地研究工作台。
     assert "**难度**" not in upgraded
     assert "这篇说明这个仓库解决什么问题" in upgraded
     # Path UI still has the task; wiki GET must not re-insert it.
-    assert "一句话" in step_task_for_slug("project-goal", "项目目标")
+    assert "指出" in step_task_for_slug("project-goal", "项目目标")
+    assert "了解" not in step_task_for_slug("project-goal", "项目目标")
     again = upgrade_legacy_concept_markdown(upgraded, slug="project-goal", title="项目目标")
     assert again == upgraded
     assert again.count("## 它是什么") == 1

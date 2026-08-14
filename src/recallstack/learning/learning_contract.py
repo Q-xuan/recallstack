@@ -43,7 +43,7 @@ _GENERIC_REASON_RE = re.compile(
     re.I,
 )
 
-CORE_PATH_CAP = 8
+CORE_PATH_CAP = 10
 
 # Generic web-app syllabus. Fine as optional *topics* when the repo actually
 # has that system; never a default path node (Jake: not caching / routing fillers).
@@ -64,7 +64,7 @@ _WEB_FILLER_SLUGS = frozenset(
     }
 )
 
-# Trunk → big branches → leaves. First steps: process entry, then how a turn runs.
+# Trunk → hard turns → UI. Crate-inventory leaves stay off the path.
 _PATH_TRUNK: tuple[str, ...] = (
     "project-goal",
     "entry-and-boot",
@@ -73,12 +73,23 @@ _PATH_TRUNK: tuple[str, ...] = (
     "call-flow",
     "runtime-loop",
     "tool-system",
+    "session-lifecycle",
+    "agent-runtime",
+    "acp-protocol",
+    "context-assembly",
     "terminal-ui",
     "tui-pager",
-    "context-assembly",
-    "agent-runtime",
-    "session-lifecycle",
     "conversation-store",
+    "system-prompt",
+)
+_SHALLOW_PATH_LEAVES = frozenset(
+    {
+        "codebase-graph",
+        "pty-control",
+        "codegen",
+        "headless-modes",
+        "subagent-scheduling",
+    }
 )
 _PATH_RANK = {slug: i for i, slug in enumerate(_PATH_TRUNK)}
 
@@ -103,6 +114,8 @@ _EVIDENCE_HINTS: dict[str, tuple[tuple[str, ...], str]] = {
     "tui-pager": (("pager.rs",), "Pager"),
     "context-assembly": (("conversation_util.rs", "context.rs"), "replace_or_insert_system_head"),
     "agent-runtime": (("runtime.rs", "lifecycle.rs"), "AgentRuntime"),
+    "session-lifecycle": (("session_lifecycle.rs", "lifecycle.rs"), "cancel"),
+    "acp-protocol": (("channel.rs", "acp/mod.rs"), "AcpChannel"),
     "system-prompt": (("agents_md.rs", "prompt.rs", "system.rs"), ""),
     "project-goal": (("README.md", "readme.md"), ""),
 }
@@ -142,6 +155,13 @@ _FALLBACK_FILES: dict[str, tuple[str, ...]] = {
         "crates/codegen/xai-agent-lifecycle/src/runtime.rs",
         "crates/codegen/xai-agent-lifecycle/src/lib.rs",
         "crates/agent/src/runtime.rs",
+    ),
+    "session-lifecycle": (
+        "crates/codegen/xai-agent-lifecycle/src/lib.rs",
+        "crates/codegen/xai-agent-lifecycle/src/session_lifecycle.rs",
+    ),
+    "acp-protocol": (
+        "crates/codegen/xai-grok-agent/src/acp/mod.rs",
     ),
     "system-prompt": ("crates/codegen/xai-grok-agent/src/prompt/agents_md.rs",),
 }
@@ -185,6 +205,8 @@ _SLUG_DENY_NEEDLES: dict[str, tuple[str, ...]] = {
     "tui-pager": ("ptyctl", "protoc"),
     "context-assembly": ("ptyctl", "protoc"),
     "agent-runtime": ("ptyctl", "protoc", "/scripts/", "encrypt", "xor_encrypt"),
+    "session-lifecycle": ("ptyctl", "protoc", "/scripts/", "encrypt", "xor_encrypt"),
+    "acp-protocol": ("ptyctl", "protoc", "/scripts/", "encrypt", "xor_encrypt"),
     "system-prompt": ("ptyctl", "protoc"),
 }
 
@@ -210,6 +232,8 @@ _SLUG_PREFER_NEEDLES: dict[str, tuple[str, ...]] = {
     "tui-pager": ("xai-grok-pager", "/pager.rs", "crates/tui"),
     "context-assembly": ("xai-chat-state", "conversation_util"),
     "agent-runtime": ("xai-agent-lifecycle",),
+    "session-lifecycle": ("xai-agent-lifecycle", "session_lifecycle"),
+    "acp-protocol": ("acp", "channel", "xai-grok-agent"),
     "system-prompt": ("xai-grok-agent", "agents_md", "/prompt/"),
 }
 
@@ -304,10 +328,11 @@ _FLOW_SLUGS = {
 
 def path_mission() -> str:
     return t(
-        "Walk the trunk first: how the process starts, how one turn runs, then tools "
-        "and UI. At each step ask only: if this layer vanished, could the system still work?",
-        "先看进程怎么进，再看一轮对话怎么转，最后才看工具和界面。"
-        "每一步只问：这一层不存在，系统还能不能工作。",
+        "Walk the trunk first: how the process starts, how one turn runs, then the hard "
+        "turns — tool write-back, cancel, ACP vs TUI. At each step ask: if this layer "
+        "vanished, which user-visible thing dies?",
+        "先看进程怎么进，再看一轮对话怎么转，然后看硬弯：工具写回、取消、ACP 和 TUI 两扇门。"
+        "每一步只问：这一层不存在，用户能看见的哪件事会死。",
     )
 
 
@@ -349,6 +374,11 @@ def drop_duplicate_entry_slug(slug: str, selected_slugs: set[str]) -> bool:
     return slug == "application-entry" and "entry-and-boot" in selected_slugs
 
 
+def is_shallow_path_leaf(slug: str) -> bool:
+    """Crate-inventory / aux topics — wiki is fine, not a path step."""
+    return (slug or "") in _SHALLOW_PATH_LEAVES
+
+
 def is_core_path_concept(concept: ConceptDraft) -> bool:
     """Path nodes are real concepts from this repo, not folder inventory."""
     if is_filler_concept(concept):
@@ -357,6 +387,8 @@ def is_core_path_concept(concept: ConceptDraft) -> bool:
         return False
     wiki_id = getattr(concept, "wiki_page_id", None)
     if is_web_filler_path_slug(concept.slug, wiki_id):
+        return False
+    if is_shallow_path_leaf(concept.slug):
         return False
     return True
 
@@ -369,48 +401,56 @@ def step_task_for_slug(slug: str, title: str = "") -> str:
     """Concrete action for this step. Stored on the path node as ``reason``."""
     tasks = {
         "project-goal": t(
-            "In one sentence: after the user hits Enter in the terminal, which three layers (entry, one turn, model call) must exist for an answer to come back?",
-            "用一句话说清：用户在终端里回车之后，系统靠哪三层（入口、一轮循环、模型调用）才能答上来。",
+            "On the evidence line, point to whether the user lives in a terminal turn or in a crate list. Name which of entry / one turn / model call would make Enter produce no answer if it vanished.",
+            "对着证据那一行，指出用户被放在终端对话里还是放在 crate 清单里。说出入口、一轮循环、模型调用里少了哪一层，回车之后不会有回答。",
         ),
         "entry-and-boot": t(
-            "Open the grok binary entry and name the first runtime constructed after the process starts.",
-            "打开 grok 二进制入口，指出进程启动后第一个被构造的运行时是什么。",
+            "Point to who receives control after ACP connect, and who receives it after the TUI door. Do not answer “both are entry”.",
+            "指出 ACP 的 connect 之后控制权交给谁，TUI 那扇门又交给谁。不要回答「都是入口」。",
         ),
         "application-entry": t(
             "Open the entrypoint and name the first three calls after the process starts — not a crate name.",
             "打开入口文件，指出进程启动后最先调用的三步（不是某个 crate 的名字）。",
         ),
         "agent-loop": t(
-            "Open the evidence and point to who calls the model after start_turn (not tools first).",
-            "打开证据，指出谁在 start_turn 之后调模型（不是先跑工具）。",
+            "Open the evidence and point to who calls the model after start_turn (not tools first). Write that function name.",
+            "打开证据，指出谁在 start_turn 之后调模型（不是先跑工具），写出那个函数名。",
         ),
         "call-flow": t(
             "Follow one turn: name who runs between input entering the turn and the model being called.",
             "顺着一轮对话，指出输入进 turn 之后到模型被调用之间经过谁。",
         ),
         "runtime-loop": t(
-            "Open the evidence and point to who calls the model after start_turn (not tools first).",
-            "打开证据，指出谁在 start_turn 之后调模型（不是先跑工具）。",
+            "Open the evidence and point to who calls the model after start_turn (not tools first). Write that function name.",
+            "打开证据，指出谁在 start_turn 之后调模型（不是先跑工具），写出那个函数名。",
         ),
         "tool-system": t(
-            "Open ToolBridge and point to who dispatches a tool call by name after the model returns it.",
-            "打开 ToolBridge，指出模型给出 tool call 之后谁按名字执行。",
+            "Point to who writes the tool result back and calls the model again after start_turn. Name the function, not “the tool layer”.",
+            "指出 start_turn 之后谁把 tool 结果写回再调模型。写出函数名，不要说「工具层」。",
         ),
         "terminal-ui": t(
-            "Open Pager and point to which buffer streaming model output is written into.",
-            "打开 Pager，指出模型流式输出时字写进哪一块缓冲区。",
+            "Open Pager and point to which buffer streaming model output is written into. Name the field or function, not “the TUI”.",
+            "打开 Pager，指出模型流式输出时字写进哪一块缓冲区。写出字段或函数名，不要说「界面」。",
         ),
         "tui-pager": t(
-            "Open Pager and point to which buffer streaming model output is written into.",
-            "打开 Pager，指出模型流式输出时字写进哪一块缓冲区。",
+            "Open Pager and point to which buffer streaming model output is written into. Name the field or function, not “the TUI”.",
+            "打开 Pager，指出模型流式输出时字写进哪一块缓冲区。写出字段或函数名，不要说「界面」。",
         ),
         "context-assembly": t(
             "Open replace_or_insert_system_head and say whether the system head is written at the window head or appended after the user message.",
             "打开 replace_or_insert_system_head，指出系统头是写进窗口头还是拼在用户消息后面。",
         ),
         "agent-runtime": t(
-            "Open the runtime type and point to what it owns that the turn loop cannot construct by itself.",
-            "打开运行时类型，指出一轮循环自己构造不了、必须由它持有的是什么。",
+            "Point to who stops an in-flight model call when the user cancels a turn. If that stop never fires, say what the terminal still shows.",
+            "指出用户取消一轮时谁把还在飞的模型调用停掉。若停不掉，说出终端上会留下什么。",
+        ),
+        "session-lifecycle": t(
+            "Point to who stops an in-flight model call when the user cancels a turn. If that stop never fires, say what the terminal still shows.",
+            "指出用户取消一轮时谁把还在飞的模型调用停掉。若停不掉，说出终端上会留下什么。",
+        ),
+        "acp-protocol": t(
+            "Point to whether ACP connect and the TUI entry are two doors or one road. After connect, who holds the session?",
+            "指出 ACP 的 connect 和 TUI 入口是两扇门还是同一条路。connect 之后谁持有会话。",
         ),
         "configuration": t(
             "Find where config enters runtime and name one behaviour it changes.",
@@ -544,103 +584,168 @@ def first_principles(concept: ConceptDraft, project_name: str) -> str:
 
 
 def path_principles(concept: Any, project_name: str = "") -> str:
-    """2–5 sentences of invariants for the path worksheet. Not a file list."""
+    """4–7 sentences: invariant, counterfactual, rejected analogy. Not a file list."""
     slug = getattr(concept, "slug", "") or ""
     title = getattr(concept, "title", "") or slug
     name = project_name or title
     texts = {
         "project-goal": t(
-            f"{name} is a product you run, not a pile of crates. "
-            "A binary, one turn, and a model call have to exist or nothing answers. "
-            "Invariant: no entry, no turn, no model call — no product.",
-            f"{name} 首先是一个能跑起来的产品，不是一组可以随便拆开的 crate。"
-            "有入口、有一轮循环、有模型调用，用户才能得到回答。"
-            "不变量：没有入口、没有一轮、没有模型调用，产品就不存在。",
+            f"{name} is a product that must finish one terminal turn, not a crate inventory. "
+            "Invariant: entry, one turn, and a model call all exist, or Enter produces no answer. "
+            "If this were false, the user hits Enter and the screen never shows a model reply — only files that compile. "
+            "Do not treat this as “read the README and you understand the product”, and do not treat the repo as a crate list you can shuffle. "
+            "The first README line pins the product shape. Directories are a consequence of someone wiring entry to a turn to a model.",
+            f"{name} 首先是一个能在终端里跑完一轮对话的产品，不是 crate 目录。"
+            "不变量：入口、一轮循环、模型调用三层都在，用户回车才有回答。"
+            "若这不成立，用户对着终端按下回车，屏幕上不会出现模型回复，只剩一堆可以编译的文件。"
+            "不要把这当成「读完 README 就等于懂了产品」，也不要把仓库当成可以随便拆开的 crate 清单。"
+            "README 第一行钉住的是产品形态。目录是结果：有人从入口把一轮接上模型，产品才存在。",
         ),
         "entry-and-boot": t(
-            "A process starts at one function. TUI, agent, and tool bridge are constructed after that, not before. "
-            "If boot first compiles protobuf or warms an unrelated crate, the first keystroke has no receiver. "
-            "Invariant: grok binary starts → runtime is assembled → then the turn loop.",
-            "进程必须从某一个入口函数开始跑，TUI、Agent、工具桥才能被构造出来。"
-            "入口不是某一个 crate，而是二进制真正执行的那一行。"
-            "若入口先去编 protobuf 或初始化无关子系统，用户对着终端发的第一句话没有接收者。"
-            "不变量：grok 二进制启动 → 装配运行时 → 才进入对话循环。",
+            "A process enters through one door: the TUI loop or ACP connect. Those doors must not each build a private runtime. "
+            "Invariant: grok binary starts → one door is chosen → runtime is assembled → then the turn loop. "
+            "If this were false, the first sentence from the IDE or the terminal has no receiver, or two states step on each other. "
+            "This is not “find a file named main”. Entry is a hand-off of control, not a crate name. "
+            "If boot compiles protobuf or warms an unrelated CLI first, the first keystroke still has no receiver. "
+            "TUI and ACP are two doors, not two names for the same road.",
+            "进程必须从一扇门进来：TUI 主循环或 ACP 的 connect。两扇门不能各造一套运行时。"
+            "不变量：grok 二进制启动 → 选定一扇门 → 装配运行时 → 才进入对话。"
+            "若这不成立，用户在 IDE 里走 ACP、在终端里走 TUI，第一句话没有接收者，或两套状态互相踩。"
+            "不要把这当成「找一个叫 main 的文件就完了」。入口是控制权交接，不是 crate 名。"
+            "若入口先去编 protobuf 或拉起无关 CLI，用户的第一句仍然没人接。"
+            "TUI 和 ACP 是两扇门，不是同一条路的两个别名。",
         ),
         "application-entry": t(
             "Without an entrypoint there is no process: nothing is wired, nothing runs. "
-            "The rest of the graph exists only because something called it. "
-            "Invariant: process starts at the entry → it constructs what it owns → then the main loop.",
+            "Invariant: the process starts at the entry → it constructs what it owns → then the main loop. "
+            "If this were false, every later module exists on disk and still never runs. "
+            "This is not “the src/ folder is the entry”. The rest of the graph exists only because something called it.",
             "没有入口就没有进程：没有装配，也就没有运行。"
-            "其余模块只因为被入口调用才存在。"
-            "不变量：进程从入口进来 → 装配自己负责的对象 → 再把控制权交给主循环。",
+            "不变量：进程从入口进来 → 装配自己负责的对象 → 再把控制权交给主循环。"
+            "若这不成立，后面每个模块都在磁盘上，却没有人调用它们。"
+            "不要把这当成「src 目录就是入口」。其余模块只因为被入口调用才存在。",
         ),
         "agent-loop": t(
-            "A turn is valid only if user input is taken into the current turn and the model is called first. "
-            "Tool calls happen after the model returns; they cannot run first. "
-            "If start_turn ran tools before the model, the turn would be a script, not a conversation. "
-            "Invariant: input enters the turn → the model is called → tool calls run and write back.",
-            "一轮对话能成立，只有一件事必须发生：用户的输入被收进当前 turn 之后，模型先被调用。"
-            "工具调用是模型返回之后的事，不能倒过来。"
-            "若 start_turn 之后先跑工具再问模型，这一轮就没有「模型决定」，只有「脚本执行」。"
-            "不变量：输入进 turn → 模型被调用 → 如有 tool calls 再执行写回。",
+            "A turn is valid only after user input enters the current turn and the model is called first. "
+            "Invariant: input enters the turn → the model is called → tool calls run, write back, then the model is called again. "
+            "If this were false, the user does not see a model decide — they see a script finish tools, and the turn becomes a batch job. "
+            "This is not “a while True around the model”. The loop is a turn state machine: cancel, write-back, and the next model call hang on this turn. "
+            "Tools cannot run before the model, or there is no model decision. "
+            "start_turn is the gate of this turn, not another name for painting the UI.",
+            "一轮对话能成立，只有输入进当前 turn 之后模型先被调用。"
+            "不变量：输入进 turn → 模型被调用 → 如有 tool calls 再执行、写回、再问模型。"
+            "若这不成立，用户看见的不是「模型在决定」，而是脚本自己跑完工具，对话变成批处理。"
+            "不要把这当成「一个 while True 围着模型转」。循环不是空转，是 turn 的状态机，取消、写回、再问都挂在这一轮上。"
+            "工具不能抢在模型前面跑，否则没有「模型决定」。"
+            "start_turn 是这一轮的闸门，不是画 UI 的别名。",
         ),
         "call-flow": t(
             "A system is the sequence of calls, not the set of files. "
-            "One turn must run from input to model call in order. "
-            "Invariant: input enters the turn → the model is called → side effects follow.",
+            "Invariant: input enters the turn → the model is called → side effects follow. "
+            "If this were false, a folder named loop still would not produce an answer. "
+            "This is not “list the crates in order”. One turn must run from input to model call, and the order cannot flip.",
             "系统是调用的顺序，不是文件的集合。"
-            "一轮必须从输入走到模型调用，顺序不能反。"
-            "不变量：输入进 turn → 模型被调用 → 副作用在后面。",
+            "不变量：输入进 turn → 模型被调用 → 副作用在后面。"
+            "若这不成立，就算有一个叫 loop 的目录，用户也等不到回答。"
+            "不要把这当成「按 crate 名单走一遍」。一轮必须从输入走到模型调用，顺序不能反。",
         ),
         "runtime-loop": t(
-            "A turn is valid only if user input is taken into the current turn and the model is called first. "
-            "Tool calls happen after the model returns. "
-            "Invariant: input enters the turn → the model is called → tool calls run and write back.",
-            "一轮对话能成立，只有一件事必须发生：输入进 turn 之后，模型先被调用。"
-            "工具调用是模型返回之后的事。"
-            "不变量：输入进 turn → 模型被调用 → 如有 tool calls 再执行写回。",
+            "A turn is valid only after input enters the current turn and the model is called first. "
+            "Invariant: input enters the turn → the model is called → tool calls run, write back, then the model is called again. "
+            "If this were false, the turn is a script, not a conversation. "
+            "This is not “a while True around the model”.",
+            "一轮对话能成立，只有输入进 turn 之后模型先被调用。"
+            "不变量：输入进 turn → 模型被调用 → 如有 tool calls 再执行、写回、再问模型。"
+            "若这不成立，这一轮就没有「模型决定」，只有脚本。"
+            "不要把这当成「一个 while True 围着模型转」。",
         ),
         "tool-system": t(
             "The model cannot touch disk or a shell. It can only emit a named tool call; execution stays on this side of the bridge. "
-            "Without the bridge, a function call the model returned has nobody to run it. "
-            "Invariant: model emits a tool call → the bridge dispatches by name → the result is written back for the model.",
+            "Invariant: the model emits a tool call → the bridge runs it by name → the result is written back on the same turn → the model is called again. "
+            "If this were false, the tool finished and the next model call never sees the result — the user watches the model pretend or hang. "
+            "This is not “there is a tools crate”. The missing piece is write-back, not a directory. "
+            "An unknown tool name needs a failure path; silent drop then fake success is not a conversation. "
+            "The bridge sits outside the model. Execution must not leak back into the model process.",
             "模型不能自己碰磁盘或 shell。它只能发出带名字的 tool call；执行权必须在桥的这一侧。"
-            "若没有桥，模型返回的函数调用没有人跑，对话就会停在「想做」而不是「做完」。"
-            "不变量：模型输出 tool call → 桥按名字分发 → 结果写回再交给模型。",
+            "不变量：模型输出 tool call → 桥按名字执行 → 结果写回同一轮 → 再调模型。"
+            "若这不成立，工具跑完了，下一轮模型看不到结果，用户会看见模型假装做完或卡住。"
+            "不要把这当成「有一个 tools crate 就行」。缺的是写回，不是目录。"
+            "未知工具名必须有失败路径，不能静默丢弃后再假装成功。"
+            "桥在模型的外侧，执行权不能漏回模型进程。",
         ),
         "terminal-ui": t(
             "While the model streams tokens, the terminal must have one place that paints the increment. "
-            "Otherwise the user sees a blank screen or a full redraw. Pager is that canvas. "
-            "Invariant: a model delta arrives → it is written into the pager → the terminal shows it.",
-            "模型流式吐字时，终端必须有一个地方把增量画出来，否则用户看见的是空白或整段刷新。"
-            "Pager 就是这块画布。"
-            "不变量：模型 delta 到达 → 写入 pager → 终端可见。",
+            "Invariant: a model delta arrives → it is written into the pager → the terminal shows it. "
+            "If this were false, the user sees a blank screen or a full redraw after every token. "
+            "This is not “Pager is just scrollback”. It is the only canvas the stream can land on. "
+            "TUI is one door onto the same turn; it does not own a second model call.",
+            "模型流式吐字时，终端必须有一个地方把增量画出来。"
+            "不变量：模型 delta 到达 → 写入 pager → 终端可见。"
+            "若这不成立，用户看见的是空白，或每个 token 都整页刷新。"
+            "不要把这当成「Pager 只是一段回滚缓冲」。它是流式输出唯一能落下的画布。"
+            "TUI 是同一轮对话的一扇门，它不另养一次模型调用。",
         ),
         "tui-pager": t(
             "While the model streams tokens, the terminal must have one place that paints the increment. "
-            "Pager is that canvas. "
-            "Invariant: a model delta arrives → it is written into the pager → the terminal shows it.",
+            "Invariant: a model delta arrives → it is written into the pager → the terminal shows it. "
+            "If this were false, the stream has nowhere to land. "
+            "This is not “Pager is just scrollback”.",
             "模型流式吐字时，终端必须有一个地方把增量画出来。"
-            "Pager 就是这块画布。"
-            "不变量：模型 delta 到达 → 写入 pager → 终端可见。",
+            "不变量：模型 delta 到达 → 写入 pager → 终端可见。"
+            "若这不成立，流式输出没有落点。"
+            "不要把这当成「Pager 只是一段回滚缓冲」。",
         ),
         "context-assembly": t(
             "Before each model call the context window must already hold the system head. "
             "The system head is a rule, not chat history. "
-            "If a new rule cannot be written at the window head, the model answers under the old rule. "
-            "Invariant: assemble context → system head sits at the window head → then send this turn.",
+            "Invariant: assemble context → system head sits at the window head → then send this turn. "
+            "If this were false, a new rule never reaches the window head and the model answers under the old rule. "
+            "This is not “concatenate the last N messages”. Order at the head is the rule; append-after-user is a different product.",
             "每轮问模型之前，上下文窗口里必须先有系统头。"
             "系统头不是聊天记录，是规则。"
-            "若新规则不能写进窗口头部，模型按旧规则回答。"
-            "不变量：组上下文 → 系统头在窗口头上 → 再发本轮消息。",
+            "不变量：组上下文 → 系统头在窗口头上 → 再发本轮消息。"
+            "若这不成立，新规则到不了窗口头部，模型按旧规则回答。"
+            "不要把这当成「把最近 N 条消息拼起来」。头上的顺序才是规则；拼在用户消息后面是另一个产品。",
         ),
         "agent-runtime": t(
-            "The turn loop needs a runtime that already holds tools, context, and session. "
-            "The loop cannot construct those from a keystroke. "
-            "Invariant: runtime owns the long-lived pieces → the loop only drives one turn.",
-            "一轮循环需要一个已经持有工具、上下文和会话的运行时。"
-            "循环不能靠一次按键把这些东西现造出来。"
-            "不变量：运行时持有长寿命对象 → 循环只负责推一轮。",
+            "The runtime holds this turn’s cancel right and the long-lived objects. The loop cannot build those from one keystroke. "
+            "Invariant: the runtime owns session and the cancel signal → the loop only drives one turn → cancel must abort an in-flight model call. "
+            "If this were false, the user hits cancel and the model keeps streaming; Pager keeps writing; the terminal will not stop. "
+            "This is not “there is a runtime struct in some crate”. Ask where the cancel signal goes. "
+            "An empty runtime should fail before a turn starts, not halfway through a write. "
+            "Lifecycle is whether this turn can be killed, not a list of background jobs.",
+            "运行时持有这一轮的取消权和长寿命对象。循环不能靠一次按键把它们现造出来。"
+            "不变量：运行时持有 session 和取消信号 → 循环只推一轮 → 取消必须能打断 in-flight 的模型调用。"
+            "若这不成立，用户按了取消，模型仍在吐字，Pager 继续写，终端停不下来。"
+            "不要把这当成「某个 crate 里有个 runtime 结构体」。要问的是取消信号传到哪。"
+            "空运行时应该在开始一轮之前失败，而不是写到一半。"
+            "生命周期不是后台任务列表，是这一轮能不能被杀掉。",
+        ),
+        "session-lifecycle": t(
+            "A turn that cannot be cancelled is a turn the user does not own. "
+            "Invariant: cancel reaches the in-flight model call and tears down this turn’s session work. "
+            "If this were false, cancel is a UI label and tokens keep arriving. "
+            "This is not “session_lifecycle.rs exists”. Name the stop, not the file. "
+            "The next turn must not inherit a half-killed stream.",
+            "一轮不能被取消，等于这一轮不属于用户。"
+            "不变量：取消必须传到还在飞的模型调用，并拆掉这一轮的会话工作。"
+            "若这不成立，取消只是界面上的一个词，token 还在往下走。"
+            "不要把这当成「有一个 session_lifecycle.rs」。要说的是停在哪，不是文件名。"
+            "下一轮不能继承一条杀到一半的流。",
+        ),
+        "acp-protocol": t(
+            "ACP is the door IDE and external clients use. It is not a nickname for the TUI. "
+            "Invariant: connect opens a session → later messages share that channel → a turn is still driven by start_turn. "
+            "If this were false, the IDE is connected but has no session object, or TUI and ACP fight over one block of state and one side drops keystrokes. "
+            "This is not “one more protocol crate”. The protocol must hand over a session; it must not grow a second loop. "
+            "Both doors share the later turn, tools, and write-back. They must not each keep a private model call. "
+            "If channel messages do not line up, connect succeeding still is not a conversation.",
+            "ACP 是 IDE 和外部客户端进产品的那扇门，不是 TUI 的别名。"
+            "不变量：connect 建立会话 → 后续消息走同一条通道 → 一轮仍由 start_turn 推。"
+            "若这不成立，IDE 连上了但没有会话对象，或 TUI 和 ACP 抢同一块状态，一边打字另一边丢消息。"
+            "不要把这当成「多一个协议 crate」。协议层必须交出会话，而不是自己再写一套循环。"
+            "两扇门共用后面的 turn、工具和写回，不能各养一个模型调用。"
+            "通道上的消息对不上，connect 成功也没有对话。",
         ),
     }
     if slug in texts:
@@ -654,53 +759,61 @@ def path_principles(concept: Any, project_name: str = "") -> str:
 
 
 def pass_gate(concept: Any) -> str:
-    """One checkable gate. Not a homework dump."""
+    """Checkable gate: name a function, state, or failure path. Not a slogan."""
     slug = getattr(concept, "slug", "") or ""
     title = getattr(concept, "title", "") or slug
     gates = {
         "project-goal": t(
-            "One sentence: if this product left the terminal loop, could it still do what it claims?",
-            "一句话：这个产品离开终端循环还能不能完成它声称的事？",
+            "If start_turn is missing, can the dialogue the README claims still happen? Name the missing function. Do not summarize the product.",
+            "若没有 start_turn 这一层，README 声称的对话还能发生吗？说出缺的函数名，不要概括产品。",
         ),
         "entry-and-boot": t(
-            "In the entry function, which appears first — TUI or application state? Point to that line.",
-            "入口函数里，TUI 和应用状态谁先出现？指出那一行。",
+            "After connect returns, which type holds session state? If connect fails, does the TUI door open by itself? Name the type or function.",
+            "connect 返回之后，会话状态落在哪个类型上？若 connect 失败，TUI 那扇门还会不会自己开？说出类型或函数名。",
         ),
         "application-entry": t(
             "If the entry file were empty, what would fail to start? Name that object.",
             "如果入口文件是空的，什么将无法启动？说出那个对象。",
         ),
         "agent-loop": t(
-            "If you swapped 'call the model' and 'run tools', would this still be a conversation? Answer from the call order after start_turn.",
-            "若把「调模型」和「跑工具」对调，这一轮还会是对话吗？用 start_turn 后的调用顺序回答。",
+            "If you swap “call the model” and “run tools”, what is the first function after start_turn? Name the real function, and name the failure the user would see after the swap.",
+            "把「调模型」和「跑工具」对调之后，start_turn 后面第一个函数名会是什么？指出真实顺序里那个函数，并说对调后用户会看到哪条失败路径。",
         ),
         "call-flow": t(
-            "If you swapped 'call the model' and 'run tools', would this still be a conversation? Answer from the call order after start_turn.",
-            "若把「调模型」和「跑工具」对调，这一轮还会是对话吗？用 start_turn 后的调用顺序回答。",
+            "If you swap “call the model” and “run tools”, what is the first function after start_turn? Name the real function and the failure path after the swap.",
+            "把「调模型」和「跑工具」对调之后，start_turn 后面第一个函数名会是什么？指出真实顺序里那个函数，并说对调后的失败路径。",
         ),
         "runtime-loop": t(
-            "If you swapped 'call the model' and 'run tools', would this still be a conversation? Answer from the call order after start_turn.",
-            "若把「调模型」和「跑工具」对调，这一轮还会是对话吗？用 start_turn 后的调用顺序回答。",
+            "If you swap “call the model” and “run tools”, what is the first function after start_turn? Name the real function and the failure path after the swap.",
+            "把「调模型」和「跑工具」对调之后，start_turn 后面第一个函数名会是什么？指出真实顺序里那个函数，并说对调后的失败路径。",
         ),
         "tool-system": t(
-            "When the model returns an unknown tool name, does the bridge drop it, error, or call the model again? Point to the dispatch.",
-            "模型返回一个不存在的工具名时，桥是丢弃、报错，还是继续调模型？指出分发处。",
+            "After a tool returns, which function writes the result into context and calls the model again? If write-back fails, which state does this turn stop in?",
+            "工具返回之后，哪个函数把结果写进上下文并再次调用模型？若写回失败，这一轮停在什么状态？",
         ),
         "terminal-ui": t(
-            "When a streaming delta arrives, is the whole page redrawn or is it written into the pager? Point to that site.",
-            "流式 delta 到达时，是整页重绘还是写入 pager？指出那一处。",
+            "When a streaming delta arrives, is the whole page redrawn or is it written into the pager? Name the function or field.",
+            "流式 delta 到达时，是整页重绘还是写入 pager？说出函数名或字段名。",
         ),
         "tui-pager": t(
-            "When a streaming delta arrives, is the whole page redrawn or is it written into the pager? Point to that site.",
-            "流式 delta 到达时，是整页重绘还是写入 pager？指出那一处。",
+            "When a streaming delta arrives, is the whole page redrawn or is it written into the pager? Name the function or field.",
+            "流式 delta 到达时，是整页重绘还是写入 pager？说出函数名或字段名。",
         ),
         "context-assembly": t(
             "When the system head updates, is the old head replaced or appended? Name the function.",
             "系统头更新时，旧头是被替换还是追加？指出函数名。",
         ),
         "agent-runtime": t(
-            "If the runtime were empty, which object would the turn loop fail to find? Name it.",
-            "如果运行时是空的，一轮循环会找不到哪个对象？说出名字。",
+            "On cancel, which function or state aborts the in-flight call? If that signal is lost, which failure does the user see?",
+            "取消时哪个函数或状态把 in-flight 调用打断？若那个信号丢失，用户会看到哪条失败路径？",
+        ),
+        "session-lifecycle": t(
+            "On cancel, which function or state aborts the in-flight call? If that signal is lost, which failure does the user see?",
+            "取消时哪个函数或状态把 in-flight 调用打断？若那个信号丢失，用户会看到哪条失败路径？",
+        ),
+        "acp-protocol": t(
+            "After connect, which type holds the channel? If that object is empty, which failure path does the next message take?",
+            "connect 之后哪个类型持有通道？若这个对象是空的，下一帧消息走哪条失败路径？",
         ),
     }
     if slug in gates:
@@ -1274,7 +1387,7 @@ def _candidate_paths(
             crate = _crate_dir(norm)
             if crate and crate in crates and norm.endswith(_SRC_EXT):
                 add(norm)
-            if slug == "agent-runtime" and _is_lifecycle_rs(norm):
+            if slug in {"agent-runtime", "session-lifecycle"} and _is_lifecycle_rs(norm):
                 add(norm)
         for fallback in _FALLBACK_FILES.get(slug, ()):
             add(fallback)
@@ -1444,7 +1557,7 @@ def path_evidence_chip(
             slug,
             len(store),
         )
-        if slug == "agent-runtime":
+        if slug in {"agent-runtime", "session-lifecycle"}:
             life = _pick_lifecycle_crate(store, slug)
             if life:
                 chip = _emit_store_chip(life[0], life[1], life[2], store)
@@ -1664,6 +1777,126 @@ def suggested_ask_questions(pages: list[Any] | None) -> list[str]:
     return [q for q in out[:3] if not any(bad in q for bad in _ASK_HOST_LEFTOVERS)]
 
 
+def evidence_reading(concept: Any, chip: str | None = None) -> str:
+    """2–3 sentences: why this one line proves the invariant. Not syntax."""
+    slug = getattr(concept, "slug", "") or ""
+    texts = {
+        "project-goal": t(
+            "This line is not a crate inventory. It pins the product to a runnable dialogue. "
+            "If it only listed packages, entry and start_turn would have no constraint. "
+            "Read it as the claim that Enter must produce an answer.",
+            "这一行不是 crate 清单，它把产品钉在「能跑的对话」上。"
+            "若它只是介绍包名，后面的入口和 start_turn 就没有约束。"
+            "把它读成：回车必须换来回答。",
+        ),
+        "entry-and-boot": t(
+            "connect is one door, not a comment on main. "
+            "This line is where ACP hands control to a session; the TUI door is the other hand-off. "
+            "If this line never ran, an IDE client would have no receiver.",
+            "connect 是一扇门，不是写在 main 旁边的注释。"
+            "这一行是 ACP 把控制权交给会话的地方；TUI 是另一扇门。"
+            "若这一行从不执行，IDE 客户端没有接收者。",
+        ),
+        "application-entry": t(
+            "This line is the first call the process actually makes. "
+            "A crate name next to it does not start anything. "
+            "If it disappeared, later modules would sit on disk and never run.",
+            "这一行是进程真正发出的第一记调用。"
+            "旁边的 crate 名不会让任何东西跑起来。"
+            "若它消失，后面的模块只在磁盘上。",
+        ),
+        "agent-loop": t(
+            "start_turn is the gate of this turn, not a UI redraw. "
+            "The next call after this line must be the model, or the turn is a script. "
+            "If this line ran tools first, the user would not see a model decision.",
+            "start_turn 是这一轮的闸门，不是重绘界面。"
+            "这一行之后第一个调用必须是模型，否则这一轮是脚本。"
+            "若这一行先跑工具，用户看不见「模型在决定」。",
+        ),
+        "call-flow": t(
+            "This line is a call in order, not a file in a list. "
+            "Read who runs between input and the model. "
+            "If the order flipped, the user-visible turn would change.",
+            "这一行是顺序里的一次调用，不是名单上的一个文件。"
+            "看输入到模型之间经过谁。"
+            "若顺序反了，用户看见的这一轮会变。",
+        ),
+        "runtime-loop": t(
+            "start_turn is the gate of this turn. "
+            "The next call after this line must be the model. "
+            "If tools ran first, the turn would be a batch job.",
+            "start_turn 是这一轮的闸门。"
+            "这一行之后第一个调用必须是模型。"
+            "若先跑工具，这一轮就变成批处理。",
+        ),
+        "tool-system": t(
+            "This line is the write-back, not a tools folder. "
+            "After a tool returns, the same turn must put the result where the next model call can see it. "
+            "If this line only dispatched and never wrote back, the model would guess or hang.",
+            "这一行是写回，不是 tools 目录。"
+            "工具返回之后，同一轮必须把结果放到下一次模型调用能看见的地方。"
+            "若这一行只分发、不写回，模型只能猜或卡住。",
+        ),
+        "terminal-ui": t(
+            "This line is where a stream delta becomes pixels. "
+            "It is not a scrollback type alias. "
+            "If it did not write into the pager, the user would see a blank or a full redraw.",
+            "这一行是流式 delta 变成像素的地方。"
+            "它不是回滚缓冲的别名。"
+            "若它不写入 pager，用户看见空白或整页刷新。",
+        ),
+        "tui-pager": t(
+            "This line is where a stream delta becomes pixels. "
+            "If it did not write into the pager, the stream would have nowhere to land.",
+            "这一行是流式 delta 变成像素的地方。"
+            "若它不写入 pager，流没有落点。",
+        ),
+        "context-assembly": t(
+            "This line decides whether the system head is a rule at the window head or leftover text after the user. "
+            "If it appended, the model would answer under the old rule. "
+            "The function name is the proof, not the file name.",
+            "这一行决定系统头是窗口头上的规则，还是用户消息后面的残留。"
+            "若它是追加，模型按旧规则回答。"
+            "证明在函数名，不在文件名。",
+        ),
+        "agent-runtime": t(
+            "This line is where cancel or session ownership lives, not a struct tourist stop. "
+            "If it does not reach an in-flight model call, cancel is a label and tokens keep arriving. "
+            "Name the stop, not the crate.",
+            "这一行是取消或会话所有权所在，不是参观某个结构体。"
+            "若它到不了还在飞的模型调用，取消只是一个词，token 还在走。"
+            "要说停在哪，不要说 crate。",
+        ),
+        "session-lifecycle": t(
+            "This line must be able to kill this turn. "
+            "If it only logs a cancel, the stream continues. "
+            "The next turn must not inherit a half-killed call.",
+            "这一行必须能杀掉这一轮。"
+            "若它只是记下取消，流还在走。"
+            "下一轮不能继承一条杀到一半的调用。",
+        ),
+        "acp-protocol": t(
+            "This line is the ACP door handing over a channel or session. "
+            "It is not a second turn loop. "
+            "If the object it builds is empty, the next message has no path.",
+            "这一行是 ACP 这扇门交出通道或会话的地方。"
+            "它不是第二套循环。"
+            "若它造出的对象是空的，下一帧消息没有路。",
+        ),
+    }
+    if slug in texts:
+        return texts[slug]
+    shown = getattr(concept, "title", "") or slug
+    return t(
+        f"This line is the proof that `{shown}` must exist on a real call. "
+        "Read the invariant, not the syntax. "
+        "If the line vanished, name the user-visible break.",
+        f"这一行证明「{shown}」在一次真实调用里必须存在。"
+        "读不变量，不要读语法。"
+        "若这一行消失，说出用户能看见的那处损坏。",
+    )
+
+
 def path_worksheet(
     concept: Any,
     project_name: str = "",
@@ -1676,14 +1909,14 @@ def path_worksheet(
     principles = path_principles(concept, project_name)
     chip = path_evidence_chip(concept, file_texts=file_texts)
     gate = pass_gate(concept)
-    evidence_body = (
-        f"`{chip}`"
-        if chip
-        else t(
-            "This step has no source line. Pass by stating the invariant in one sentence.",
-            "这一步不靠源码行，过关看你能不能一句话讲清不变量。",
+    reading = evidence_reading(concept, chip)
+    if chip:
+        evidence_body = f"`{chip}`\n\n{reading}"
+    else:
+        evidence_body = t(
+            "This step has no source line. Pass by naming the function or failure path the invariant requires.",
+            "这一步不靠源码行，过关看你能不能说出不变量要求的那个函数或失败路径。",
         )
-    )
     parts = [
         f"# {title}",
         "",
@@ -1970,6 +2203,20 @@ def _split_markdown_sections(content: str) -> tuple[str, list[tuple[str, str]]]:
     return lead, sections
 
 
+_PATH_PRINCIPLE_MARKERS = (
+    "若这不成立",
+    "If this were false",
+    "不要把这当成",
+    "This is not “",
+    "This is not \"",
+)
+
+
+def _is_path_principle_body(body: str) -> bool:
+    text = body or ""
+    return any(marker in text for marker in _PATH_PRINCIPLE_MARKERS)
+
+
 def _heading_bucket(title: str) -> str | None:
     stripped = title.strip()
     if stripped in _HOMEWORK_HEADINGS or stripped in _RELATED_HEADINGS:
@@ -2108,6 +2355,10 @@ def upgrade_legacy_concept_markdown(
         chip_symbols.extend(extra_symbols)
         bucket = _heading_bucket(heading)
         if bucket == "drop":
+            continue
+        if heading.strip() in {"先回到原理", "Back to first principles"} and _is_path_principle_body(
+            body
+        ):
             continue
         if bucket is None:
             grouped["other"].append(f"## {heading}\n\n{body.strip()}".strip())

@@ -33,6 +33,7 @@ from recallstack.learning.learning_contract import (
     drop_duplicate_entry_slug,
     fill_wiki_key_type_lines,
     is_filler_slug_title,
+    is_shallow_path_leaf,
     is_web_filler_path_slug,
     pass_gate,
     path_evidence_chip,
@@ -289,6 +290,8 @@ def path_out(
         if is_web_filler_path_slug(slug, wiki_id) or (
             is_generic_web_slug(slug) and not (wiki_id or "").startswith("topics/")
         ):
+            continue
+        if is_shallow_path_leaf(slug):
             continue
         candidates.append((path_rank(slug), slug or "", n, concept))
     selected_slugs = {item[1] for item in candidates}
