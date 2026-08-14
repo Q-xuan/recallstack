@@ -1331,6 +1331,46 @@ def test_symbol_absent_from_store_keeps_existing_ref_not_invented_file():
     assert "agent.rs" in runtime
 
 
+def test_agent_runtime_uses_lifecycle_rs_not_encrypt_script():
+    """No runtime.rs; lifecycle lib.rs + encrypt_templates.py → lifecycle, not the script."""
+    store = {
+        "crates/codegen/xai-agent-lifecycle/src/lib.rs": (
+            "pub mod local;\npub mod send;\n\npub struct SessionHooks;\n"
+        ),
+        "crates/codegen/xai-grok-agent/scripts/encrypt_templates.py": (
+            "def xor_encrypt(data: bytes, key: bytes) -> bytes:\n    return data\n"
+        ),
+        "crates/codegen/xai-grok-agent/src/agent.rs": "pub struct Agent;\n",
+    }
+    chip = path_evidence_chip(
+        ConceptDraft(
+            slug="agent-runtime",
+            title="Agent Runtime",
+            wiki_page_id="topics/agent-runtime",
+            source_references=[
+                SourceReference(
+                    path="crates/codegen/xai-grok-agent/scripts/encrypt_templates.py",
+                    start_line=27,
+                    symbol="xor_encrypt",
+                ),
+                SourceReference(
+                    path="crates/codegen/xai-grok-agent/src/agent.rs",
+                    start_line=1,
+                ),
+            ],
+        ),
+        file_texts=store,
+    )
+    assert chip is not None
+    assert "xai-agent-lifecycle" in chip
+    assert ".rs" in chip
+    assert "runtime.rs" not in chip
+    assert "encrypt" not in chip
+    assert "scripts/" not in chip
+    assert "xor_encrypt" not in chip
+    assert chip.startswith("crates/codegen/xai-agent-lifecycle/src/lib.rs")
+
+
 def test_wiki_key_types_do_not_invent_missing_store_path():
     md = (
         "## 关键类型\n\n"

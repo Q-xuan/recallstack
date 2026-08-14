@@ -157,6 +157,15 @@ _JUNK_BASENAMES = frozenset(
 )
 _JUNK_EXTS = (".toml", ".json", ".sh", ".bash", ".zsh")
 _WEAK_SYMBOLS = frozenset({"main", "new", "run", "init", "start"})
+_CHIP_DENY_SYMBOLS = frozenset({"xor_encrypt", "xor_decrypt"})
+_LIFECYCLE_BASENAMES = (
+    "lib.rs",
+    "local.rs",
+    "send.rs",
+    "contributors.rs",
+    "runtime.rs",
+    "lifecycle.rs",
+)
 _ENTRY_SYMBOLS = ("main", "connect", "boot")
 _PTY_SLUGS = frozenset({"pty-control", "pty"})
 _SRC_EXT = (".rs", ".py", ".go")
@@ -175,7 +184,7 @@ _SLUG_DENY_NEEDLES: dict[str, tuple[str, ...]] = {
     "terminal-ui": ("ptyctl", "protoc"),
     "tui-pager": ("ptyctl", "protoc"),
     "context-assembly": ("ptyctl", "protoc"),
-    "agent-runtime": ("ptyctl", "protoc"),
+    "agent-runtime": ("ptyctl", "protoc", "/scripts/", "encrypt", "xor_encrypt"),
     "system-prompt": ("ptyctl", "protoc"),
 }
 
@@ -710,7 +719,17 @@ def _is_dummy_symbol(name: str) -> bool:
         return True
     if n.endswith((".rs", ".py", ".ts", ".js", ".go", ".toml", ".md")):
         return True
-    return n.lower() in {"lib.rs", "main.rs", "mod.rs", "src", "crates", "packages", "apps", "root"}
+    return n.lower() in {
+        "lib.rs",
+        "main.rs",
+        "mod.rs",
+        "src",
+        "crates",
+        "packages",
+        "apps",
+        "root",
+        *_CHIP_DENY_SYMBOLS,
+    }
 
 
 def _source_refs_of(concept: Any) -> list[SourceReference]:
@@ -808,6 +827,10 @@ def is_junk_evidence_path(path: str, *, slug: str = "") -> bool:
         return True
     wrapped = f"/{low}/"
     if "/examples/" in wrapped or "/example/" in wrapped or "/fixtures/" in wrapped:
+        return True
+    if "/scripts/" in wrapped:
+        return True
+    if "encrypt" in name or name.startswith("xor_"):
         return True
     return False
 
@@ -1135,6 +1158,47 @@ def _pick_symbol_in_store(
     return path, line
 
 
+def _is_lifecycle_rs(path: str) -> bool:
+    low = (path or "").replace("\\", "/").lower()
+    return "xai-agent-lifecycle" in low and low.endswith(".rs")
+
+
+def _pick_lifecycle_crate(
+    store: dict[str, str],
+    slug: str,
+) -> tuple[str, int, str] | None:
+    """Best existing ``xai-agent-lifecycle/**/*.rs``. Never invent ``runtime.rs``."""
+    hits: list[tuple[int, str, int, str]] = []
+    for path, text in store.items():
+        norm = path.replace("\\", "/")
+        if not _is_lifecycle_rs(norm):
+            continue
+        if is_junk_evidence_path(norm, slug=slug) or _blocked_for_slug(norm, slug):
+            continue
+        if not _is_production_src(norm, slug=slug):
+            continue
+        name = norm.rsplit("/", 1)[-1].lower()
+        score = 50
+        if "/src/" in f"/{norm.lower()}/":
+            score += 10
+        for i, pref in enumerate(_LIFECYCLE_BASENAMES):
+            if name == pref or (pref == "contributors.rs" and "contributors" in norm.lower()):
+                score += 40 - min(i, 10) * 3
+                break
+        line = line_of_symbol_in_text(text, "AgentRuntime")
+        emit = "AgentRuntime" if line else ""
+        if not line:
+            line, emit = _first_definition_line(text)
+            if _is_dummy_symbol(emit):
+                line, emit = 0, ""
+        hits.append((score, norm, line, emit))
+    if not hits:
+        return None
+    hits.sort(key=lambda item: (-item[0], item[1]))
+    _score, path, line, emit = hits[0]
+    return path, line, emit
+
+
 def _best_store_ref(
     refs: list[SourceReference],
     slug: str,
@@ -1151,9 +1215,11 @@ def _best_store_ref(
         ref_sym = (getattr(ref, "symbol", None) or "").strip()
         line = line_of_symbol_in_text(text, symbol) if symbol else 0
         emit_sym = symbol if line else ""
-        if not line and ref_sym:
+        if not line and ref_sym and not _is_dummy_symbol(ref_sym):
             line = line_of_symbol_in_text(text, ref_sym)
             emit_sym = ref_sym if line else ""
+        if _is_dummy_symbol(emit_sym):
+            line, emit_sym = 0, ""
         score = 50 if key.endswith(_SRC_EXT) else 10
         score += _prefer_score(key, slug)
         if line:
@@ -1207,6 +1273,8 @@ def _candidate_paths(
                 continue
             crate = _crate_dir(norm)
             if crate and crate in crates and norm.endswith(_SRC_EXT):
+                add(norm)
+            if slug == "agent-runtime" and _is_lifecycle_rs(norm):
                 add(norm)
         for fallback in _FALLBACK_FILES.get(slug, ()):
             add(fallback)
@@ -1376,6 +1444,12 @@ def path_evidence_chip(
             slug,
             len(store),
         )
+        if slug == "agent-runtime":
+            life = _pick_lifecycle_crate(store, slug)
+            if life:
+                chip = _emit_store_chip(life[0], life[1], life[2], store)
+                if chip:
+                    return chip
         ref_hit = _best_store_ref(refs, slug, store, symbol)
         if ref_hit:
             return _format_path_chip(ref_hit[0], ref_hit[1], ref_hit[2])
