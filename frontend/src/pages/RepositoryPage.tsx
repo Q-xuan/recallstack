@@ -6,6 +6,7 @@ import AskPanel from "../components/AskPanel";
 import CommandPalette from "../components/CommandPalette";
 import ConceptPracticePanel from "../components/ConceptPracticePanel";
 import FolderPicker from "../components/FolderPicker";
+import ScanHeaderProgress from "../components/ScanHeaderProgress";
 import SourcePeek, { parseRef } from "../components/SourcePeek";
 import SourceRail from "../components/SourceRail";
 import TableOfContents from "../components/TableOfContents";
@@ -529,7 +530,9 @@ export default function RepositoryPage() {
   return (
     <AppShell flush>
       <div className="rs-wiki-shell">
-        <div className="rs-progress" style={{ transform: `scaleX(${progress})` }} aria-hidden />
+        {!analyzing && (
+          <div className="rs-progress" style={{ transform: `scaleX(${progress})` }} aria-hidden />
+        )}
 
         <div className="rs-wiki-topbar">
           <div className="flex items-center gap-2 min-w-0">
@@ -548,10 +551,13 @@ export default function RepositoryPage() {
               <div className="text-[14px] font-semibold tracking-tight truncate">
                 {repo?.name || t("仓库", "Repository")}
               </div>
-              <div className="text-[11px] text-[var(--rs-muted)] truncate rs-tabular">
-                {version?.commit_sha ? `${version.commit_sha.slice(0, 10)} · ` : ""}
-                {statusLabel(status, t)}
-              </div>
+              <ScanHeaderProgress
+                commitSha={version?.commit_sha}
+                status={status}
+                progressMessage={version?.progress_message}
+                createdAt={version?.created_at}
+                idleLabel={statusLabel(status, t)}
+              />
             </div>
           </div>
 

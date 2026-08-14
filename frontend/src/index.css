@@ -447,6 +447,101 @@ a {
   -webkit-backdrop-filter: saturate(180%) blur(18px);
 }
 
+.rs-scan-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rs-scan-phases {
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--rs-muted);
+  scrollbar-width: none;
+}
+
+.rs-scan-phases::-webkit-scrollbar {
+  display: none;
+}
+
+.rs-scan-hash {
+  color: var(--rs-muted);
+}
+
+.rs-scan-arrow {
+  margin: 0 0.32em;
+  color: var(--rs-muted);
+  opacity: 0.5;
+}
+
+.rs-scan-phase {
+  color: var(--rs-muted);
+  font-weight: 400;
+}
+
+.rs-scan-phase.is-now {
+  color: var(--rs-accent);
+  font-weight: 600;
+}
+
+.rs-scan-phase.is-now.is-pulse {
+  animation: rs-scan-word 1.4s ease-in-out infinite;
+}
+
+@keyframes rs-scan-word {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.42;
+  }
+}
+
+.rs-scan-elapsed {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--rs-muted);
+  opacity: 0.8;
+}
+
+.rs-scan-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--rs-line) 85%, transparent);
+}
+
+.rs-scan-bar-fill {
+  height: 100%;
+  width: 28%;
+  background: var(--rs-accent);
+  transition: width 400ms ease;
+}
+
+.rs-scan-bar.is-indeterminate .rs-scan-bar-fill {
+  width: 28%;
+  animation: rs-scan-shimmer 1.25s ease-in-out infinite;
+}
+
+@keyframes rs-scan-shimmer {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(380%);
+  }
+}
+
 /* Reading progress, pinned under the two sticky bars. */
 .rs-progress {
   position: fixed;
