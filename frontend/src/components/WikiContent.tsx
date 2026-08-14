@@ -193,7 +193,7 @@ export default function WikiContent({
               window.getSelection()?.removeAllRanges();
             }}
           >
-            {t("在 Wiki 中查找", "Search wiki for")} 「
+            {t("选中即问", "Ask about")} 「
             {toolbar.selection.length > 18
               ? `${toolbar.selection.slice(0, 18)}…`
               : toolbar.selection}

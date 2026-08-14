@@ -101,6 +101,8 @@ export default function RepositoryPage() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteSeed, setPaletteSeed] = useState<string>("");
   const [askOpen, setAskOpen] = useState(false);
+  const [askSeed, setAskSeed] = useState("");
+  const [askSeedKey, setAskSeedKey] = useState(0);
   const [progress, setProgress] = useState(0);
   const [peekRef, setPeekRef] = useState<string | null>(null);
   const articleRef = useRef<HTMLDivElement>(null);
@@ -529,7 +531,7 @@ export default function RepositoryPage() {
   // ── Immersive wiki workbench ───────────────────────────────────────────
   return (
     <AppShell flush>
-      <div className="rs-wiki-shell">
+      <div className={`rs-wiki-shell${askOpen ? " is-asking" : ""}`}>
         {!analyzing && (
           <div className="rs-progress" style={{ transform: `scaleX(${progress})` }} aria-hidden />
         )}
@@ -574,7 +576,10 @@ export default function RepositoryPage() {
             {ready && (
               <button
                 type="button"
-                onClick={() => setAskOpen(true)}
+                onClick={() => {
+                  setAskSeed("");
+                  setAskOpen(true);
+                }}
                 className="rs-btn rs-btn-secondary h-8 px-3.5 text-[12px]"
               >
                 ✦ {t("提问", "Ask")}
@@ -596,7 +601,7 @@ export default function RepositoryPage() {
 
         {error && <div className="rs-alert mx-4 mt-3">{error}</div>}
 
-        <div className="rs-wiki-body">
+        <div className={`rs-wiki-body${askOpen ? " is-asking" : ""}`}>
           <aside className="rs-wiki-sidebar">{sidebar}</aside>
 
           {navOpen && (
@@ -736,8 +741,9 @@ export default function RepositoryPage() {
                     onNavigatePage={openPage}
                     onTocChange={setToc}
                     onLookup={({ selection }) => {
-                      setPaletteSeed(selection);
-                      setPaletteOpen(true);
+                      setAskSeed(selection);
+                      setAskSeedKey((k) => k + 1);
+                      setAskOpen(true);
                     }}
                   />
 
@@ -791,6 +797,18 @@ export default function RepositoryPage() {
               <div className="rs-wiki-article text-[var(--rs-muted)]">{t("请选择左侧页面", "Pick a page on the left")}</div>
             )}
           </main>
+          {id ? (
+            <AskPanel
+              open={askOpen}
+              repositoryId={id}
+              repositoryName={wiki?.project_name || repo?.name || t("仓库", "repository")}
+              initialQuestion={askSeed}
+              questionKey={askSeedKey}
+              canAsk={ready}
+              onClose={() => setAskOpen(false)}
+              onOpenPage={openPage}
+            />
+          ) : null}
         </div>
       </div>
 
@@ -799,14 +817,6 @@ export default function RepositoryPage() {
         repositoryId={id}
         initialQuery={paletteSeed}
         onClose={() => setPaletteOpen(false)}
-        onOpenPage={openPage}
-      />
-
-      <AskPanel
-        open={askOpen}
-        repositoryId={id}
-        repositoryName={wiki?.project_name || repo?.name || t("仓库", "repository")}
-        onClose={() => setAskOpen(false)}
         onOpenPage={openPage}
       />
 

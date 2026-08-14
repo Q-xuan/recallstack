@@ -564,6 +564,14 @@ a {
   align-items: start;
 }
 
+.rs-wiki-body.is-asking {
+  grid-template-columns: 272px minmax(0, 1fr) minmax(280px, 400px);
+}
+
+.rs-wiki-shell.is-asking .rs-wiki-aside {
+  display: none;
+}
+
 /*
  * Affordances that only exist once the wiki grid collapses. Keeping the switch
  * in CSS ties the drawer, its trigger and the grid to one breakpoint — a
@@ -577,6 +585,10 @@ a {
 @media (max-width: 960px) {
   .rs-wiki-body {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rs-wiki-body.is-asking {
+    grid-template-columns: minmax(0, 1fr) minmax(240px, 42vw);
   }
 
   .rs-wiki-sidebar:not(.rs-drawer) {
@@ -2025,26 +2037,17 @@ html[lang="zh-CN"] .rs-wiki-nav-group {
   color: var(--rs-ink);
 }
 
-/* ── Ask the repository ──────────────────────────────────────────────── */
-
-.rs-ask-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  justify-content: flex-end;
-  background: rgba(0, 0, 0, 0.28);
-  backdrop-filter: blur(2px);
-}
+/* ── Ask the repository (docked column, never a dimmed modal) ───────── */
 
 .rs-ask-panel {
-  width: min(520px, 94vw);
-  height: 100%;
+  position: sticky;
+  top: calc(var(--rs-header) + var(--rs-topbar));
+  height: calc(100vh - var(--rs-header) - var(--rs-topbar));
+  min-width: 0;
   display: flex;
   flex-direction: column;
   background: var(--rs-surface);
-  border-left: 1px solid var(--rs-line-strong);
-  box-shadow: var(--rs-shadow-lg);
+  border-left: 1px solid var(--rs-line);
   animation: rs-ask-in 0.18s ease-out;
 }
 
@@ -2073,21 +2076,44 @@ html[lang="zh-CN"] .rs-wiki-nav-group {
 
 .rs-ask-hint {
   font-size: 13.5px;
-  color: var(--rs-muted);
   line-height: 1.6;
 }
 
-.rs-ask-hint ul {
+.rs-ask-hint p {
+  color: var(--rs-muted);
+}
+
+.rs-ask-suggests {
   margin-top: 10px;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-.rs-ask-hint li {
+.rs-ask-suggest {
+  display: block;
+  width: 100%;
+  text-align: left;
   padding: 8px 12px;
-  border: 1px dashed var(--rs-line-strong);
+  border: 1px solid var(--rs-line-strong);
   border-radius: 10px;
+  background: var(--rs-surface-2);
+  color: var(--rs-ink);
+  font-size: 13px;
+  line-height: 1.45;
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+}
+
+.rs-ask-suggest:hover:not(:disabled) {
+  border-color: var(--rs-accent);
+  background: var(--rs-accent-soft);
+  color: var(--rs-accent);
+}
+
+.rs-ask-suggest:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .rs-ask-turn {
