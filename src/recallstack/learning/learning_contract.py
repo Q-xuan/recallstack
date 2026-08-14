@@ -328,11 +328,11 @@ _FLOW_SLUGS = {
 
 def path_mission() -> str:
     return t(
-        "Walk the trunk first: how the process starts, how one turn runs, then the hard "
-        "turns — tool write-back, cancel, ACP vs TUI. At each step ask: if this layer "
+        "You own the trunk: how the process starts, how one turn runs, then the hard "
+        "turns — tool write-back, cancel, ACP vs TUI. You sign off each layer: if it "
         "vanished, which user-visible thing dies?",
-        "先看进程怎么进，再看一轮对话怎么转，然后看硬弯：工具写回、取消、ACP 和 TUI 两扇门。"
-        "每一步只问：这一层不存在，用户能看见的哪件事会死。",
+        "你要能指出进程怎么进、一轮怎么转，以及硬弯：工具写回、取消、ACP 和 TUI 两扇门。"
+        "每一层你签字：这一层不存在，用户能看见的哪件事会死。",
     )
 
 
@@ -401,100 +401,100 @@ def step_task_for_slug(slug: str, title: str = "") -> str:
     """Concrete action for this step. Stored on the path node as ``reason``."""
     tasks = {
         "project-goal": t(
-            "On the evidence line, point to whether the user lives in a terminal turn or in a crate list. Name which of entry / one turn / model call would make Enter produce no answer if it vanished.",
-            "对着证据那一行，指出用户被放在终端对话里还是放在 crate 清单里。说出入口、一轮循环、模型调用里少了哪一层，回车之后不会有回答。",
+            "You own this: on the evidence line, prove whether the user lives in a terminal turn or a crate list. Name which of entry / one turn / start_turn would make Enter produce no answer — then sign off.",
+            "你负责：对着证据那一行，证明用户被放在终端对话里还是 crate 清单里。说出入口、一轮循环、start_turn 里少了哪一层回车没回答，并签字。",
         ),
         "entry-and-boot": t(
-            "Point to who receives control after ACP connect, and who receives it after the TUI door. Do not answer “both are entry”.",
-            "指出 ACP 的 connect 之后控制权交给谁，TUI 那扇门又交给谁。不要回答「都是入口」。",
+            "You own this: rule out “both are entry”. Point to who receives control after connect, and who receives it after the TUI door — then sign off.",
+            "你负责：排除「都是入口」。指出 connect 之后谁接手、TUI 那扇门交给谁，并签字。",
         ),
         "application-entry": t(
-            "Open the entrypoint and name the first three calls after the process starts — not a crate name.",
-            "打开入口文件，指出进程启动后最先调用的三步（不是某个 crate 的名字）。",
+            "You own this: open the entrypoint and name the first three calls after the process starts — not a crate name — then sign off.",
+            "你负责：打开入口文件，指出进程启动后最先调用的三步（不是某个 crate 的名字），并签字。",
         ),
         "agent-loop": t(
-            "Open the evidence and point to who calls the model after start_turn (not tools first). Write that function name.",
-            "打开证据，指出谁在 start_turn 之后调模型（不是先跑工具），写出那个函数名。",
+            "You own this: open the evidence and point to who calls the model after start_turn (not tools first). Write that function name and sign off.",
+            "你负责：打开证据，指出谁在 start_turn 之后调模型（不是先跑工具）。写出那个函数名，并签字。",
         ),
         "call-flow": t(
-            "Follow one turn: name who runs between input entering the turn and the model being called.",
-            "顺着一轮对话，指出输入进 turn 之后到模型被调用之间经过谁。",
+            "You own this: follow one turn and name who runs between input entering the turn and the model being called — then sign off.",
+            "你负责：顺着一轮对话，指出输入进 turn 之后到模型被调用之间经过谁，并签字。",
         ),
         "runtime-loop": t(
-            "Open the evidence and point to who calls the model after start_turn (not tools first). Write that function name.",
-            "打开证据，指出谁在 start_turn 之后调模型（不是先跑工具），写出那个函数名。",
+            "You own this: open the evidence and point to who calls the model after start_turn (not tools first). Write that function name and sign off.",
+            "你负责：打开证据，指出谁在 start_turn 之后调模型（不是先跑工具）。写出那个函数名，并签字。",
         ),
         "tool-system": t(
-            "Point to who writes the tool result back and calls the model again after start_turn. Name the function, not “the tool layer”.",
-            "指出 start_turn 之后谁把 tool 结果写回再调模型。写出函数名，不要说「工具层」。",
+            "You own this: point to who writes the tool result back and calls the model again after start_turn. Name the function — not “the tool layer” — and sign off.",
+            "你负责：指出 start_turn 之后谁把 tool 结果写回再调模型。写出函数名，不要说「工具层」，并签字。",
         ),
         "terminal-ui": t(
-            "Open Pager and point to which buffer streaming model output is written into. Name the field or function, not “the TUI”.",
-            "打开 Pager，指出模型流式输出时字写进哪一块缓冲区。写出字段或函数名，不要说「界面」。",
+            "You own this: open Pager and point to which buffer streaming output is written into. Name the field or function and sign off.",
+            "你负责：打开 Pager，指出模型流式输出时字写进哪一块缓冲区。写出字段或函数名，并签字。",
         ),
         "tui-pager": t(
-            "Open Pager and point to which buffer streaming model output is written into. Name the field or function, not “the TUI”.",
-            "打开 Pager，指出模型流式输出时字写进哪一块缓冲区。写出字段或函数名，不要说「界面」。",
+            "You own this: open Pager and point to which buffer streaming output is written into. Name the field or function and sign off.",
+            "你负责：打开 Pager，指出模型流式输出时字写进哪一块缓冲区。写出字段或函数名，并签字。",
         ),
         "context-assembly": t(
-            "Open replace_or_insert_system_head and say whether the system head is written at the window head or appended after the user message.",
-            "打开 replace_or_insert_system_head，指出系统头是写进窗口头还是拼在用户消息后面。",
+            "You own this: open replace_or_insert_system_head and prove whether the system head is written at the window head or appended after the user — then sign off.",
+            "你负责：打开 replace_or_insert_system_head，证明系统头是写进窗口头还是拼在用户消息后面，并签字。",
         ),
         "agent-runtime": t(
-            "Point to who stops an in-flight model call when the user cancels a turn. If that stop never fires, say what the terminal still shows.",
-            "指出用户取消一轮时谁把还在飞的模型调用停掉。若停不掉，说出终端上会留下什么。",
+            "You own this: point to who stops an in-flight model call when the user cancels. If that stop never fires, name what the terminal still shows — then sign off.",
+            "你负责：指出用户取消一轮时谁把还在飞的模型调用停掉。若停不掉，说出终端上会留下什么，并签字。",
         ),
         "session-lifecycle": t(
-            "Point to who stops an in-flight model call when the user cancels a turn. If that stop never fires, say what the terminal still shows.",
-            "指出用户取消一轮时谁把还在飞的模型调用停掉。若停不掉，说出终端上会留下什么。",
+            "You own this: point to who stops an in-flight model call when the user cancels. If that stop never fires, name what the terminal still shows — then sign off.",
+            "你负责：指出用户取消一轮时谁把还在飞的模型调用停掉。若停不掉，说出终端上会留下什么，并签字。",
         ),
         "acp-protocol": t(
-            "Point to whether ACP connect and the TUI entry are two doors or one road. After connect, who holds the session?",
-            "指出 ACP 的 connect 和 TUI 入口是两扇门还是同一条路。connect 之后谁持有会话。",
+            "You own this: prove whether ACP connect and the TUI entry are two doors or one road. After connect, who holds the session? Sign off.",
+            "你负责：证明 ACP 的 connect 和 TUI 入口是两扇门还是同一条路。connect 之后谁持有会话，并签字。",
         ),
         "configuration": t(
-            "Find where config enters runtime and name one behaviour it changes.",
-            "找出配置从哪进入运行时，并指出它改变的一个行为。",
+            "You own this: find where config enters runtime and name one behaviour it changes — then sign off.",
+            "你负责：找出配置从哪进入运行时，指出它改变的一个行为，并签字。",
         ),
         "request-routing": t(
-            "Trace one request from the outside in: which file receives it, which function handles it.",
-            "顺着一个外部请求往里追：哪个文件接住它，哪个函数处理它。",
+            "You own this: trace one request and name the file that receives it and the function that handles it — then sign off.",
+            "你负责：顺着一个外部请求往里追，指出哪个文件接住它、哪个函数处理它，并签字。",
         ),
         "authentication": t(
-            "Point to where identity is checked, and what happens if it fails.",
-            "指出身份在哪被检查，以及失败时会发生什么。",
+            "You own this: point to where identity is checked and what happens if it fails — then sign off.",
+            "你负责：指出身份在哪被检查，以及失败时会发生什么，并签字。",
         ),
         "data-persistence": t(
-            "Name the object that is written or read, and the function that does it.",
-            "说出被写入或读出的对象，以及做这件事的函数。",
+            "You own this: name the object that is written or read, and the function that does it — then sign off.",
+            "你负责：说出被写入或读出的对象，以及做这件事的函数，并签字。",
         ),
         "caching": t(
-            "Say what is cached and what becomes wrong if the cache is stale.",
-            "说出缓存了什么，以及缓存过期时会错在哪。",
+            "You own this: say what is cached and what becomes wrong if the cache is stale — then sign off.",
+            "你负责：说出缓存了什么，以及缓存过期时会错在哪，并签字。",
         ),
         "error-handling": t(
-            "Name one failure path and where it is caught or returned.",
-            "指出一条失败路径，以及它在哪里被接住或返回。",
+            "You own this: name one failure path and where it is caught or returned — then sign off.",
+            "你负责：指出一条失败路径，以及它在哪里被接住或返回，并签字。",
         ),
         "background-tasks": t(
-            "Find one async/job path and say what side effect it performs.",
-            "找出一条异步/任务路径，说出它产生的副作用。",
+            "You own this: find one async/job path and say what side effect it performs — then sign off.",
+            "你负责：找出一条异步/任务路径，说出它产生的副作用，并签字。",
         ),
         "testing-structure": t(
-            "Open one test and say which behaviour it is locking down.",
-            "打开一个测试，说出它锁住的是哪段行为。",
+            "You own this: open one test and say which behaviour it is locking down — then sign off.",
+            "你负责：打开一个测试，说出它锁住的是哪段行为，并签字。",
         ),
         "module-boundaries": t(
-            "Name two modules and the one responsibility that must not leak across them.",
-            "指出两个模块，以及绝不能漏过去的那条职责边界。",
+            "You own this: name two modules and the one responsibility that must not leak across them — then sign off.",
+            "你负责：指出两个模块，以及绝不能漏过去的那条职责边界，并签字。",
         ),
     }
     if slug in tasks:
         return tasks[slug]
     shown = title or slug
     return t(
-        f"Open the evidence and point to the step `{shown}` must perform on a real call — not a directory name.",
-        f"打开证据，指出「{shown}」在一次真实调用里必须发生的那一步（不要用目录名回答）。",
+        f"You own this: open the evidence and point to the step `{shown}` must perform on a real call — not a directory name — then sign off.",
+        f"你负责：打开证据，指出「{shown}」在一次真实调用里必须发生的那一步（不要用目录名回答），并签字。",
     )
 
 
@@ -764,63 +764,63 @@ def pass_gate(concept: Any) -> str:
     title = getattr(concept, "title", "") or slug
     gates = {
         "project-goal": t(
-            "If start_turn is missing, can the dialogue the README claims still happen? Name the missing function. Do not summarize the product.",
-            "若没有 start_turn 这一层，README 声称的对话还能发生吗？说出缺的函数名，不要概括产品。",
+            "You sign off: if start_turn is missing, can the dialogue the README claims still happen? Name the missing function. Do not summarize the product.",
+            "你签字：若没有 start_turn 这一层，README 声称的对话还能发生吗？说出缺的函数名，不要概括产品。",
         ),
         "entry-and-boot": t(
-            "After connect returns, which type holds session state? If connect fails, does the TUI door open by itself? Name the type or function.",
-            "connect 返回之后，会话状态落在哪个类型上？若 connect 失败，TUI 那扇门还会不会自己开？说出类型或函数名。",
+            "You sign off: after connect returns, which type holds session state? If connect fails, does the TUI door open by itself? Name the type or function.",
+            "你签字：connect 返回之后，会话状态落在哪个类型上？若 connect 失败，TUI 那扇门还会不会自己开？说出类型或函数名。",
         ),
         "application-entry": t(
-            "If the entry file were empty, what would fail to start? Name that object.",
-            "如果入口文件是空的，什么将无法启动？说出那个对象。",
+            "You sign off: if the entry file were empty, what would fail to start? Name that object.",
+            "你签字：如果入口文件是空的，什么将无法启动？说出那个对象。",
         ),
         "agent-loop": t(
-            "If you swap “call the model” and “run tools”, what is the first function after start_turn? Name the real function, and name the failure the user would see after the swap.",
-            "把「调模型」和「跑工具」对调之后，start_turn 后面第一个函数名会是什么？指出真实顺序里那个函数，并说对调后用户会看到哪条失败路径。",
+            "You sign off: if you swap “call the model” and “run tools”, what is the first function after start_turn? Name the real function and the failure path the user would see.",
+            "你签字：把「调模型」和「跑工具」对调之后，start_turn 后面第一个函数名是什么？指出真实顺序里那个函数，并写出对调后用户看到的失败路径。",
         ),
         "call-flow": t(
-            "If you swap “call the model” and “run tools”, what is the first function after start_turn? Name the real function and the failure path after the swap.",
-            "把「调模型」和「跑工具」对调之后，start_turn 后面第一个函数名会是什么？指出真实顺序里那个函数，并说对调后的失败路径。",
+            "You sign off: if you swap “call the model” and “run tools”, what is the first function after start_turn? Name the real function and the failure path.",
+            "你签字：把「调模型」和「跑工具」对调之后，start_turn 后面第一个函数名是什么？指出真实顺序里那个函数，并写出对调后的失败路径。",
         ),
         "runtime-loop": t(
-            "If you swap “call the model” and “run tools”, what is the first function after start_turn? Name the real function and the failure path after the swap.",
-            "把「调模型」和「跑工具」对调之后，start_turn 后面第一个函数名会是什么？指出真实顺序里那个函数，并说对调后的失败路径。",
+            "You sign off: if you swap “call the model” and “run tools”, what is the first function after start_turn? Name the real function and the failure path.",
+            "你签字：把「调模型」和「跑工具」对调之后，start_turn 后面第一个函数名是什么？指出真实顺序里那个函数，并写出对调后的失败路径。",
         ),
         "tool-system": t(
-            "After a tool returns, which function writes the result into context and calls the model again? If write-back fails, which state does this turn stop in?",
-            "工具返回之后，哪个函数把结果写进上下文并再次调用模型？若写回失败，这一轮停在什么状态？",
+            "You sign off: after a tool returns, which function writes the result into context and calls the model again? If write-back fails, which state does this turn stop in?",
+            "你签字：工具返回之后，哪个函数把结果写进上下文并再次调用模型？若写回失败，这一轮停在什么状态？",
         ),
         "terminal-ui": t(
-            "When a streaming delta arrives, is the whole page redrawn or is it written into the pager? Name the function or field.",
-            "流式 delta 到达时，是整页重绘还是写入 pager？说出函数名或字段名。",
+            "You sign off: when a streaming delta arrives, is the whole page redrawn or is it written into the pager? Name the function or field.",
+            "你签字：流式 delta 到达时，是整页重绘还是写入 pager？说出函数名或字段名。",
         ),
         "tui-pager": t(
-            "When a streaming delta arrives, is the whole page redrawn or is it written into the pager? Name the function or field.",
-            "流式 delta 到达时，是整页重绘还是写入 pager？说出函数名或字段名。",
+            "You sign off: when a streaming delta arrives, is the whole page redrawn or is it written into the pager? Name the function or field.",
+            "你签字：流式 delta 到达时，是整页重绘还是写入 pager？说出函数名或字段名。",
         ),
         "context-assembly": t(
-            "When the system head updates, is the old head replaced or appended? Name the function.",
-            "系统头更新时，旧头是被替换还是追加？指出函数名。",
+            "You sign off: when the system head updates, is the old head replaced or appended? Name the function.",
+            "你签字：系统头更新时，旧头是被替换还是追加？指出函数名。",
         ),
         "agent-runtime": t(
-            "On cancel, which function or state aborts the in-flight call? If that signal is lost, which failure does the user see?",
-            "取消时哪个函数或状态把 in-flight 调用打断？若那个信号丢失，用户会看到哪条失败路径？",
+            "You sign off: on cancel, which function or state aborts the in-flight call? If that signal is lost, which failure does the user see?",
+            "你签字：取消时哪个函数或状态把 in-flight 调用打断？若那个信号丢失，用户会看到哪条失败路径？",
         ),
         "session-lifecycle": t(
-            "On cancel, which function or state aborts the in-flight call? If that signal is lost, which failure does the user see?",
-            "取消时哪个函数或状态把 in-flight 调用打断？若那个信号丢失，用户会看到哪条失败路径？",
+            "You sign off: on cancel, which function or state aborts the in-flight call? If that signal is lost, which failure does the user see?",
+            "你签字：取消时哪个函数或状态把 in-flight 调用打断？若那个信号丢失，用户会看到哪条失败路径？",
         ),
         "acp-protocol": t(
-            "After connect, which type holds the channel? If that object is empty, which failure path does the next message take?",
-            "connect 之后哪个类型持有通道？若这个对象是空的，下一帧消息走哪条失败路径？",
+            "You sign off: after connect, which type holds the channel? If that object is empty, which failure path does the next message take?",
+            "你签字：connect 之后哪个类型持有通道？若这个对象是空的，下一帧消息走哪条失败路径？",
         ),
     }
     if slug in gates:
         return gates[slug]
     return t(
-        f"Point to the one path:line on this step that proves `{title}` must exist, and say what breaks if that line is gone.",
-        f"指出本步那一处 path:line，证明「{title}」必须存在，并说出删掉那一行会坏什么。",
+        f"You sign off: point to the one path:line that proves `{title}` must exist, and name what breaks if that line is gone.",
+        f"你签字：指出本步那一处 path:line，证明「{title}」必须存在，并说出删掉那一行会坏什么。",
     )
 
 
@@ -1729,11 +1729,11 @@ def fill_wiki_key_type_lines(content: str, file_texts: dict[str, str] | None) ->
 
 
 _ASK_QUESTION_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
-    (("entry-and-boot", "application-entry", "入口", "boot", "connect"), "这个项目的入口在哪，connect 之后谁接手？"),
-    (("agent-loop", "start_turn", "agent loop", "一轮"), "一轮对话里 start_turn 之后谁调模型？"),
-    (("acp", "protocol", "协议"), "ACP 会话是在哪建立的，connect 做了什么？"),
-    (("pager", "terminal-ui", "tui-pager", "终端"), "Pager 把模型流式输出写进哪块缓冲区？"),
-    (("tool-system", "tool_bridge", "toolbridge", "工具"), "模型返回 tool call 之后谁按名字执行？"),
+    (("entry-and-boot", "application-entry", "入口", "boot", "connect"), "你要能指出这个项目的入口在哪，connect 之后谁接手？"),
+    (("agent-loop", "start_turn", "agent loop", "一轮"), "你要能指出一轮里 start_turn 之后谁调模型？"),
+    (("acp", "protocol", "协议"), "你要能指出 ACP 会话是在哪建立的，connect 做了什么？"),
+    (("pager", "terminal-ui", "tui-pager", "终端"), "你要能指出 Pager 把模型流式输出写进哪块缓冲区？"),
+    (("tool-system", "tool_bridge", "toolbridge", "工具"), "你要能指出模型返回 tool call 之后谁按名字执行？"),
 )
 _ASK_HOST_LEFTOVERS = ("复习调度", "复训调度", "FSRS", "依赖图是怎么构建")
 
@@ -1769,7 +1769,7 @@ def suggested_ask_questions(pages: list[Any] | None) -> list[str]:
             title = (title or "").strip()
             if not title or title in {"概述", "Overview", "架构概览", "Architecture"}:
                 continue
-            q = f"「{title}」在链路里承担什么？"
+            q = f"你要能指出「{title}」在链路里承担什么，并签字？"
             if q not in out:
                 out.append(q)
             if len(out) >= 3:
@@ -1863,7 +1863,7 @@ def evidence_reading(concept: Any, chip: str | None = None) -> str:
             "This line is where cancel or session ownership lives, not a struct tourist stop. "
             "If it does not reach an in-flight model call, cancel is a label and tokens keep arriving. "
             "Name the stop, not the crate.",
-            "这一行是取消或会话所有权所在，不是参观某个结构体。"
+            "这一行是取消或会话所有权所在，不是路过某个结构体。"
             "若它到不了还在飞的模型调用，取消只是一个词，token 还在走。"
             "要说停在哪，不要说 crate。",
         ),
@@ -1910,12 +1910,16 @@ def path_worksheet(
     chip = path_evidence_chip(concept, file_texts=file_texts)
     gate = pass_gate(concept)
     reading = evidence_reading(concept, chip)
+    judge = t(
+        "You decide whether this line is enough. Open it; annotations help you decide, they do not sign off for you.",
+        "你来判断这一行是否够。点开它，标注只帮你决定，不替你签字。",
+    )
     if chip:
-        evidence_body = f"`{chip}`\n\n{reading}"
+        evidence_body = f"`{chip}`\n\n{judge}\n\n{reading}"
     else:
         evidence_body = t(
-            "This step has no source line. Pass by naming the function or failure path the invariant requires.",
-            "这一步不靠源码行，过关看你能不能说出不变量要求的那个函数或失败路径。",
+            "This step has no source line. You still sign off by naming the function or failure path the invariant requires.",
+            "这一步不靠源码行。你仍然要签字：说出不变量要求的那个函数或失败路径。",
         )
     parts = [
         f"# {title}",

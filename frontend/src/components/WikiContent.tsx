@@ -193,7 +193,7 @@ export default function WikiContent({
               window.getSelection()?.removeAllRanges();
             }}
           >
-            {t("选中即问", "Ask about")} 「
+            {t("你来问这段", "You ask about")} 「
             {toolbar.selection.length > 18
               ? `${toolbar.selection.slice(0, 18)}…`
               : toolbar.selection}

@@ -66,10 +66,16 @@ def test_path_worksheet_has_four_headings_and_one_chip(monkeypatch):
     assert "while True" in text.split("## 先回到原理", 1)[1]
     evidence = text.split("## 只看这一处证据", 1)[1].split("## 过关", 1)[0]
     assert "闸门" in evidence or "模型" in evidence
+    assert "你来判断这一行是否够" in evidence
     gate = text.split("## 过关", 1)[1]
     assert "函数" in gate
+    assert "你签字" in gate
     assert "一句话概括" not in gate
     assert "离开终端循环还能不能完成它声称的事" not in gate
+    task = text.split("## 本步要你干什么", 1)[1].split("## 先回到原理", 1)[0]
+    assert "你负责" in task
+    assert "start_turn" in task
+    assert "签字" in task
 
 
 def test_path_worksheet_is_deep_not_shallow(monkeypatch):
@@ -87,6 +93,27 @@ def test_path_worksheet_is_deep_not_shallow(monkeypatch):
     assert "## 过关" not in wiki
     assert "若这不成立" not in wiki
     assert "while True" not in wiki
+    assert "您" not in text
+
+
+def test_path_owner_voice_task_and_gate_name_a_function(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    text = path_worksheet(_loop_draft())
+    task = text.split("## 本步要你干什么", 1)[1].split("## 先回到原理", 1)[0]
+    gate = text.split("## 过关", 1)[1]
+    assert "你" in task and "你" in gate
+    assert "你负责" in task
+    assert "你签字" in gate
+    assert "start_turn" in task
+    assert "start_turn" in gate
+    assert "了解模块" not in task
+    assert "请了解" not in text
+    assert "参观" not in task
+    assert "您" not in text
+    wiki = upgrade_legacy_concept_markdown(text, slug="agent-loop", title="Agent Loop")
+    assert "## 本步要你干什么" not in wiki
+    assert "## 过关" not in wiki
+    assert "你签字" not in wiki
 
 
 def test_path_rank_trunk_before_leaves():
@@ -316,12 +343,15 @@ def test_path_out_rebuilds_worksheet_on_get(monkeypatch):
     assert "caching" not in slugs
     assert "request-routing" not in slugs
     loop_node = next(n for n in out.nodes if n.concept and n.concept.slug == "agent-loop")
-    assert loop_node.reason.startswith("打开证据")
+    assert loop_node.reason.startswith("你负责")
+    assert "你" in loop_node.reason
+    assert "start_turn" in loop_node.reason
     assert "不变量" in loop_node.principles
     assert "若这不成立" in loop_node.principles
     assert "while True" in loop_node.principles
     assert loop_node.evidence_chip == "crates/tui/src/app.rs:142 start_turn"
     assert "函数" in loop_node.pass_gate
+    assert "你签字" in loop_node.pass_gate
     assert "离开终端循环还能不能完成它声称的事" not in loop_node.pass_gate
     ws = loop_node.worksheet
     assert "## 本步要你干什么" in ws
@@ -331,15 +361,18 @@ def test_path_out_rebuilds_worksheet_on_get(monkeypatch):
     assert ws.count("`crates/tui/src/app.rs:142 start_turn`") == 1
     assert "架构图" not in ws
     assert "核心子系统" not in ws
-    assert "先看进程怎么进" in out.description
+    assert "你要能指出进程怎么进" in out.description or "先看进程怎么进" in out.description
 
 
 def test_step_task_is_action_not_了解模块(monkeypatch):
     monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
     task = step_task_for_slug("agent-loop", "Agent Loop")
     assert "了解" not in task
+    assert "你负责" in task
+    assert "签字" in task
     assert "打开" in task
     assert "start_turn" in task
+    assert "您" not in task
 
 
 _APP_RS_STUCK_AT_LINE_1 = """\
@@ -1226,6 +1259,7 @@ def test_suggested_ask_questions_are_wiki_grounded_not_fsrs():
     assert len(qs) == 3
     blob = " ".join(qs)
     assert "start_turn" in blob or "connect" in blob or "Pager" in blob or "ACP" in blob
+    assert all("你要能指出" in q for q in qs)
     assert "复习调度" not in blob
     assert "复训调度" not in blob
     assert "FSRS" not in blob

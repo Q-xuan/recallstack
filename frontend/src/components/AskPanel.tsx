@@ -105,13 +105,12 @@ export default function AskPanel({
   }
 
   return (
-    <aside className="rs-ask-panel" role="complementary" aria-label={t("向仓库提问", "Ask the repository")}>
+    <aside className="rs-ask-panel" role="complementary" aria-label={t("你来问这份知识", "You ask this knowledge")}>
       <header className="rs-ask-head">
         <div className="min-w-0">
           <div className="rs-eyebrow">Ask</div>
           <div className="text-[15px] font-semibold tracking-tight truncate">
-            {t("向", "Ask")} {repositoryName}
-            {t(" 提问", "")}
+            {t("你来问", "You ask")} {repositoryName}
           </div>
         </div>
         <button type="button" className="rs-icon-btn" onClick={onClose} aria-label={t("关闭", "Close")}>
@@ -124,8 +123,8 @@ export default function AskPanel({
           <div className="rs-ask-hint">
             <p>
               {t(
-                "基于生成的 Wiki 回答问题,并给出可点击的页面引用。",
-                "Answers are grounded in the generated wiki, with clickable page citations.",
+                "Wiki 不替你做主。建议问的是你要签字的那一处，不是路过词条。",
+                "The wiki does not decide for you. Ask about the claim you must sign off — not a tour of pages.",
               )}
             </p>
             {suggestions.length > 0 && (
@@ -197,8 +196,8 @@ export default function AskPanel({
             }
           }}
           placeholder={t(
-            "问点什么…(Enter 发送,Shift+Enter 换行)",
-            "Ask anything… (Enter to send, Shift+Enter for newline)",
+            "写出你要能指出的那一处…(Enter 发送,Shift+Enter 换行)",
+            "Write the line you must be able to point to… (Enter to send, Shift+Enter for newline)",
           )}
           rows={2}
           disabled={busy || !canAsk}

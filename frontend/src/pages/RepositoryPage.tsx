@@ -591,7 +591,11 @@ export default function RepositoryPage() {
               disabled={analyzing}
               className="rs-btn rs-btn-primary h-8 px-3.5 text-[12px]"
             >
-              {analyzing ? statusLabel(status, t) : ready ? t("重新扫描", "Rescan") : t("生成 Wiki", "Build wiki")}
+              {analyzing
+                ? t("你发起的分析", "Your analysis")
+                : ready
+                  ? t("你在重扫这份知识", "You are rescanning this knowledge")
+                  : t("发起你的分析", "Start your analysis")}
             </button>
             <Link to="/reviews" className="rs-btn rs-btn-ghost h-8 px-3 text-[12px] hidden sm:flex">
               {t("复习", "Review")}
@@ -617,12 +621,14 @@ export default function RepositoryPage() {
               <div className="rs-wiki-article text-center py-24">
                 <div className="rs-hero-mark">⌘</div>
                 <h1 className="rs-title text-[28px] font-semibold tracking-tight mt-5">
-                  {analyzing ? t("正在生成 Wiki", "Building the wiki") : t("生成这个仓库的知识 Wiki", "Build a knowledge wiki for this repository")}
+                  {analyzing
+                    ? t("你发起的分析正在跑", "The analysis you started is running")
+                    : t("你还没发起这份知识的分析", "You have not started this knowledge yet")}
                 </h1>
                 <p className="mt-3 text-[15px] text-[var(--rs-ink-2)] max-w-md mx-auto">
                   {t(
-                    "扫描依赖图、入口与模块，生成 Overview、Architecture、Reading Guide 与词条页，每条结论都带源码引用。",
-                    "Scans the dependency graph, entry points and modules to build Overview, Architecture, Reading Guide and concept pages, with source citations throughout.",
+                    "你发起之后，扫描依赖图、入口与模块，生成 Overview、Architecture、Reading Guide 与词条页。相位看得见，产品不替你做主。",
+                    "After you start it, the scan walks the graph, entry points and modules. Phases stay visible. The product does not decide for you.",
                   )}
                 </p>
                 {analyzing ? (
@@ -635,13 +641,13 @@ export default function RepositoryPage() {
                     onClick={handleAnalyze}
                     className="rs-btn rs-btn-primary mt-6 h-11 px-6"
                   >
-                    {t("开始分析", "Start analysis")}
+                    {t("发起你的分析", "Start your analysis")}
                   </button>
                 )}
               </div>
             ) : mode === "learn" && path && !learnNodes.some((n) => pathPageId(n) === currentPage?.id) ? (
               <div className="rs-wiki-article">
-                <div className="rs-chip rs-chip-accent mb-4">{t("辅助 · 学习路径", "Assistive · learning path")}</div>
+                <div className="rs-chip rs-chip-accent mb-4">{t("你要签字的路径", "The path you sign off")}</div>
                 <h1 className="rs-title text-[34px] font-semibold tracking-tight">{path.title}</h1>
                 <p className="mt-3 text-[16px] leading-relaxed text-[var(--rs-ink-2)] max-w-2xl">
                   {t(PATH_MISSION[0], PATH_MISSION[1])}
@@ -671,7 +677,7 @@ export default function RepositoryPage() {
                               {c?.title || n.concept_id}
                             </button>
                             <p className="mt-1.5 text-[13px] font-medium text-[var(--rs-accent)]">
-                              {t("本步任务", "This step")}
+                              {t("你这周的职责", "Your job this week")}
                             </p>
                             <p className="mt-1 text-[14px] leading-relaxed text-[var(--rs-ink-2)]">
                               {task || n.reason}
@@ -682,7 +688,7 @@ export default function RepositoryPage() {
                                 onClick={() => openPage(pageId)}
                                 className="rs-btn rs-btn-secondary h-8 px-3 text-[12px] mt-3"
                               >
-                                {t("开始这一步 →", "Start this step →")}
+                                {t("去签字这一步 →", "Go sign this step →")}
                               </button>
                             )}
                           </div>
@@ -717,7 +723,7 @@ export default function RepositoryPage() {
                   {mode === "learn" && currentStepTask && (
                     <div className="mb-6 rounded-[12px] border border-[var(--rs-line)] bg-[var(--rs-surface-2)] px-4 py-3">
                       <div className="text-[12px] font-medium text-[var(--rs-accent)]">
-                        {t("本步任务", "This step")}
+                        {t("你这周的职责", "Your job this week")}
                       </div>
                       <p className="mt-1 text-[14px] leading-relaxed text-[var(--rs-ink-2)]">
                         {currentStepTask}

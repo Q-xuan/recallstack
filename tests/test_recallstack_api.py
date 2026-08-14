@@ -335,7 +335,12 @@ def test_learning_path_api_omits_filler_and_states_mission(client: TestClient, m
     path = client.get(f"/api/recallstack/repositories/{repo_id}/learning-path")
     assert path.status_code == 200, path.text
     body = path.json()
-    assert "先看进程怎么进" in body["description"] or "Walk the trunk" in body["description"]
+    assert (
+        "你要能指出进程怎么进" in body["description"]
+        or "先看进程怎么进" in body["description"]
+        or "Walk the trunk" in body["description"]
+        or "You own the trunk" in body["description"]
+    )
     slugs = [n["concept"]["slug"] for n in body["nodes"] if n.get("concept")]
     titles = [n["concept"]["title"] for n in body["nodes"] if n.get("concept")]
     assert all(not s.startswith(("module-", "focus-", "file-")) for s in slugs)

@@ -106,7 +106,7 @@ export default function ScanHeaderProgress({
                     ? ` ${parsed.current}/${parsed.total}`
                     : ""
                 }`
-              : t("扫描中", "Scanning")
+              : t("你发起的分析", "Your analysis")
           }
         >
           <div
