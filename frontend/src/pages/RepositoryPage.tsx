@@ -221,15 +221,18 @@ export default function RepositoryPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  async function handleCreate(e: FormEvent) {
-    e.preventDefault();
-    if (!sourceLocation.trim()) return;
+  async function createFromLocation(
+    location: string,
+    type: "local" | "github" = sourceType,
+  ) {
+    const loc = location.trim();
+    if (!loc) return;
     setLoading(true);
     setError(null);
     try {
       const created = await recallstackApi.createRepository({
-        source_type: sourceType,
-        source_location: sourceLocation.trim(),
+        source_type: type,
+        source_location: loc,
       });
       await refreshList();
       navigate(`/repositories/${created.id}`);
@@ -238,6 +241,11 @@ export default function RepositoryPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleCreate(e: FormEvent) {
+    e.preventDefault();
+    await createFromLocation(sourceLocation);
   }
 
   async function handleAnalyze() {
@@ -440,7 +448,9 @@ export default function RepositoryPage() {
           onClose={() => setPickerOpen(false)}
           onSelect={(p) => {
             setSourceLocation(p);
+            setSourceType("local");
             setPickerOpen(false);
+            void createFromLocation(p, "local");
           }}
         />
       </AppShell>

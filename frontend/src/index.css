@@ -1950,6 +1950,9 @@ html[lang="zh-CN"] .rs-wiki-nav-group {
 .rs-modal {
   width: 100%;
   max-width: 640px;
+  max-height: min(720px, calc(100vh - 32px));
+  display: flex;
+  flex-direction: column;
   border-radius: 18px;
   border: 1px solid var(--rs-line-strong);
   background: var(--rs-surface);
@@ -1964,6 +1967,7 @@ html[lang="zh-CN"] .rs-wiki-nav-group {
   gap: 12px;
   padding: 16px 20px;
   border-bottom: 1px solid var(--rs-line);
+  flex-shrink: 0;
 }
 
 .rs-modal-title {
@@ -1986,12 +1990,14 @@ html[lang="zh-CN"] .rs-wiki-nav-group {
   gap: 8px;
   padding: 12px 20px;
   border-bottom: 1px solid var(--rs-line);
+  flex-shrink: 0;
 }
 
 .rs-modal-path {
   padding: 12px 20px;
   background: var(--rs-surface-2);
   border-bottom: 1px solid var(--rs-line);
+  flex-shrink: 0;
 }
 
 .rs-modal-pathvalue {
@@ -2002,18 +2008,24 @@ html[lang="zh-CN"] .rs-wiki-nav-group {
 }
 
 .rs-modal-body {
-  max-height: 320px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   padding: 8px;
 }
 
 .rs-modal-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding: 14px 20px;
   border-top: 1px solid var(--rs-line);
+  background: var(--rs-surface);
+  flex-shrink: 0;
 }
 
 .rs-fs-row {

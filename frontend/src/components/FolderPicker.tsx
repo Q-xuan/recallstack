@@ -99,9 +99,13 @@ export default function FolderPicker({ open, onClose, onSelect, initialPath }: P
             dirs.map((d: FsEntry) => (
               <button
                 key={d.path}
+                type="button"
                 className="rs-fs-row"
                 onClick={() => load(d.path)}
-                onDoubleClick={() => load(d.path)}
+                onDoubleClick={(e) => {
+                  e.preventDefault();
+                  onSelect(d.path);
+                }}
               >
                 <span aria-hidden>📁</span>
                 <span className="truncate">{d.name}</span>
@@ -136,7 +140,7 @@ export default function FolderPicker({ open, onClose, onSelect, initialPath }: P
               onClick={() => current && onSelect(current)}
               className="rs-btn rs-btn-primary"
             >
-              {t("选择此文件夹", "Choose this folder")}
+              {t("导入该文件夹", "Import this folder")}
             </button>
           </div>
         </div>
