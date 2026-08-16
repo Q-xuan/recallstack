@@ -10,8 +10,10 @@ dead feature.
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
+from recallstack.learning.i18n import t
 from recallstack.learning.wiki_search import SearchDocument, search
 
 logger = logging.getLogger(__name__)
@@ -72,8 +74,17 @@ def _context_block(sources: list[dict[str, Any]]) -> str:
 def fallback_answer(question: str, sources: list[dict[str, Any]]) -> str:
     """Extractive answer when no LLM is configured: point at the best pages."""
     if not sources:
-        return "在 Wiki 中没有找到与这个问题相关的页面。换个关键词试试,或先重新生成 Wiki。"
-    lines = ["没有配置 LLM,以下是与问题最相关的 Wiki 页面:", ""]
+        return t(
+            "No wiki page matched this question. Try different keywords, or regenerate the wiki.",
+            "在 Wiki 中没有找到与这个问题相关的页面。换个关键词试试,或先重新生成 Wiki。",
+        )
+    lines = [
+        t(
+            "No LLM is configured. These wiki pages are the closest match:",
+            "没有配置 LLM,以下是与问题最相关的 Wiki 页面:",
+        ),
+        "",
+    ]
     for src in sources:
         snippet = f" — {src['snippet']}" if src.get("snippet") else ""
         lines.append(f"- [{src['title']}]({src['page_id']}){snippet}")
@@ -106,6 +117,24 @@ async def answer_question(
     if llm is None or not sources:
         return {"answer": fallback_answer(question, slim), "engine": "search", "sources": slim}
 
+    messages = _qa_messages(project_name, sources, question, history)
+    try:
+        text = await llm.complete(messages, temperature=0.2, max_tokens=ANSWER_MAX_TOKENS)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("wiki QA LLM call failed: %s", type(exc).__name__)
+        text = ""
+    # The client reports transport-level failures inline rather than raising.
+    if not text or text.startswith("[LLM Error"):
+        return {"answer": fallback_answer(question, slim), "engine": "search", "sources": slim}
+    return {"answer": text, "engine": "llm", "sources": slim}
+
+
+def _qa_messages(
+    project_name: str,
+    sources: list[dict[str, Any]],
+    question: str,
+    history: list[dict[str, str]],
+) -> list[dict[str, str]]:
     messages = [{"role": "system", "content": _SYSTEM_PROMPT.format(project=project_name)}]
     for turn in history:
         messages.append({"role": "user", "content": turn["question"]})
@@ -116,12 +145,56 @@ async def answer_question(
             "content": f"{_context_block(sources)}\n\nQuestion: {question}",
         }
     )
+    return messages
+
+
+async def stream_answer_question(
+    question: str,
+    docs: list[SearchDocument],
+    *,
+    project_name: str,
+    llm: Any | None = None,
+    history: list[dict[str, str]] | None = None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Yield SSE payloads: meta, content chunks, optional fallback, then done."""
+    history = (history or [])[-HISTORY_TURNS:]
+    retrieval_query = question
+    if history:
+        retrieval_query = f"{history[-1]['question']} {question}"
+    sources = select_context(docs, retrieval_query)
+    slim = [{k: s[k] for k in ("page_id", "title", "kind", "snippet")} for s in sources]
+
+    if llm is None or not sources:
+        yield {"type": "meta", "engine": "search", "sources": slim}
+        yield {"type": "content", "content": fallback_answer(question, slim)}
+        yield {"type": "done"}
+        return
+
+    yield {"type": "meta", "engine": "llm", "sources": slim}
+    messages = _qa_messages(project_name, sources, question, history)
     try:
-        text = await llm.complete(messages, temperature=0.2, max_tokens=ANSWER_MAX_TOKENS)
+        stream = llm.stream(messages, temperature=0.2, max_tokens=ANSWER_MAX_TOKENS)
+        async for chunk in stream:
+            if not chunk:
+                continue
+            if str(chunk).startswith("[LLM Error"):
+                yield {
+                    "type": "fallback",
+                    "engine": "search",
+                    "content": fallback_answer(question, slim),
+                    "sources": slim,
+                }
+                yield {"type": "done"}
+                return
+            yield {"type": "content", "content": chunk}
     except Exception as exc:  # noqa: BLE001
-        logger.warning("wiki QA LLM call failed: %s", type(exc).__name__)
-        text = ""
-    # The client reports transport-level failures inline rather than raising.
-    if not text or text.startswith("[LLM Error"):
-        return {"answer": fallback_answer(question, slim), "engine": "search", "sources": slim}
-    return {"answer": text, "engine": "llm", "sources": slim}
+        logger.warning("wiki QA stream failed: %s", type(exc).__name__)
+        yield {
+            "type": "fallback",
+            "engine": "search",
+            "content": fallback_answer(question, slim),
+            "sources": slim,
+        }
+        yield {"type": "done"}
+        return
+    yield {"type": "done"}

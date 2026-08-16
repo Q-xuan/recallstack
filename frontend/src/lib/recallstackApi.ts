@@ -1,3 +1,5 @@
+import { currentLang, type Lang } from "./i18n";
+
 const BASE = "/api/recallstack";
 
 type ErrorBody = {
@@ -66,6 +68,7 @@ export interface Version {
   progress_message?: string | null;
   error_message?: string | null;
   has_wiki?: boolean;
+  content_lang?: string | null;
   created_at: string;
   completed_at?: string | null;
 }
@@ -76,6 +79,13 @@ export interface SourceRef {
   end_line?: number;
   symbol?: string;
   commit_sha?: string;
+}
+
+/** Overlay teaching note. Never written into the scanned repo. */
+export interface SourceAnnotation {
+  path: string;
+  line: number;
+  note: string;
 }
 
 export interface Concept {
@@ -126,6 +136,7 @@ export interface Wiki {
   project_name: string;
   pages: WikiPage[];
   sidebar: WikiSidebarItem[];
+  suggested_questions?: string[];
 }
 
 export interface WikiSearchResult {
@@ -164,6 +175,10 @@ export interface LearningPathNode {
   position: number;
   reason: string;
   concept?: Concept | null;
+  principles?: string;
+  evidence_chip?: string | null;
+  pass_gate?: string;
+  worksheet?: string;
 }
 
 export interface LearningPath {
@@ -304,16 +319,19 @@ export const recallstackApi = {
     source_type: "local" | "github";
     source_location: string;
     default_branch?: string;
+    lang?: Lang;
   }) =>
     request<Repository>("/repositories", {
       method: "POST",
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, lang: body.lang ?? currentLang() }),
     }),
   getRepository: (id: string) => request<Repository>(`/repositories/${id}`),
-  analyze: (id: string, wait = true) =>
-    request<Version>(`/repositories/${id}/analyze?wait=${wait ? "true" : "false"}`, {
+  analyze: (id: string, wait = true, lang: Lang = currentLang()) => {
+    const q = new URLSearchParams({ wait: wait ? "true" : "false", lang });
+    return request<Version>(`/repositories/${id}/analyze?${q.toString()}`, {
       method: "POST",
-    }),
+    });
+  },
   latestVersion: (id: string) => request<Version>(`/repositories/${id}/versions/latest`),
   wiki: (id: string) => request<Wiki>(`/repositories/${id}/wiki`),
   wikiPage: (id: string, pageId: string) =>
@@ -329,6 +347,73 @@ export const recallstackApi = {
       body: JSON.stringify({ question, history }),
       signal,
     }),
+  askWikiStream: async (
+    id: string,
+    question: string,
+    history: Array<{ question: string; answer: string }> = [],
+    handlers: {
+      onMeta?: (meta: { engine: WikiAskResponse["engine"]; sources: WikiAskSource[] }) => void;
+      onToken?: (chunk: string) => void;
+      onFallback?: (res: Pick<WikiAskResponse, "engine" | "sources"> & { content: string }) => void;
+    } = {},
+    signal?: AbortSignal,
+  ) => {
+    const res = await fetch(`${BASE}/repositories/${id}/ask/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      body: JSON.stringify({ question, history }),
+      signal,
+    });
+    if (!res.ok || !res.body) {
+      let detail: unknown = null;
+      try {
+        detail = await res.json();
+      } catch {
+        detail = { message: res.statusText };
+      }
+      throw new ApiError(errorMessage(detail, `Request failed (${res.status})`), res.status, detail);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split("\n\n");
+      buf = parts.pop() ?? "";
+      for (const part of parts) {
+        for (const line of part.split("\n")) {
+          if (!line.startsWith("data:")) continue;
+          let event: {
+            type?: string;
+            engine?: WikiAskResponse["engine"];
+            sources?: WikiAskSource[];
+            content?: string;
+          };
+          try {
+            event = JSON.parse(line.slice(5).trim());
+          } catch {
+            continue;
+          }
+          if (event.type === "meta") {
+            handlers.onMeta?.({
+              engine: event.engine === "search" ? "search" : "llm",
+              sources: event.sources || [],
+            });
+          } else if (event.type === "content" && event.content) {
+            handlers.onToken?.(event.content);
+          } else if (event.type === "fallback") {
+            handlers.onFallback?.({
+              engine: "search",
+              sources: event.sources || [],
+              content: event.content || "",
+            });
+          }
+        }
+      }
+    }
+  },
   searchWiki: (id: string, query: string, limit = 20, signal?: AbortSignal) => {
     const q = new URLSearchParams({ q: query, limit: String(limit) });
     return request<WikiSearchResponse>(
@@ -397,14 +482,20 @@ export const recallstackApi = {
     path: string;
     start_line?: number;
     end_line?: number;
+    slug?: string;
   }) => {
     const q = new URLSearchParams();
     q.set("repository_id", params.repository_id);
     q.set("path", params.path);
     if (params.start_line) q.set("start_line", String(params.start_line));
     if (params.end_line) q.set("end_line", String(params.end_line));
-    return request<{ path: string; start_line: number; end_line: number; content: string }>(
-      `/source?${q.toString()}`
-    );
+    if (params.slug) q.set("slug", params.slug);
+    return request<{
+      path: string;
+      start_line: number;
+      end_line: number;
+      content: string;
+      annotations?: SourceAnnotation[];
+    }>(`/source?${q.toString()}`);
   },
 };

@@ -59,6 +59,8 @@ def test_classify_page_maps_ids_to_kinds():
     assert classify_page("architecture") == "architecture"
     assert classify_page("reading-guide") == "guide"
     assert classify_page("concepts/foo") == "concept"
+    assert classify_page("topics/agent-runtime") == "topic"
+    assert classify_page("getting-started") == "guide"
     assert classify_page("modules/app") == "module"
     assert classify_page("whatever") == "page"
 

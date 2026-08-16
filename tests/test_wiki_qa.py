@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import asyncio
 
-from recallstack.learning.wiki_qa import answer_question, fallback_answer, select_context
+from recallstack.learning.wiki_qa import (
+    answer_question,
+    fallback_answer,
+    select_context,
+    stream_answer_question,
+)
 from recallstack.learning.wiki_search import SearchDocument
 
 
@@ -64,8 +69,58 @@ def test_llm_error_text_degrades_to_search():
     assert result["sources"]
 
 
-def test_fallback_answer_without_hits():
+def test_fallback_answer_without_hits(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
     assert "没有找到" in fallback_answer("q", [])
+
+
+class _FakeStreamLLM:
+    def __init__(self, chunks: list[str]):
+        self.chunks = chunks
+
+    async def stream(self, messages, **kwargs):
+        for chunk in self.chunks:
+            yield chunk
+
+
+def test_stream_answer_yields_tokens_then_done():
+    llm = _FakeStreamLLM(["Boot ", "lives in app."])
+    events = asyncio.run(
+        _collect_stream("where is boot?", llm)
+    )
+    types = [e["type"] for e in events]
+    assert types[0] == "meta"
+    assert events[0]["engine"] == "llm"
+    assert [e.get("content") for e in events if e["type"] == "content"] == [
+        "Boot ",
+        "lives in app.",
+    ]
+    assert types[-1] == "done"
+
+
+def test_stream_without_llm_falls_back_to_search():
+    events = asyncio.run(_collect_stream("where is boot?", None))
+    assert events[0]["type"] == "meta"
+    assert events[0]["engine"] == "search"
+    assert events[1]["type"] == "content"
+    assert events[1]["content"]
+    assert events[-1]["type"] == "done"
+
+
+def test_stream_llm_error_falls_back_to_search():
+    llm = _FakeStreamLLM(["[LLM Error: HTTP 500]"])
+    events = asyncio.run(_collect_stream("where is boot?", llm))
+    assert any(e["type"] == "fallback" and e["engine"] == "search" for e in events)
+    assert events[-1]["type"] == "done"
+
+
+async def _collect_stream(question: str, llm):
+    out = []
+    async for event in stream_answer_question(
+        question, _docs(), project_name="demo", llm=llm
+    ):
+        out.append(event)
+    return out
 
 
 def test_history_reaches_the_model_and_retrieval():

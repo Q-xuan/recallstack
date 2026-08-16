@@ -7,22 +7,133 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 from recallstack.domain.schemas import ConceptDraft, ConceptGenerationResult, SourceReference
-from recallstack.learning.i18n import t
+from recallstack.learning.i18n import content_lang, t
 from recallstack.security import filter_source_references
 from repowiki.core.graph import DependencyGraph
 from repowiki.core.models import ProjectContext
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
+_HTML_BLOCK_RE = re.compile(
+    r"<(picture|div|table|center)\b[^>]*>.*?</\1\s*>",
+    re.I | re.S,
+)
+_SELF_CLOSING_RE = re.compile(r"<(img|br|hr|source|meta|link)\b[^>]*/?>", re.I)
+_TAG_RE = re.compile(r"<[^>]+>")
+_HTML_OPEN_RE = re.compile(
+    r"</?(div|picture|source|img|table|thead|tbody|tr|td|th|center)\b",
+    re.I,
+)
+_BLOCK_OPEN_RE = re.compile(r"<(div|picture|table|center)\b", re.I)
+_BLOCK_CLOSE_RE = re.compile(r"</(div|picture|table|center)\s*>", re.I)
+_BADGE_LINE_RE = re.compile(r"^\s*(\[!\[[^\]]*\]\([^)]+\)\]\([^)]+\)\s*)+$")
+_LOGO_IMAGE_RE = re.compile(r"^!\[.*logo.*\]\(", re.I)
 
 
 def slugify(text: str) -> str:
     s = _SLUG_RE.sub("-", text.lower()).strip("-")
     return s or "concept"
+
+
+def readme_prose_excerpt(
+    text: str,
+    *,
+    max_paragraphs: int = 3,
+    max_chars: int = 1200,
+) -> str:
+    """First 1–3 prose markdown paragraphs from a README. Never returns HTML.
+
+    Skips ``<picture>`` / centered logo / badge chrome. Headings like ``# Title``
+    are kept. Empty string means “nothing usable” — callers should fall back to
+    a generic one-liner rather than pasting raw README HTML.
+    """
+    if not (text or "").strip():
+        return ""
+
+    raw = text.replace("\r\n", "\n")
+    raw = _HTML_COMMENT_RE.sub("", raw)
+    prev = None
+    while prev != raw:
+        prev = raw
+        raw = _HTML_BLOCK_RE.sub("\n", raw)
+        raw = _SELF_CLOSING_RE.sub("", raw)
+
+    kept_lines: list[str] = []
+    skipping_html = False
+    for line in raw.split("\n"):
+        stripped = line.strip()
+        low = stripped.lower()
+        if skipping_html:
+            if _BLOCK_CLOSE_RE.search(low):
+                skipping_html = False
+            elif stripped.startswith("#") and "<" not in stripped:
+                skipping_html = False
+                kept_lines.append(stripped)
+            continue
+        if (
+            _HTML_OPEN_RE.search(stripped)
+            or "srcset=" in low
+            or 'align="center"' in low
+            or "align='center'" in low
+        ):
+            if _BLOCK_OPEN_RE.search(stripped) and not _BLOCK_CLOSE_RE.search(low):
+                skipping_html = True
+            continue
+        if _BADGE_LINE_RE.match(stripped) or (
+            stripped.startswith("[![") and stripped.endswith(")")
+        ):
+            continue
+        if _LOGO_IMAGE_RE.match(stripped):
+            continue
+        if stripped.startswith("<") and ">" in stripped and not stripped.startswith("<http"):
+            continue
+        cleaned = _TAG_RE.sub("", line).strip()
+        if "<" in cleaned:
+            continue
+        kept_lines.append(cleaned)
+
+    paragraphs: list[str] = []
+    buf: list[str] = []
+
+    def flush() -> None:
+        if not buf:
+            return
+        para = " ".join(buf).strip()
+        buf.clear()
+        if para:
+            paragraphs.append(para)
+
+    for line in kept_lines:
+        if not line:
+            flush()
+            continue
+        buf.append(line)
+    flush()
+
+    usable: list[str] = []
+    for para in paragraphs:
+        if len(para) < 4:
+            continue
+        if para.startswith("[!"):
+            continue
+        if not re.search(r"[A-Za-z\u4e00-\u9fff]", para):
+            continue
+        usable.append(para)
+        if len(usable) >= max_paragraphs:
+            break
+
+    excerpt = "\n\n".join(usable).strip()
+    if len(excerpt) > max_chars:
+        excerpt = excerpt[: max_chars - 1].rsplit(" ", 1)[0].rstrip() + "…"
+    if "<" in excerpt:
+        return ""
+    if not re.search(r"[A-Za-z\u4e00-\u9fff]", excerpt):
+        return ""
+    return excerpt
 
 
 def content_hash_for(parts: list[str]) -> str:
@@ -44,242 +155,36 @@ class ConceptExtractor:
         *,
         commit_sha: str = "",
         wiki_summary: str = "",
+        topics=None,
     ) -> ConceptGenerationResult:
         ranked = graph.rank_files()
-        rank_map = {path: score for path, score in ranked}
         files_by_path = {f.path: f for f in project.files}
         valid_paths = set(files_by_path)
 
-        entry_files = [f.path for f in project.files if f.is_entrypoint]
-        if not entry_files:
-            entry_files = graph.get_entry_points()[:5]
+        if topics is None:
+            from repowiki.core.topics import build_deterministic_topics
 
-        # group by top-level module / directory
-        modules: dict[str, list[str]] = defaultdict(list)
-        for f in project.files:
-            if f.is_config:
-                continue
-            mod = self._module_name(f.path)
-            modules[mod].append(f.path)
-
-        drafts: list[ConceptDraft] = []
-
-        # 1) project goal / overview
-        readme = self._find_readme(project)
-        drafts.append(
-            ConceptDraft(
-                slug="project-goal",
-                title=t("Project goal", "项目目标"),
-                description=self._project_goal_desc(project, readme),
-                difficulty=1,
-                importance=1.0,
-                why_learn=t("Build a mental model of the repo goal and boundaries before diving into implementation.", "先建立对仓库目标与边界的心智模型，再深入实现。"),
-                estimated_minutes=10,
-                source_references=self._refs(
-                    [readme] if readme else entry_files[:1],
-                    files_by_path,
-                    commit_sha,
-                ),
-                prerequisites=[],
+            topics = build_deterministic_topics(
+                project, graph, language=content_lang()
             )
+
+        from recallstack.learning.topic_plan import topics_to_concepts
+
+        drafts = topics_to_concepts(
+            topics,
+            project,
+            commit_sha=commit_sha,
+            files_by_path=files_by_path,
+            make_refs=self._refs,
         )
-
-        # 2) application entry
-        if entry_files:
-            drafts.append(
-                ConceptDraft(
-                    slug="application-entry",
-                    title=t("Application entry", "应用入口"),
-                    description=t("Where the program starts and how the entrypoint wires core components.", "程序从哪里启动，以及入口如何装配核心组件。"),
-                    difficulty=2,
-                    importance=0.95,
-                    why_learn=t("The entrypoint is the start of the call chain and shapes the main flow.", "入口是阅读调用链的起点，决定主流程如何展开。"),
-                    estimated_minutes=15,
-                    source_references=self._refs(entry_files[:3], files_by_path, commit_sha),
-                    prerequisites=["project-goal"],
-                )
-            )
-
-        # 3) core modules by pagerank clusters
-        core_files = [p for p, _ in ranked[: min(30, len(ranked))]]
-        module_scores: dict[str, float] = defaultdict(float)
-        module_files: dict[str, list[str]] = defaultdict(list)
-        for path in core_files:
-            mod = self._module_name(path)
-            module_scores[mod] += rank_map.get(path, 0.0)
-            module_files[mod].append(path)
-
-        # classify special concepts from path hints
-        special_rules = [
-            (
-                "configuration",
-                t("Configuration", "配置加载"),
-                ("config", "settings", "env"),
-                t("How configuration enters runtime and shapes later behavior.", "配置如何进入运行时，影响所有后续行为。"),
-            ),
-            (
-                "request-routing",
-                t("Request routing", "请求路由"),
-                ("router", "route", "api", "server", "handler", "endpoint"),
-                t("How external requests reach business logic.", "理解外部请求如何进入业务逻辑。"),
-            ),
-            (
-                "data-persistence",
-                t("Data persistence", "数据持久化"),
-                ("db", "model", "repository", "store", "sql", "migration"),
-                t("How data is written and read — key state transitions.", "数据如何写入与读取，是状态变化的关键。"),
-            ),
-            (
-                "caching",
-                t("Caching", "缓存策略"),
-                ("cache",),
-                t("Caching trades performance against consistency.", "缓存影响性能与一致性权衡。"),
-            ),
-            (
-                "error-handling",
-                t("Error handling", "错误处理"),
-                ("error", "exception", "fault"),
-                t("Failure paths determine robustness.", "失败路径决定系统鲁棒性。"),
-            ),
-            (
-                "background-tasks",
-                t("Background tasks", "后台任务"),
-                ("task", "worker", "job", "queue", "celery", "cron"),
-                t("Async paths are easy to miss but often carry side effects.", "异步路径常被忽略，却承载关键副作用。"),
-            ),
-            (
-                "testing-structure",
-                t("Testing structure", "测试体系"),
-                ("test", "tests", "spec"),
-                t("Tests reveal expected behavior and safety boundaries.", "测试揭示预期行为与安全边界。"),
-            ),
-            (
-                "authentication",
-                t("Authentication", "身份认证"),
-                ("auth", "login", "session", "jwt", "oauth"),
-                t("Auth cuts across modules and is central to security understanding.", "认证横切多个模块，是安全理解的核心。"),
-            ),
-        ]
-
-        used_files: set[str] = set()
-        for slug, title, keywords, why in special_rules:
-            matched = [
-                p
-                for p in core_files
-                if any(k in p.lower().replace("\\", "/") for k in keywords)
-            ]
-            if not matched:
-                # also search all files for tests etc.
-                matched = [
-                    f.path
-                    for f in project.files
-                    if any(k in f.path.lower().replace("\\", "/") for k in keywords)
-                ][:5]
-            if not matched:
-                continue
-            importance = min(0.93, 0.45 + sum(rank_map.get(p, 0.01) for p in matched[:5]))
-            prereq = ["application-entry"] if slug != "testing-structure" else ["project-goal"]
-            if slug == "data-persistence" and any(d.slug == "request-routing" for d in drafts):
-                prereq = ["request-routing"]
-            drafts.append(
-                ConceptDraft(
-                    slug=slug,
-                    title=title,
-                    description=t(f"Core responsibilities and collaboration around {title}.", f"围绕 {title} 相关模块与符号的核心职责与协作方式。"),
-                    difficulty=2 if slug in {"configuration", "testing-structure"} else 3,
-                    importance=importance,
-                    why_learn=why,
-                    estimated_minutes=15,
-                    source_references=self._refs(matched[:4], files_by_path, commit_sha),
-                    prerequisites=prereq,
-                )
-            )
-            used_files.update(matched[:4])
-
-        # 4) remaining high-importance modules as concepts
-        for mod, score in sorted(module_scores.items(), key=lambda x: -x[1]):
-            if len(drafts) >= self.max_concepts:
-                break
-            if mod in {"", ".", "node_modules", "dist", "build", "vendor", "tests", "test"}:
-                # tests handled specially
-                if mod not in {"tests", "test"}:
-                    continue
-            paths = [p for p in module_files[mod] if p not in used_files][:4]
-            if not paths:
-                paths = module_files[mod][:3]
-            if not paths:
-                continue
-            slug = slugify(f"module-{mod}")
-            if any(d.slug == slug for d in drafts):
-                continue
-            # skip if already covered heavily by special concepts
-            if set(paths) <= used_files:
-                continue
-            drafts.append(
-                ConceptDraft(
-                    slug=slug,
-                    title=t(f"Module: {mod}", f"模块：{mod}"),
-                    description=t(f"Responsibility boundary, public surface, and internal collaboration of `{mod}`.", f"{mod} 模块的职责边界、对外接口与内部协作。"),
-                    difficulty=3,
-                    importance=min(0.9, 0.3 + score * 5),
-                    why_learn=t(f"`{mod}` ranks high in the dependency graph and is a key piece of the main flow.", f"{mod} 在依赖图中具有较高重要性，是理解主流程的关键拼图。"),
-                    estimated_minutes=12,
-                    source_references=self._refs(paths, files_by_path, commit_sha),
-                    prerequisites=["application-entry"] if entry_files else ["project-goal"],
-                )
-            )
-            used_files.update(paths)
-
-        # ensure at least 5 concepts when possible
-        if len(drafts) < 5:
-            for path, score in ranked:
-                if len(drafts) >= 5:
-                    break
-                slug = slugify(f"file-{Path(path).stem}")
-                if any(d.slug == slug for d in drafts):
-                    continue
-                drafts.append(
-                    ConceptDraft(
-                        slug=slug,
-                        title=t(f"Key file: {Path(path).name}", f"关键文件：{Path(path).name}"),
-                        description=t(f"Understand the role and call relationships of `{path}`.", f"理解 {path} 在系统中的职责与调用关系。"),
-                        difficulty=2,
-                        importance=min(0.85, 0.4 + score * 4),
-                        why_learn=t("This file ranks high by PageRank in the dependency graph.", "该文件在 PageRank 中排名靠前。"),
-                        estimated_minutes=10,
-                        source_references=self._refs([path], files_by_path, commit_sha),
-                        prerequisites=["project-goal"],
-                    )
-                )
-
-        # still short? create generic role concepts from available files
-        if len(drafts) < 5:
-            role_templates = [
-                ("call-flow", t("Main call flow", "主调用链"), t("Trace the call order from entry to core logic.", "追踪入口到核心逻辑的调用顺序。")),
-                ("module-boundaries", t("Module boundaries", "模块边界"), t("How directories/modules split responsibilities.", "理解目录/模块如何划分职责。")),
-                ("extension-points", t("Extension points", "扩展点"), t("Interfaces and config points that can grow later.", "识别后续可扩展的接口与配置点。")),
-                ("core-data", t("Core data structures", "核心数据结构"), t("Key data objects and how they move.", "识别关键数据对象及其流转。")),
-            ]
-            all_paths = [f.path for f in project.files if not f.is_config] or [f.path for f in project.files]
-            for slug, title, why in role_templates:
-                if len(drafts) >= 5:
-                    break
-                if any(d.slug == slug for d in drafts):
-                    continue
-                pick = all_paths[:3]
-                drafts.append(
-                    ConceptDraft(
-                        slug=slug,
-                        title=title,
-                        description=t(f"{title}: a learning concept grounded in the current file structure.", f"{title}：基于当前仓库文件结构的学习概念。"),
-                        difficulty=2,
-                        importance=0.55,
-                        why_learn=why,
-                        estimated_minutes=12,
-                        source_references=self._refs(pick, files_by_path, commit_sha),
-                        prerequisites=["project-goal"],
-                    )
-                )
+        goal = next((d for d in drafts if d.slug == "project-goal"), None)
+        if goal:
+            readme = self._find_readme(project)
+            desc = self._project_goal_desc(project, readme)
+            if desc:
+                goal.description = desc
+            if wiki_summary and len(desc) < 80:
+                goal.description = wiki_summary[:1200]
 
         # validate source refs
         cleaned: list[ConceptDraft] = []
@@ -288,7 +193,6 @@ class ConceptExtractor:
                 [r.model_dump() for r in d.source_references], valid_paths
             )
             if not refs and d.slug != "project-goal":
-                # still keep project-goal even without refs if needed
                 continue
             cleaned.append(
                 d.model_copy(
@@ -300,52 +204,27 @@ class ConceptExtractor:
                 )
             )
 
-        if len(cleaned) < 5:
-            # pad with remaining drafts that had refs dropped? rebuild from top files
-            top = [p for p, _ in ranked] or [f.path for f in project.files]
-            idx = 0
-            while len(cleaned) < 5 and top:
-                path = top[idx % len(top)]
-                idx += 1
-                slug = slugify(f"focus-{Path(path).stem}-{len(cleaned)}")
-                if any(c.slug == slug for c in cleaned):
-                    if idx > len(top) * 3:
-                        break
-                    continue
-                refs = self._refs([path], files_by_path, commit_sha)
-                if not refs:
-                    if idx > len(top) * 3:
-                        break
-                    continue
-                cleaned.append(
-                    ConceptDraft(
-                        slug=slug,
-                        title=t(f"Focus: {Path(path).name}", f"聚焦：{Path(path).name}"),
-                        description=t(f"Build understanding of `{path}` before reading or changing it.", f"围绕 {path} 建立阅读与改动前的理解。"),
-                        difficulty=2,
-                        importance=0.5,
-                        why_learn=t("Fills out the minimum concept set needed for the learning path.", "补齐学习路径所需的最小概念集合。"),
-                        source_references=refs,
-                        prerequisites=["project-goal"] if any(c.slug == "project-goal" for c in cleaned) else [],
-                    )
-                )
-
         if not cleaned:
-            # absolute fallback
             top = [p for p, _ in ranked[:3]] or [f.path for f in project.files[:3]]
             cleaned = [
                 ConceptDraft(
-                    slug="core-codebase",
-                    title=t("Core codebase structure", "代码库核心结构"),
-                    description=t("Main files and dependency structure of the repository.", "仓库的主要文件与依赖结构。"),
+                    slug="project-goal",
+                    title=t("Project goal", "项目目标"),
+                    description=t(
+                        "Main files and dependency structure of the repository.",
+                        "仓库的主要文件与依赖结构。",
+                    ),
                     difficulty=1,
                     importance=1.0,
-                    why_learn=t("Establish a basic map of how the repository is organized.", "建立对仓库文件组织的基本认识。"),
+                    why_learn=t(
+                        "Establish a basic map of how the repository is organized.",
+                        "建立对仓库文件组织的基本认识。",
+                    ),
                     source_references=self._refs(top, files_by_path, commit_sha),
+                    wiki_page_id="index",
                 )
             ]
 
-        # drop cyclic prerequisites by simple topo filter later; here only self-prereq
         for c in cleaned:
             c.prerequisites = [p for p in c.prerequisites if p != c.slug]
 
@@ -419,13 +298,17 @@ class ConceptExtractor:
         return None
 
     def _project_goal_desc(self, project: ProjectContext, readme: str | None) -> str:
-        if readme:
-            for f in project.files:
-                if f.path == readme and (f.preview or f.content):
-                    text = (f.preview or f.content).strip().splitlines()
-                    snippet = " ".join(text[:8])[:400]
-                    return f"{project.name}：{snippet}"
-        return t(f"{project.name}: goals, capability boundaries, and primary usage.", f"{project.name} 代码仓库的目标、能力边界与主要使用方式。")
+        fallback = t(
+            f"{project.name}: goals, capability boundaries, and primary usage.",
+            f"{project.name} 代码仓库的目标、能力边界与主要使用方式。",
+        )
+        if not readme:
+            return fallback
+        for f in project.files:
+            if f.path == readme and (f.preview or f.content):
+                excerpt = readme_prose_excerpt(f.preview or f.content or "")
+                return excerpt or fallback
+        return fallback
 
     def _refs(
         self,

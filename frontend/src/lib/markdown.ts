@@ -27,8 +27,46 @@ export interface RenderedMarkdown {
   toc: TocEntry[];
 }
 
-/** Matches `src/foo/bar.py`, optionally with `:12` or `:12-40`. */
-const SOURCE_REF_RE = /^[A-Za-z0-9_@][A-Za-z0-9_./\\-]*\.[A-Za-z0-9]+(:\d+(-\d+)?)?$/;
+/** Matches `src/foo/bar.py` / `README.md`, optional `:12` / `:12-40`, optional trailing TypeName (may include spaces). */
+export const SOURCE_REF_RE =
+  /^((?:[A-Za-z0-9_.@-]+\/)*[A-Za-z0-9_.@-]+\.[A-Za-z0-9]+)(?::(\d+)(?:-(\d+))?)?(?:\s+(.+))?$/;
+
+/** Path[:line] for SourcePeek — strips a trailing type name. Path-only becomes `path:1`. */
+export function sourceRefValue(raw: string): string {
+  const trimmed = (raw || "").trim();
+  const match = SOURCE_REF_RE.exec(trimmed);
+  if (!match) return trimmed;
+  const path = match[1];
+  const start = match[2];
+  const end = match[3];
+  if (start && end) return `${path}:${start}-${end}`;
+  if (start) return `${path}:${start}`;
+  return `${path}:1`;
+}
+
+const MERMAID_TYPE_RE =
+  /^(?:flowchart|graph|sequenceDiagram|classDiagram|stateDiagram(?:-v2)?|erDiagram|gantt|pie|gitGraph|mindmap|timeline)\b/i;
+
+/** Wrap typeless mermaid (`A --> B`) and normalize unicode arrows before parse. */
+export function normalizeMermaidSource(code: string): string {
+  let text = (code || "").replace(/\r\n/g, "\n").trim();
+  if (!text) return text;
+  text = text.replace(/[→⟶⇒➔➜➝➞⟹]/g, "-->");
+  const firstReal =
+    text
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line && !line.startsWith("%%")) ?? "";
+  if (firstReal && MERMAID_TYPE_RE.test(firstReal)) return text;
+  return `flowchart LR\n${text}`;
+}
+
+/** README chrome that should never render as raw tags in a wiki article. */
+const HTML_CHROME_RE = /<(div|picture|source|img)\b|srcset\s*=/i;
+
+export function isHtmlChrome(text: string): boolean {
+  return HTML_CHROME_RE.test(text);
+}
 
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})\s*([^\s`]*)\s*$/;
 const HEADING_RE = /^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
@@ -58,6 +96,61 @@ export function slugify(text: string): string {
   return base || "section";
 }
 
+/** File-like chip even when SOURCE_REF_RE misses a trailing spaced symbol. */
+export function isPathLikeChip(content: string): boolean {
+  const trimmed = (content || "").trim();
+  if (!trimmed) return false;
+  if (SOURCE_REF_RE.test(trimmed)) return true;
+  return /^(?:[A-Za-z0-9_.@-]+\/)*[A-Za-z0-9_.@-]+\.[A-Za-z0-9]+(?::\d+(?:-\d+)?)?(?:\s+\S.*)?$/.test(
+    trimmed,
+  );
+}
+
+function chipVisibleLocation(match: RegExpExecArray): string {
+  const path = match[1];
+  const start = match[2];
+  const end = match[3];
+  if (start && end) return `${path}:${start}-${end}`;
+  if (start) return `${path}:${start}`;
+  return path;
+}
+
+function renderCodeChip(content: string): string {
+  const trimmed = content.trim();
+  const refMatch = SOURCE_REF_RE.exec(trimmed);
+  const isRef = Boolean(refMatch) || isPathLikeChip(trimmed);
+  const dataRef = isRef ? sourceRefValue(trimmed) : "";
+  const attrs = isRef
+    ? ` class="rs-ref" data-ref="${escapeHtml(dataRef)}" role="button" tabindex="0"`
+    : ` class="rs-ident"`;
+  let inner = escapeHtml(trimmed);
+  if (isRef && refMatch) {
+    const loc = chipVisibleLocation(refMatch);
+    const sym = (refMatch[4] || "").trim();
+    inner = sym
+      ? `${escapeHtml(loc)}<span class="rs-ref-sym">${escapeHtml(sym)}</span>`
+      : escapeHtml(loc);
+  }
+  return `<code${attrs}>${inner}</code>`;
+}
+
+function renderRelatedSourceLine(line: string): string {
+  const label = /Related source/i.test(line) ? "Related source:" : "相关源码:";
+  const rest = line.replace(/^\s*\*\*(?:相关源码|Related source):\*\*\s*/, "");
+  const chips: string[] = [];
+  const chipRe = /(`+)([\s\S]*?)\1/g;
+  let match: RegExpExecArray | null;
+  while ((match = chipRe.exec(rest))) {
+    chips.push(renderCodeChip(match[2]));
+  }
+  return (
+    `<p class="rs-related-source" data-md-block="related-source">` +
+    `<span class="rs-related-source-label">${escapeHtml(label)}</span>` +
+    chips.join("") +
+    `</p>`
+  );
+}
+
 /**
  * Render inline markdown.
  *
@@ -68,12 +161,7 @@ function renderInline(src: string): string {
   const spans: string[] = [];
   // \u0000 cannot appear in the source and survives HTML escaping untouched.
   let text = src.replace(/(`+)([\s\S]*?)\1/g, (_, _ticks, body: string) => {
-    const content = body.trim();
-    const isRef = SOURCE_REF_RE.test(content);
-    const attrs = isRef
-      ? ` class="rs-ref" data-ref="${escapeHtml(content)}" role="button" tabindex="0"`
-      : "";
-    spans.push(`<code${attrs}>${escapeHtml(content)}</code>`);
+    spans.push(renderCodeChip(body));
     return `\u0000${spans.length - 1}\u0000`;
   });
 
@@ -125,7 +213,7 @@ interface ListItem {
 }
 
 /** Collect a run of list lines, then render them as a properly nested tree. */
-function parseList(lines: string[], from: number): { html: string; next: number } {
+function parseList(lines: string[], from: number): { htmls: string[]; next: number } {
   const items: ListItem[] = [];
   let i = from;
 
@@ -155,7 +243,28 @@ function parseList(lines: string[], from: number): { html: string; next: number 
     }
   }
 
-  return { html: renderListLevel(items, 0).html, next: i };
+  return { htmls: splitListIntoItemHtml(items), next: i };
+}
+
+/** One HTML block per top-level list item so SourcePeek can sit under that row. */
+function splitListIntoItemHtml(items: ListItem[]): string[] {
+  if (!items.length) return [];
+  const baseIndent = items[0].indent;
+  const htmls: string[] = [];
+  let i = 0;
+  while (i < items.length) {
+    if (items[i].indent < baseIndent) break;
+    if (items[i].indent > baseIndent) {
+      i += 1;
+      continue;
+    }
+    const start = i;
+    i += 1;
+    while (i < items.length && items[i].indent > baseIndent) i += 1;
+    const rendered = renderListLevel(items.slice(start, i), 0).html;
+    htmls.push(rendered.replace(/<(ul|ol)\b/, '<$1 class="rs-md-item"'));
+  }
+  return htmls;
 }
 
 function renderListLevel(
@@ -181,7 +290,9 @@ function renderListLevel(
       continue;
     }
     if (items[i].ordered !== ordered) break;
-    parts.push(`<li>${renderInline(items[i].lines.join(" "))}</li>`);
+    parts.push(
+      `<li><div data-md-block="list-item">${renderInline(items[i].lines.join(" "))}</div></li>`,
+    );
     i += 1;
   }
 
@@ -238,10 +349,14 @@ function parseTable(lines: string[], from: number): { html: string; next: number
   };
 }
 
-/** Render one fence-free segment to HTML, appending any headings to `toc`. */
-function renderSegment(md: string, toc: TocEntry[], usedIds: Set<string>): string {
+/** Render one fence-free segment as fine HTML blocks (p / li / heading / quote). */
+function renderSegment(
+  md: string,
+  toc: TocEntry[],
+  usedIds: Set<string>,
+  push: (html: string) => void,
+): void {
   const lines = md.split("\n");
-  const out: string[] = [];
   let i = 0;
 
   while (i < lines.length) {
@@ -264,7 +379,7 @@ function renderSegment(md: string, toc: TocEntry[], usedIds: Set<string>): strin
       if (level >= 2 && level <= 3) {
         toc.push({ id, level, text: raw.replace(/[`*_]/g, "") });
       }
-      out.push(
+      push(
         `<h${level} id="${id}" class="rs-heading"><a class="rs-anchor" href="#${id}" aria-label="anchor">#</a>${renderInline(
           raw,
         )}</h${level}>`,
@@ -274,7 +389,7 @@ function renderSegment(md: string, toc: TocEntry[], usedIds: Set<string>): strin
     }
 
     if (HR_RE.test(line)) {
-      out.push("<hr />");
+      push("<hr />");
       i += 1;
       continue;
     }
@@ -285,13 +400,16 @@ function renderSegment(md: string, toc: TocEntry[], usedIds: Set<string>): strin
         quoted.push(BLOCKQUOTE_RE.exec(lines[i])![1]);
         i += 1;
       }
-      out.push(`<blockquote>${renderInline(quoted.join(" "))}</blockquote>`);
+      const joined = quoted.join(" ");
+      if (!isHtmlChrome(joined)) {
+        push(`<blockquote>${renderInline(joined)}</blockquote>`);
+      }
       continue;
     }
 
     if (UL_RE.test(line) || OL_RE.test(line)) {
       const list = parseList(lines, i);
-      out.push(list.html);
+      for (const html of list.htmls) push(html);
       i = list.next;
       continue;
     }
@@ -299,7 +417,7 @@ function renderSegment(md: string, toc: TocEntry[], usedIds: Set<string>): strin
     if (line.includes("|")) {
       const table = parseTable(lines, i);
       if (table) {
-        out.push(table.html);
+        push(table.html);
         i = table.next;
         continue;
       }
@@ -316,14 +434,23 @@ function renderSegment(md: string, toc: TocEntry[], usedIds: Set<string>): strin
       !UL_RE.test(lines[i]) &&
       !OL_RE.test(lines[i])
     ) {
+      if (isHtmlChrome(lines[i])) {
+        i += 1;
+        continue;
+      }
       para.push(lines[i].trim());
       i += 1;
     }
-    if (para.length) out.push(`<p>${renderInline(para.join(" "))}</p>`);
+    if (para.length) {
+      const joined = para.join(" ");
+      if (!isHtmlChrome(joined)) {
+        push(`<p>${renderInline(joined)}</p>`);
+      }
+    }
   }
-
-  return out.join("\n");
 }
+
+const RELATED_SOURCE_LINE_RE = /^\s*\*\*(?:相关源码|Related source):\*\*/;
 
 export function renderMarkdown(md: string): RenderedMarkdown {
   const blocks: MarkdownBlock[] = [];
@@ -334,8 +461,9 @@ export function renderMarkdown(md: string): RenderedMarkdown {
   let buffer: string[] = [];
   const flush = () => {
     if (!buffer.length) return;
-    const html = renderSegment(buffer.join("\n"), toc, usedIds);
-    if (html.trim()) blocks.push({ kind: "html", html });
+    renderSegment(buffer.join("\n"), toc, usedIds, (html) => {
+      if (html.trim()) blocks.push({ kind: "html", html });
+    });
     buffer = [];
   };
 
@@ -357,10 +485,16 @@ export function renderMarkdown(md: string): RenderedMarkdown {
       if (body) {
         blocks.push(
           lang === "mermaid"
-            ? { kind: "mermaid", code: body }
+            ? { kind: "mermaid", code: normalizeMermaidSource(body) }
             : { kind: "code", lang: lang || "text", code: body },
         );
       }
+      continue;
+    }
+    if (RELATED_SOURCE_LINE_RE.test(lines[i])) {
+      flush();
+      blocks.push({ kind: "html", html: renderRelatedSourceLine(lines[i]) });
+      i += 1;
       continue;
     }
     buffer.push(lines[i]);

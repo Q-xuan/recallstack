@@ -6,9 +6,14 @@ import AskPanel from "../components/AskPanel";
 import CommandPalette from "../components/CommandPalette";
 import ConceptPracticePanel from "../components/ConceptPracticePanel";
 import FolderPicker from "../components/FolderPicker";
+import ScanHeaderProgress from "../components/ScanHeaderProgress";
+import SourcePeek, { parseRef } from "../components/SourcePeek";
+import SourceRail from "../components/SourceRail";
 import TableOfContents from "../components/TableOfContents";
 import WikiContent from "../components/WikiContent";
 import type { TocEntry } from "../lib/markdown";
+import { localizeBreadcrumbSegment, localizeSidebarTitle } from "../lib/wikiTitles";
+import { PATH_MISSION, corePathNodes, stepTask } from "../lib/learningPath";
 import {
   Concept,
   LearningPath,
@@ -51,10 +56,21 @@ const RUNNING = new Set([
 /** Flatten the sidebar tree into reading order, for prev/next navigation. */
 function flattenSidebar(items: WikiSidebarItem[], out: WikiSidebarItem[] = []) {
   for (const item of items) {
+    const title = (item.title || "").trim().toLowerCase();
+    if (!item.page_id && (title === "按目录" || title === "by directory")) {
+      continue;
+    }
     if (item.page_id) out.push(item);
     if (item.children?.length) flattenSidebar(item.children, out);
   }
   return out;
+}
+
+function pathPageId(node: { concept?: { slug?: string; wiki_page_id?: string | null } | null }): string {
+  const wikiId = node.concept?.wiki_page_id;
+  if (wikiId) return wikiId;
+  const slug = node.concept?.slug;
+  return slug ? `concepts/${slug}` : "";
 }
 
 export default function RepositoryPage() {
@@ -85,7 +101,10 @@ export default function RepositoryPage() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteSeed, setPaletteSeed] = useState<string>("");
   const [askOpen, setAskOpen] = useState(false);
+  const [askSeed, setAskSeed] = useState("");
+  const [askSeedKey, setAskSeedKey] = useState(0);
   const [progress, setProgress] = useState(0);
+  const [peekRef, setPeekRef] = useState<string | null>(null);
   const articleRef = useRef<HTMLDivElement>(null);
 
   const analyzing = Boolean(status && RUNNING.has(status));
@@ -135,6 +154,21 @@ export default function RepositoryPage() {
   useEffect(() => {
     refreshList().catch((e: unknown) => setError(e instanceof Error ? e.message : tNow("加载失败", "Failed to load")));
   }, []);
+
+  useEffect(() => {
+    if (!id || !path?.nodes?.length) return;
+    const node = path.nodes[0];
+    const parsed = parseRef(node.evidence_chip || "");
+    if (!parsed) return;
+    recallstackApi
+      .sourceSnippet({
+        repository_id: id,
+        path: parsed.path,
+        start_line: parsed.startLine,
+        slug: node.concept?.slug,
+      })
+      .catch(() => undefined);
+  }, [id, path?.id]);
 
   useEffect(() => {
     if (id) loadRepo(id);
@@ -187,15 +221,18 @@ export default function RepositoryPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  async function handleCreate(e: FormEvent) {
-    e.preventDefault();
-    if (!sourceLocation.trim()) return;
+  async function createFromLocation(
+    location: string,
+    type: "local" | "github" = sourceType,
+  ) {
+    const loc = location.trim();
+    if (!loc) return;
     setLoading(true);
     setError(null);
     try {
       const created = await recallstackApi.createRepository({
-        source_type: sourceType,
-        source_location: sourceLocation.trim(),
+        source_type: type,
+        source_location: loc,
       });
       await refreshList();
       navigate(`/repositories/${created.id}`);
@@ -204,6 +241,11 @@ export default function RepositoryPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleCreate(e: FormEvent) {
+    e.preventDefault();
+    await createFromLocation(sourceLocation);
   }
 
   async function handleAnalyze() {
@@ -229,13 +271,33 @@ export default function RepositoryPage() {
 
   const flatPages = useMemo(() => (wiki ? flattenSidebar(wiki.sidebar) : []), [wiki]);
 
+  const learnNodes = useMemo(() => (path ? corePathNodes(path.nodes) : []), [path]);
+
+  const currentPathNode = useMemo(() => {
+    if (!currentPage) return null;
+    return learnNodes.find((n) => pathPageId(n) === currentPage.id) || null;
+  }, [learnNodes, currentPage]);
+
   const { prevPage, nextPage } = useMemo(() => {
+    if (mode === "learn" && learnNodes.length) {
+      const i = learnNodes.findIndex((n) => pathPageId(n) === currentPage?.id);
+      const prev = i > 0 ? learnNodes[i - 1] : null;
+      const next = i >= 0 && i < learnNodes.length - 1 ? learnNodes[i + 1] : null;
+      return {
+        prevPage: prev
+          ? { page_id: pathPageId(prev), title: prev.concept?.title || prev.concept_id }
+          : null,
+        nextPage: next
+          ? { page_id: pathPageId(next), title: next.concept?.title || next.concept_id }
+          : null,
+      };
+    }
     const i = flatPages.findIndex((p) => p.page_id === currentPage?.id);
     return {
       prevPage: i > 0 ? flatPages[i - 1] : null,
       nextPage: i >= 0 && i < flatPages.length - 1 ? flatPages[i + 1] : null,
     };
-  }, [flatPages, currentPage]);
+  }, [flatPages, currentPage, mode, learnNodes]);
 
   const conceptBySlug = useMemo(() => {
     const m: Record<string, Concept> = {};
@@ -251,8 +313,15 @@ export default function RepositoryPage() {
     if (currentPage.id.startsWith("concepts/")) {
       return conceptBySlug[currentPage.id.split("/")[1]] || null;
     }
-    return null;
+    return concepts.find((c) => c.wiki_page_id === currentPage.id) || null;
   }, [currentPage, concepts, conceptBySlug]);
+
+  const currentStepTask = useMemo(() => {
+    if (currentPathNode?.worksheet) return "";
+    if (currentPathNode?.reason) return currentPathNode.reason;
+    if (!boundConcept) return "";
+    return stepTask(t, boundConcept.slug, boundConcept.title);
+  }, [boundConcept, currentPathNode, t]);
 
   const ready = Boolean(wiki && wiki.pages.length > 0);
 
@@ -260,6 +329,7 @@ export default function RepositoryPage() {
   useEffect(() => {
     setToc([]);
     setProgress(0);
+    setPeekRef(null);
     if (!window.location.hash) window.scrollTo({ top: 0 });
   }, [currentPage?.id]);
 
@@ -308,41 +378,40 @@ export default function RepositoryPage() {
           </div>
 
           <form onSubmit={handleCreate} className="space-y-4">
-            <div className="flex flex-col md:flex-row gap-3">
+            <div className="rs-import-row">
               <select
                 value={sourceType}
                 onChange={(e) => setSourceType(e.target.value as "local" | "github")}
-                className="rs-input h-11 md:w-40"
+                className="rs-input rs-import-source"
+                aria-label={t("来源", "Source")}
               >
                 <option value="local">{t("本地目录", "Local directory")}</option>
                 <option value="github">GitHub HTTPS</option>
               </select>
-              <div className="flex-1 flex gap-2">
-                <input
-                  value={sourceLocation}
-                  onChange={(e) => setSourceLocation(e.target.value)}
-                  placeholder={
-                    sourceType === "local"
-                      ? t("选择文件夹或粘贴绝对路径", "Pick a folder or paste an absolute path")
-                      : "https://github.com/org/repo"
-                  }
-                  className="rs-input flex-1 h-11"
-                  disabled={loading}
-                />
-                {sourceType === "local" && (
-                  <button
-                    type="button"
-                    onClick={() => setPickerOpen(true)}
-                    className="rs-btn rs-btn-ghost"
-                  >
-                    {t("浏览…", "Browse…")}
-                  </button>
-                )}
-              </div>
+              <input
+                value={sourceLocation}
+                onChange={(e) => setSourceLocation(e.target.value)}
+                placeholder={
+                  sourceType === "local"
+                    ? t("选择文件夹或粘贴绝对路径", "Pick a folder or paste an absolute path")
+                    : "https://github.com/org/repo"
+                }
+                className="rs-input rs-import-path"
+                disabled={loading}
+              />
+              <button
+                type="button"
+                onClick={() => setPickerOpen(true)}
+                className="rs-btn rs-btn-ghost rs-import-browse"
+                hidden={sourceType !== "local"}
+                disabled={sourceType !== "local" || loading}
+              >
+                {t("浏览…", "Browse…")}
+              </button>
               <button
                 type="submit"
                 disabled={loading || !sourceLocation.trim()}
-                className="rs-btn rs-btn-primary h-11 px-5"
+                className="rs-btn rs-btn-primary rs-import-create"
               >
                 {t("创建", "Create")}
               </button>
@@ -378,7 +447,9 @@ export default function RepositoryPage() {
           onClose={() => setPickerOpen(false)}
           onSelect={(p) => {
             setSourceLocation(p);
+            setSourceType("local");
             setPickerOpen(false);
+            void createFromLocation(p, "local");
           }}
         />
       </AppShell>
@@ -411,8 +482,7 @@ export default function RepositoryPage() {
         {mode === "learn" && path ? (
           <ol className="space-y-0.5">
             {path.nodes.map((n, idx) => {
-              const slug = n.concept?.slug;
-              const pageId = slug ? `concepts/${slug}` : "";
+              const pageId = pathPageId(n);
               const active = pageId && currentPage?.id === pageId;
               return (
                 <li key={n.id}>
@@ -470,8 +540,10 @@ export default function RepositoryPage() {
   // ── Immersive wiki workbench ───────────────────────────────────────────
   return (
     <AppShell flush>
-      <div className="rs-wiki-shell">
-        <div className="rs-progress" style={{ transform: `scaleX(${progress})` }} aria-hidden />
+      <div className={`rs-wiki-shell${askOpen ? " is-asking" : ""}`}>
+        {!analyzing && (
+          <div className="rs-progress" style={{ transform: `scaleX(${progress})` }} aria-hidden />
+        )}
 
         <div className="rs-wiki-topbar">
           <div className="flex items-center gap-2 min-w-0">
@@ -490,10 +562,13 @@ export default function RepositoryPage() {
               <div className="text-[14px] font-semibold tracking-tight truncate">
                 {repo?.name || t("仓库", "Repository")}
               </div>
-              <div className="text-[11px] text-[var(--rs-muted)] truncate rs-tabular">
-                {version?.commit_sha ? `${version.commit_sha.slice(0, 10)} · ` : ""}
-                {statusLabel(status, t)}
-              </div>
+              <ScanHeaderProgress
+                commitSha={version?.commit_sha}
+                status={status}
+                progressMessage={version?.progress_message}
+                createdAt={version?.created_at}
+                idleLabel={statusLabel(status, t)}
+              />
             </div>
           </div>
 
@@ -510,7 +585,10 @@ export default function RepositoryPage() {
             {ready && (
               <button
                 type="button"
-                onClick={() => setAskOpen(true)}
+                onClick={() => {
+                  setAskSeed("");
+                  setAskOpen(true);
+                }}
                 className="rs-btn rs-btn-secondary h-8 px-3.5 text-[12px]"
               >
                 ✦ {t("提问", "Ask")}
@@ -522,7 +600,11 @@ export default function RepositoryPage() {
               disabled={analyzing}
               className="rs-btn rs-btn-primary h-8 px-3.5 text-[12px]"
             >
-              {analyzing ? statusLabel(status, t) : ready ? t("重新扫描", "Rescan") : t("生成 Wiki", "Build wiki")}
+              {analyzing
+                ? t("你发起的分析", "Your analysis")
+                : ready
+                  ? t("你在重扫这份知识", "You are rescanning this knowledge")
+                  : t("发起你的分析", "Start your analysis")}
             </button>
             <Link to="/reviews" className="rs-btn rs-btn-ghost h-8 px-3 text-[12px] hidden sm:flex">
               {t("复习", "Review")}
@@ -532,7 +614,7 @@ export default function RepositoryPage() {
 
         {error && <div className="rs-alert mx-4 mt-3">{error}</div>}
 
-        <div className="rs-wiki-body">
+        <div className={`rs-wiki-body${askOpen ? " is-asking" : ""}`}>
           <aside className="rs-wiki-sidebar">{sidebar}</aside>
 
           {navOpen && (
@@ -548,12 +630,14 @@ export default function RepositoryPage() {
               <div className="rs-wiki-article text-center py-24">
                 <div className="rs-hero-mark">⌘</div>
                 <h1 className="rs-title text-[28px] font-semibold tracking-tight mt-5">
-                  {analyzing ? t("正在生成 Wiki", "Building the wiki") : t("生成这个仓库的知识 Wiki", "Build a knowledge wiki for this repository")}
+                  {analyzing
+                    ? t("你发起的分析正在跑", "The analysis you started is running")
+                    : t("你还没发起这份知识的分析", "You have not started this knowledge yet")}
                 </h1>
                 <p className="mt-3 text-[15px] text-[var(--rs-ink-2)] max-w-md mx-auto">
                   {t(
-                    "扫描依赖图、入口与模块，生成 Overview、Architecture、Reading Guide 与词条页，每条结论都带源码引用。",
-                    "Scans the dependency graph, entry points and modules to build Overview, Architecture, Reading Guide and concept pages, with source citations throughout.",
+                    "你发起之后，扫描依赖图、入口与模块，生成 Overview、Architecture、Reading Guide 与词条页。相位看得见，产品不替你做主。",
+                    "After you start it, the scan walks the graph, entry points and modules. Phases stay visible. The product does not decide for you.",
                   )}
                 </p>
                 {analyzing ? (
@@ -566,25 +650,26 @@ export default function RepositoryPage() {
                     onClick={handleAnalyze}
                     className="rs-btn rs-btn-primary mt-6 h-11 px-6"
                   >
-                    {t("开始分析", "Start analysis")}
+                    {t("发起你的分析", "Start your analysis")}
                   </button>
                 )}
               </div>
-            ) : mode === "learn" && path && !currentPage?.id.startsWith("concepts/") ? (
+            ) : mode === "learn" && path && !learnNodes.some((n) => pathPageId(n) === currentPage?.id) ? (
               <div className="rs-wiki-article">
-                <div className="rs-chip rs-chip-accent mb-4">{t("辅助 · 学习路径", "Assistive · learning path")}</div>
+                <div className="rs-chip rs-chip-accent mb-4">{t("你要签字的路径", "The path you sign off")}</div>
                 <h1 className="rs-title text-[34px] font-semibold tracking-tight">{path.title}</h1>
                 <p className="mt-3 text-[16px] leading-relaxed text-[var(--rs-ink-2)] max-w-2xl">
-                  {path.description}
+                  {t(PATH_MISSION[0], PATH_MISSION[1])}
                 </p>
                 <div className="mt-2 text-[13px] text-[var(--rs-muted)] rs-tabular">
-                  {t(`约 ${path.estimated_minutes} 分钟 · ${path.nodes.length} 个节点`, `~${path.estimated_minutes} min · ${path.nodes.length} steps`)}
+                  {t(`约 ${path.estimated_minutes} 分钟 · ${learnNodes.length} 个节点`, `~${path.estimated_minutes} min · ${learnNodes.length} steps`)}
                 </div>
 
                 <ol className="mt-10 space-y-3">
-                  {path.nodes.map((n, idx) => {
+                  {learnNodes.map((n, idx) => {
                     const c = n.concept;
-                    const pageId = c?.slug ? `concepts/${c.slug}` : "";
+                    const pageId = pathPageId(n);
+                    const task = c ? stepTask(t, c.slug, c.title) : n.reason;
                     return (
                       <li key={n.id} className="rs-step-card">
                         <div className="flex gap-4">
@@ -600,8 +685,11 @@ export default function RepositoryPage() {
                             >
                               {c?.title || n.concept_id}
                             </button>
-                            <p className="mt-1.5 text-[14px] leading-relaxed text-[var(--rs-ink-2)]">
-                              {n.reason}
+                            <p className="mt-1.5 text-[13px] font-medium text-[var(--rs-accent)]">
+                              {t("你这周的职责", "Your job this week")}
+                            </p>
+                            <p className="mt-1 text-[14px] leading-relaxed text-[var(--rs-ink-2)]">
+                              {task || n.reason}
                             </p>
                             {pageId && (
                               <button
@@ -609,7 +697,7 @@ export default function RepositoryPage() {
                                 onClick={() => openPage(pageId)}
                                 className="rs-btn rs-btn-secondary h-8 px-3 text-[12px] mt-3"
                               >
-                                {t("打开词条 →", "Open concept →")}
+                                {t("去签字这一步 →", "Go sign this step →")}
                               </button>
                             )}
                           </div>
@@ -629,35 +717,63 @@ export default function RepositoryPage() {
                     {currentPage.id.includes("/") && (
                       <>
                         <span aria-hidden>/</span>
-                        <span>{currentPage.id.split("/")[0]}</span>
+                        <span>{localizeBreadcrumbSegment(currentPage.id.split("/")[0], t)}</span>
                       </>
                     )}
                     <span aria-hidden>/</span>
                     <span className="rs-breadcrumb-current">
-                      {currentPage.title || currentPage.id}
+                      {localizeSidebarTitle(
+                        { title: currentPage.title || currentPage.id, page_id: currentPage.id },
+                        t,
+                      )}
                     </span>
                   </nav>
 
+                  {mode === "learn" && currentStepTask && (
+                    <div className="mb-6 rounded-[12px] border border-[var(--rs-line)] bg-[var(--rs-surface-2)] px-4 py-3">
+                      <div className="text-[12px] font-medium text-[var(--rs-accent)]">
+                        {t("你这周的职责", "Your job this week")}
+                      </div>
+                      <p className="mt-1 text-[14px] leading-relaxed text-[var(--rs-ink-2)]">
+                        {currentStepTask}
+                      </p>
+                    </div>
+                  )}
+
                   <WikiContent
-                    content={currentPage.content}
-                    title={currentPage.title}
+                    content={
+                      mode === "learn" && currentPathNode?.worksheet
+                        ? currentPathNode.worksheet
+                        : currentPage.content
+                    }
+                    title={
+                      mode === "learn" && currentPathNode?.concept?.title
+                        ? currentPathNode.concept.title
+                        : currentPage.title
+                    }
                     repositoryId={id}
+                    learnSlug={mode === "learn" ? currentPathNode?.concept?.slug : undefined}
                     onNavigatePage={openPage}
                     onTocChange={setToc}
                     onLookup={({ selection }) => {
-                      setPaletteSeed(selection);
-                      setPaletteOpen(true);
+                      setAskSeed(selection);
+                      setAskSeedKey((k) => k + 1);
+                      setAskOpen(true);
                     }}
                   />
 
-                  {boundConcept && <ConceptPracticePanel concept={boundConcept} />}
+                  {mode === "learn" && boundConcept && (
+                    <ConceptPracticePanel concept={boundConcept} />
+                  )}
 
                   {(prevPage || nextPage) && (
                     <nav className="rs-pager" aria-label={t("上一页 / 下一页", "Previous / next page")}>
                       {prevPage ? (
                         <button type="button" onClick={() => openPage(prevPage.page_id)}>
                           <span className="rs-pager-dir">← {t("上一页", "Previous")}</span>
-                          <span className="rs-pager-title">{prevPage.title}</span>
+                          <span className="rs-pager-title">
+                            {localizeSidebarTitle({ title: prevPage.title, page_id: prevPage.page_id }, t)}
+                          </span>
                         </button>
                       ) : (
                         <span />
@@ -669,7 +785,9 @@ export default function RepositoryPage() {
                           onClick={() => openPage(nextPage.page_id)}
                         >
                           <span className="rs-pager-dir">{t("下一页", "Next")} →</span>
-                          <span className="rs-pager-title">{nextPage.title}</span>
+                          <span className="rs-pager-title">
+                            {localizeSidebarTitle({ title: nextPage.title, page_id: nextPage.page_id }, t)}
+                          </span>
                         </button>
                       )}
                     </nav>
@@ -677,6 +795,16 @@ export default function RepositoryPage() {
                 </article>
 
                 <aside className="rs-wiki-aside hidden xl:block">
+                  {currentPage && (
+                    <SourceRail content={currentPage.content} onOpen={setPeekRef} />
+                  )}
+                  {peekRef && id && (
+                    <SourcePeek
+                      repositoryId={id}
+                      reference={peekRef}
+                      onClose={() => setPeekRef(null)}
+                    />
+                  )}
                   <TableOfContents entries={toc} />
                 </aside>
               </div>
@@ -684,6 +812,19 @@ export default function RepositoryPage() {
               <div className="rs-wiki-article text-[var(--rs-muted)]">{t("请选择左侧页面", "Pick a page on the left")}</div>
             )}
           </main>
+          {id ? (
+            <AskPanel
+              open={askOpen}
+              repositoryId={id}
+              repositoryName={wiki?.project_name || repo?.name || t("仓库", "repository")}
+              initialQuestion={askSeed}
+              questionKey={askSeedKey}
+              canAsk={ready}
+              suggestions={wiki?.suggested_questions || []}
+              onClose={() => setAskOpen(false)}
+              onOpenPage={openPage}
+            />
+          ) : null}
         </div>
       </div>
 
@@ -692,14 +833,6 @@ export default function RepositoryPage() {
         repositoryId={id}
         initialQuery={paletteSeed}
         onClose={() => setPaletteOpen(false)}
-        onOpenPage={openPage}
-      />
-
-      <AskPanel
-        open={askOpen}
-        repositoryId={id}
-        repositoryName={wiki?.project_name || repo?.name || t("仓库", "repository")}
-        onClose={() => setAskOpen(false)}
         onOpenPage={openPage}
       />
 
@@ -739,11 +872,29 @@ function PipelineSteps({ status, detail }: { status: string; detail?: string | n
 }
 
 /** True when the item or any descendant matches the filter. */
-function matchesFilter(item: WikiSidebarItem, filter: string): boolean {
+function matchesFilter(
+  item: WikiSidebarItem,
+  filter: string,
+  t: (zh: string, en: string) => string,
+): boolean {
   if (!filter) return true;
+  const shown = localizeSidebarTitle(item, t).toLowerCase();
+  if (shown.includes(filter)) return true;
   if (item.title.toLowerCase().includes(filter)) return true;
   if (item.page_id?.toLowerCase().includes(filter)) return true;
-  return (item.children || []).some((c) => matchesFilter(c, filter));
+  return (item.children || []).some((c) => matchesFilter(c, filter, t));
+}
+
+function isDirectoryGroup(item: WikiSidebarItem): boolean {
+  if (item.page_id) return false;
+  const raw = item.title.trim().toLowerCase();
+  return raw === "按目录" || raw === "by directory" || raw === "模块" || raw === "modules";
+}
+
+function containsPage(item: WikiSidebarItem, pageId: string): boolean {
+  if (!pageId) return false;
+  if (item.page_id === pageId) return true;
+  return (item.children || []).some((child) => containsPage(child, pageId));
 }
 
 function SidebarTree({
@@ -759,48 +910,93 @@ function SidebarTree({
   filter?: string;
   depth?: number;
 }) {
-  const visible = items.filter((item) => matchesFilter(item, filter));
+  const t = useT();
+  const visible = items.filter((item) => matchesFilter(item, filter, t));
   if (!visible.length) {
     return depth === 0 ? (
-      <p className="px-3 py-2 text-[13px] text-[var(--rs-muted)]">没有匹配的页面</p>
+      <p className="px-3 py-2 text-[13px] text-[var(--rs-muted)]">{t("没有匹配的页面", "No matching pages")}</p>
     ) : null;
   }
   return (
     <ul className="space-y-0.5">
-      {visible.map((item) => {
-        const active = item.page_id === currentId;
-        return (
-          <li key={item.page_id || item.title}>
-            {item.page_id ? (
-              <button
-                type="button"
-                onClick={() => onOpen(item.page_id)}
-                className={`rs-wiki-nav-item ${active ? "is-active" : ""}`}
-                style={{ paddingLeft: 10 + depth * 12 }}
-                aria-current={active ? "page" : undefined}
-              >
-                <span className="truncate">{item.title}</span>
-              </button>
-            ) : (
-              <div
-                className="rs-wiki-nav-group"
-                style={{ paddingLeft: 10 + depth * 12 }}
-              >
-                {item.title}
-              </div>
-            )}
-            {item.children?.length > 0 && (
-              <SidebarTree
-                items={item.children}
-                currentId={currentId}
-                onOpen={onOpen}
-                filter={filter}
-                depth={depth + 1}
-              />
-            )}
-          </li>
-        );
-      })}
+      {visible.map((item) => (
+        <SidebarNode
+          key={item.page_id || item.title}
+          item={item}
+          currentId={currentId}
+          onOpen={onOpen}
+          filter={filter}
+          depth={depth}
+        />
+      ))}
     </ul>
+  );
+}
+
+function SidebarNode({
+  item,
+  currentId,
+  onOpen,
+  filter,
+  depth,
+}: {
+  item: WikiSidebarItem;
+  currentId: string;
+  onOpen: (id: string) => void;
+  filter: string;
+  depth: number;
+}) {
+  const t = useT();
+  const directoryGroup = isDirectoryGroup(item);
+  const [open, setOpen] = useState(
+    () => !directoryGroup || containsPage(item, currentId),
+  );
+  const active = item.page_id === currentId;
+  const label = localizeSidebarTitle(item, t);
+  const showChildren =
+    Boolean(item.children?.length) &&
+    (Boolean(filter) || !directoryGroup || open || containsPage(item, currentId));
+
+  return (
+    <li>
+      {item.page_id ? (
+        <button
+          type="button"
+          onClick={() => onOpen(item.page_id)}
+          className={`rs-wiki-nav-item ${active ? "is-active" : ""}`}
+          style={{ paddingLeft: 10 + depth * 12 }}
+          aria-current={active ? "page" : undefined}
+        >
+          <span className="truncate">{label}</span>
+        </button>
+      ) : directoryGroup ? (
+        <button
+          type="button"
+          className="rs-wiki-nav-group rs-wiki-nav-disclosure"
+          style={{ paddingLeft: 10 + depth * 12 }}
+          aria-expanded={showChildren}
+          onClick={() => setOpen((value) => !value)}
+        >
+          <span aria-hidden>{showChildren ? "▾" : "▸"}</span>
+          <span>{label}</span>
+        </button>
+      ) : (
+        <div
+          className="rs-wiki-nav-group"
+          style={{ paddingLeft: 10 + depth * 12 }}
+        >
+          {label}
+        </div>
+      )}
+      {showChildren && (
+        <SidebarTree
+          items={item.children}
+          currentId={currentId}
+          onOpen={onOpen}
+          filter={filter}
+          depth={depth + 1}
+        />
+      )}
+    </li>
   );
 }

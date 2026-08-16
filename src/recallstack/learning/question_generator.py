@@ -13,6 +13,10 @@ from recallstack.domain.schemas import (
     SourceReference,
 )
 from recallstack.learning.i18n import t
+from recallstack.learning.learning_contract import (
+    parse_path_chip,
+    path_step_contract,
+)
 from recallstack.security import filter_source_references
 
 
@@ -231,6 +235,187 @@ class QuestionGenerator:
                 )
             )
 
+        return LearningItemGenerationResult(items=items[: self.max_items])
+
+    def generate_from_contract(
+        self,
+        *,
+        title: str,
+        contract: dict[str, Any] | None = None,
+        concept: Any = None,
+        file_texts: dict[str, str] | None = None,
+        commit_sha: str = "",
+    ) -> LearningItemGenerationResult:
+        """Practice items from the 4-part path contract, locked to one chip."""
+        snap = dict(contract or {})
+        if not snap.get("chip") and concept is not None:
+            snap = path_step_contract(concept, file_texts=file_texts)
+        chip = str(snap.get("chip") or "")
+        path, line, chip_sym = parse_path_chip(chip)
+        symbol = str(snap.get("symbol") or chip_sym or "")
+        gate = str(snap.get("gate") or "")
+        task = str(snap.get("task") or "")
+        failure = list(snap.get("failure_tokens") or [])
+        loc = f"{path}:{line}" if path and line else (path or chip)
+        chip_ref = []
+        if path:
+            try:
+                chip_ref = [
+                    SourceReference(
+                        path=path,
+                        start_line=int(line) if line else None,
+                        end_line=int(line) if line else None,
+                        symbol=symbol or None,
+                        commit_sha=commit_sha or None,
+                    )
+                ]
+            except ValueError:
+                chip_ref = []
+        contract_meta = {
+            "path": path,
+            "line": int(line or 0),
+            "symbol": symbol,
+            "failure_tokens": failure,
+            "gate": gate,
+            "chip": chip,
+        }
+        items: list[LearningItemDraft] = []
+        items.append(
+            LearningItemDraft(
+                item_type="active_recall",
+                prompt=t(
+                    f"You own this step. Look only at `{chip or loc}`. "
+                    f"Name `{symbol or title}` and say what that line must keep true. "
+                    "Restating the heading does not pass.",
+                    f"你负责这一步。只看 `{chip or loc}`。"
+                    f"点名 `{symbol or title}`，说出这一行必须保住的不变量。"
+                    "复述标题不算过关。",
+                ),
+                expected_answer_outline=t(
+                    f"- Symbol: {symbol}\n- Chip: {chip}\n- Task: {task}",
+                    f"- 符号：{symbol}\n- 证据：{chip}\n- 本步：{task}",
+                ),
+                difficulty=2,
+                rubric=Rubric(
+                    required_points=[
+                        RubricPoint(
+                            id="chip_symbol",
+                            description=t(
+                                f"Name the chip symbol {symbol}",
+                                f"点名证据符号 {symbol}",
+                            ),
+                            weight=0.45,
+                            source_references=chip_ref,
+                        ),
+                        RubricPoint(
+                            id="invariant",
+                            description=t(
+                                "State the invariant that line protects",
+                                "说出这一行保住的不变量",
+                            ),
+                            weight=0.55,
+                            source_references=chip_ref,
+                        ),
+                    ],
+                    maximum_score=1.0,
+                    contract=contract_meta,
+                ),
+                source_references=chip_ref,
+            )
+        )
+        if len(items) < self.max_items:
+            items.append(
+                LearningItemDraft(
+                    item_type="code_trace",
+                    prompt=t(
+                        f"From `{chip or loc}` take one hop: who calls `{symbol or title}` "
+                        "or what does it call? If that line vanished, what does the user see?",
+                        f"从 `{chip or loc}` 往下走一跳：谁调用 `{symbol or title}`，"
+                        "或它调用谁？若这一行消失，用户看见什么？",
+                    ),
+                    expected_answer_outline=t(
+                        f"- Start: {chip}\n- Next hop from {symbol}\n- User-visible break",
+                        f"- 起点：{chip}\n- 下一跳：{symbol}\n- 用户能看见的损坏",
+                    ),
+                    difficulty=3,
+                    rubric=Rubric(
+                        required_points=[
+                            RubricPoint(
+                                id="start",
+                                description=t(
+                                    f"Start at {symbol} on {loc}",
+                                    f"从 {loc} 的 {symbol} 出发",
+                                ),
+                                weight=0.4,
+                                source_references=chip_ref,
+                            ),
+                            RubricPoint(
+                                id="next-call",
+                                description=t(
+                                    "Name the next call or state",
+                                    "说出下一跳调用或状态",
+                                ),
+                                weight=0.3,
+                                source_references=chip_ref,
+                            ),
+                            RubricPoint(
+                                id="effect",
+                                description=t(
+                                    "Name the user-visible failure if the line is gone",
+                                    "说出删掉这一行后用户看见的失败",
+                                ),
+                                weight=0.3,
+                                source_references=chip_ref,
+                            ),
+                        ],
+                        maximum_score=1.0,
+                        contract=contract_meta,
+                    ),
+                    source_references=chip_ref,
+                )
+            )
+        if len(items) < self.max_items:
+            items.append(
+                LearningItemDraft(
+                    item_type="teach_back",
+                    prompt=t(
+                        f"{gate or 'Sign off this step.'} You must name `{symbol or title}` "
+                        "and the failure path. Copying the heading does not pass.",
+                        f"{gate or '你签字。'}必须点名 `{symbol or title}`，并写出失败路径。"
+                        "复述标题不算过关。",
+                    ),
+                    expected_answer_outline=t(
+                        f"- Function/type: {symbol}\n- Failure path: {', '.join(failure) or 'user-visible break'}\n- Chip: {chip}",
+                        f"- 函数/类型：{symbol}\n- 失败路径：{'、'.join(failure) or '用户能看见的损坏'}\n- 证据：{chip}",
+                    ),
+                    difficulty=3,
+                    rubric=Rubric(
+                        required_points=[
+                            RubricPoint(
+                                id="chip_symbol",
+                                description=t(
+                                    f"Name {symbol}",
+                                    f"点名 {symbol}",
+                                ),
+                                weight=0.4,
+                                source_references=chip_ref,
+                            ),
+                            RubricPoint(
+                                id="failure_path",
+                                description=t(
+                                    "Name the failure path the gate asks for",
+                                    "写出过关要求的那条失败路径",
+                                ),
+                                weight=0.6,
+                                source_references=chip_ref,
+                            ),
+                        ],
+                        maximum_score=1.0,
+                        contract={**contract_meta, "require_failure": True},
+                    ),
+                    source_references=chip_ref,
+                )
+            )
         return LearningItemGenerationResult(items=items[: self.max_items])
 
     @staticmethod

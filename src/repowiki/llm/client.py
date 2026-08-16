@@ -61,6 +61,57 @@ def _backoff(attempt: int) -> float:
     return min(8.0, 1.0 * (2 ** attempt))
 
 
+def _stringify_content(content: object) -> str:
+    """Flatten OpenAI-style string or list-of-parts content into text."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                if item:
+                    parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text") or item.get("content") or item.get("reasoning") or ""
+                if text:
+                    parts.append(str(text))
+        return "\n".join(parts)
+    return str(content)
+
+
+def extract_completion_text(message: object) -> str:
+    """Read the assistant text, falling back when thinking models leave content empty.
+
+    DeepSeek V4 / OpenCode Go often put the JSON in ``reasoning_content`` and
+    leave ``message.content`` blank. List-shaped content parts are flattened.
+    """
+    if not isinstance(message, dict):
+        return ""
+    text = _stringify_content(message.get("content")).strip()
+    if text:
+        return _stringify_content(message.get("content"))
+    for key in ("reasoning_content", "reasoning"):
+        fallback = _stringify_content(message.get(key)).strip()
+        if fallback:
+            return _stringify_content(message.get(key))
+    return ""
+
+
+def thinking_option() -> dict | None:
+    """Chat-completions ``thinking`` payload. Disabled by default for wiki JSON.
+
+    Flash-class DeepSeek models default to thinking, which parks JSON in
+    ``reasoning_content``. Set ``REPOWIKI_LLM_THINKING=enabled`` to restore
+    the provider default (omit the field).
+    """
+    raw = os.getenv("REPOWIKI_LLM_THINKING", "disabled").strip().lower()
+    if raw in {"enabled", "on", "true", "1", "yes"}:
+        return None
+    return {"type": "disabled"}
+
+
 class LLMClient:
     """async LLM client for OpenAI-compatible endpoints (curl-first, httpx fallback)."""
 
@@ -157,10 +208,15 @@ class LLMClient:
         temperature: float = 0.3,
         max_tokens: int = 4096,
         response_format: dict | None = None,
+        timeout: float | None = None,
     ) -> str:
         """non-streaming completion, returns the full response text."""
         await self._throttle()
-        timeout = float(os.getenv("REPOWIKI_LLM_TIMEOUT_SECONDS", "90"))
+        timeout = float(
+            timeout
+            if timeout is not None
+            else os.getenv("REPOWIKI_LLM_TIMEOUT_SECONDS", "90")
+        )
         retries = int(os.getenv("REPOWIKI_LLM_MAX_RETRIES", "1"))
 
         body: dict = {
@@ -171,6 +227,9 @@ class LLMClient:
         }
         if response_format:
             body["response_format"] = response_format
+        thinking = thinking_option()
+        if thinking is not None:
+            body["thinking"] = thinking
 
         last_err: object = None
         for attempt in range(retries + 1):
@@ -189,7 +248,7 @@ class LLMClient:
             self.total_input_tokens += usage.get("prompt_tokens", 0) or 0
             self.total_output_tokens += usage.get("completion_tokens", 0) or 0
             choices = data.get("choices") or [{}]
-            return (choices[0].get("message") or {}).get("content") or ""
+            return extract_completion_text(choices[0].get("message") or {})
 
         logger.error("LLM call failed: %s", last_err)
         return f"[LLM Error: {last_err}]"

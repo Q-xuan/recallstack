@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import AppShell from "../components/AppShell";
 import InlineProbe from "../components/InlineProbe";
+import { tNow, useT } from "../lib/i18n";
 import {
   Concept,
   ConceptEdge,
@@ -12,6 +13,7 @@ import {
 
 export default function ConceptPage() {
   const { id } = useParams();
+  const t = useT();
   const [concept, setConcept] = useState<Concept | null>(null);
   const [items, setItems] = useState<LearningItem[]>([]);
   const [edges, setEdges] = useState<ConceptEdge[]>([]);
@@ -29,7 +31,6 @@ export default function ConceptPage() {
       try {
         const c = await recallstackApi.getConcept(id);
         const its = await recallstackApi.listItems(id);
-        // graph for relations
         const g = await recallstackApi.concepts(c.repository_id);
         if (!cancelled) {
           setConcept(c);
@@ -38,7 +39,7 @@ export default function ConceptPage() {
           setAllConcepts(g.concepts);
         }
       } catch (e: unknown) {
-        if (!cancelled) setError(e instanceof Error ? e.message : "加载失败");
+        if (!cancelled) setError(e instanceof Error ? e.message : tNow("加载失败", "Failed to load"));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -95,21 +96,23 @@ export default function ConceptPage() {
       setSnippet(data.content);
     } catch (e: unknown) {
       setSnippetPath(ref.path);
-      setSnippet(`无法加载源码：${e instanceof Error ? e.message : "unknown error"}`);
+      setSnippet(
+        `${tNow("无法加载源码：", "Could not load source: ")}${e instanceof Error ? e.message : "unknown error"}`,
+      );
     }
   }
 
   if (loading) {
     return (
-      <AppShell title="概念词条">
-        <p className="text-[var(--rs-muted)]">加载中…</p>
+      <AppShell title={t("概念词条", "Concept")}>
+        <p className="text-[var(--rs-muted)]">{t("加载中…", "Loading…")}</p>
       </AppShell>
     );
   }
   if (error || !concept) {
     return (
-      <AppShell title="概念词条">
-        <p className="text-[var(--rs-danger)]">{error || "概念不存在"}</p>
+      <AppShell title={t("概念词条", "Concept")}>
+        <p className="text-[var(--rs-danger)]">{error || t("概念不存在", "Concept not found")}</p>
       </AppShell>
     );
   }
@@ -122,28 +125,29 @@ export default function ConceptPage() {
             to={`/repositories/${concept.repository_id}`}
             className="hover:underline text-[var(--rs-accent)]"
           >
-            ← 返回仓库 Wiki
+            ← {t("返回仓库 Wiki", "Back to repository wiki")}
           </Link>
           {concept.wiki_page_id && (
             <Link
               to={`/repositories/${concept.repository_id}?page=${encodeURIComponent(concept.wiki_page_id)}`}
               className="hover:underline text-[var(--rs-ink-2)]"
             >
-              打开对应 Wiki 词条
+              {t("打开对应 Wiki 词条", "Open matching wiki page")}
             </Link>
           )}
         </div>
-        <span className="text-xs text-[var(--rs-muted)]">词条 · {concept.slug}</span>
+        <span className="text-xs text-[var(--rs-muted)]">{t("词条", "Entry")} · {concept.slug}</span>
       </div>
 
-      <article className="bg-white border border-[var(--rs-line)] rounded-2xl overflow-hidden">
-        {/* 1. 是什么 */}
+      <article className="rs-card rounded-2xl overflow-hidden">
         <header className="px-6 md:px-8 py-6 border-b border-[var(--rs-line)] bg-[var(--rs-surface-2)]">
-          <div className="text-xs uppercase tracking-wide text-[var(--rs-muted)] mb-2">1 · 是什么</div>
+          <div className="text-xs uppercase tracking-wide text-[var(--rs-muted)] mb-2">
+            1 · {t("是什么", "What it is")}
+          </div>
           <h1 className="text-3xl font-bold text-[var(--rs-ink)] mb-2">{concept.title}</h1>
           {concept.stale && (
             <div className="inline-block text-sm text-[var(--rs-warning)] bg-[var(--rs-warning-soft)] border border-[var(--rs-warning)] rounded-lg px-3 py-1.5 mb-2">
-              这个词条对应旧版本代码
+              {t("这个词条对应旧版本代码", "This entry matches an older version of the code")}
             </div>
           )}
           <p className="text-[var(--rs-ink-2)] leading-relaxed max-w-3xl">{concept.description}</p>
@@ -151,19 +155,28 @@ export default function ConceptPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px]">
           <div className="p-6 md:p-8 space-y-10">
-            {/* 2. 为什么重要 */}
             <section>
-              <h2 className="text-lg font-semibold text-[var(--rs-ink)] mb-2">2 · 为什么重要</h2>
+              <h2 className="text-lg font-semibold text-[var(--rs-ink)] mb-2">
+                2 · {t("为什么重要", "Why it matters")}
+              </h2>
               <p className="text-[var(--rs-ink-2)] leading-relaxed">
-                {concept.why_learn || "理解该概念有助于建立对仓库主流程的心智模型。"}
+                {concept.why_learn ||
+                  t(
+                    "理解该概念有助于建立对仓库主流程的心智模型。",
+                    "Understanding this concept helps you build a mental model of the repository’s main flow.",
+                  )}
               </p>
             </section>
 
-            {/* 3. 源码证据 */}
             <section>
-              <h2 className="text-lg font-semibold text-[var(--rs-ink)] mb-2">3 · 源码证据</h2>
+              <h2 className="text-lg font-semibold text-[var(--rs-ink)] mb-2">
+                3 · {t("源码证据", "Source evidence")}
+              </h2>
               <p className="text-sm text-[var(--rs-muted)] mb-3">
-                Wiki 的可信度来自证据。先读这些位置，再做回忆。
+                {t(
+                  "Wiki 的可信度来自证据。先读这些位置，再做回忆。",
+                  "The wiki is only as trustworthy as its evidence. Read these sites, then recall.",
+                )}
               </p>
               <ul className="space-y-2">
                 {(concept.source_references || []).map((ref, i) => (
@@ -189,14 +202,17 @@ export default function ConceptPage() {
               )}
             </section>
 
-            {/* 4. 关系 */}
             <section>
-              <h2 className="text-lg font-semibold text-[var(--rs-ink)] mb-3">4 · 调用 / 依赖关系</h2>
+              <h2 className="text-lg font-semibold text-[var(--rs-ink)] mb-3">
+                4 · {t("调用 / 依赖关系", "Calls / dependencies")}
+              </h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="border border-[var(--rs-line)] rounded-xl p-4">
-                  <h3 className="text-sm font-semibold text-[var(--rs-ink-2)] mb-2">先修概念</h3>
+                  <h3 className="text-sm font-semibold text-[var(--rs-ink-2)] mb-2">
+                    {t("先修概念", "Prerequisites")}
+                  </h3>
                   {prereqs.length === 0 ? (
-                    <p className="text-sm text-[var(--rs-muted)]">无（可作为入口）</p>
+                    <p className="text-sm text-[var(--rs-muted)]">{t("无（可作为入口）", "None (this can be an entry)")}</p>
                   ) : (
                     <ul className="space-y-1">
                       {prereqs.map((c) => (
@@ -210,9 +226,11 @@ export default function ConceptPage() {
                   )}
                 </div>
                 <div className="border border-[var(--rs-line)] rounded-xl p-4">
-                  <h3 className="text-sm font-semibold text-[var(--rs-ink-2)] mb-2">相关概念</h3>
+                  <h3 className="text-sm font-semibold text-[var(--rs-ink-2)] mb-2">
+                    {t("相关概念", "Related concepts")}
+                  </h3>
                   {related.length === 0 ? (
-                    <p className="text-sm text-[var(--rs-muted)]">无</p>
+                    <p className="text-sm text-[var(--rs-muted)]">{t("无", "None")}</p>
                   ) : (
                     <ul className="space-y-1">
                       {related.map((c) => (
@@ -228,9 +246,10 @@ export default function ConceptPage() {
               </div>
             </section>
 
-            {/* 5. 30 秒自测 */}
             <section>
-              <h2 className="text-lg font-semibold text-[var(--rs-ink)] mb-3">5 · 30 秒自测</h2>
+              <h2 className="text-lg font-semibold text-[var(--rs-ink)] mb-3">
+                5 · {t("30 秒自测", "30-second self-check")}
+              </h2>
               <InlineProbe
                 item={probeItem}
                 onCompleted={(r) => {
@@ -247,24 +266,31 @@ export default function ConceptPage() {
               />
             </section>
 
-            {/* 6. 深入练习 */}
             <section className="border-t border-[var(--rs-line)] pt-6">
               <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
-                <h2 className="text-lg font-semibold text-[var(--rs-ink)]">6 · 深入练习</h2>
+                <h2 className="text-lg font-semibold text-[var(--rs-ink)]">
+                  6 · {t("深入练习", "Deeper practice")}
+                </h2>
                 {items.length > 0 && (
                   <Link
                     to={`/session/${(probeItem || items[0]).id}`}
                     className="px-3 py-1.5 bg-[var(--rs-accent)] text-white rounded-lg text-sm"
                   >
-                    开始本概念会话（{items.length} 题）
+                    {t(
+                      `开始本概念会话（${items.length} 题）`,
+                      `Start this concept session (${items.length} items)`,
+                    )}
                   </Link>
                 )}
               </div>
               <p className="text-sm text-[var(--rs-muted)] mb-3">
-                按 active_recall → code_trace → teach_back 顺序连续练习，提交后自动进入下一题。
+                {t(
+                  "按 active_recall → code_trace → teach_back 顺序连续练习，提交后自动进入下一题。",
+                  "Practice in order: active_recall → code_trace → teach_back. Submit to move to the next item.",
+                )}
               </p>
               {items.length === 0 ? (
-                <p className="text-sm text-[var(--rs-muted)]">暂无练习题。</p>
+                <p className="text-sm text-[var(--rs-muted)]">{t("暂无练习题。", "No practice items yet.")}</p>
               ) : (
                 <ul className="space-y-2">
                   {items.map((item, idx) => (
@@ -282,7 +308,7 @@ export default function ConceptPage() {
                         to={`/session/${item.id}`}
                         className="text-sm text-[var(--rs-accent)] hover:underline shrink-0"
                       >
-                        从这里开始
+                        {t("从这里开始", "Start here")}
                       </Link>
                     </li>
                   ))}
@@ -291,47 +317,51 @@ export default function ConceptPage() {
             </section>
           </div>
 
-          {/* 7. 掌握度 */}
           <aside className="border-t lg:border-t-0 lg:border-l border-[var(--rs-line)] p-6 bg-[var(--rs-surface-2)] space-y-4">
             <div className="text-xs font-semibold uppercase tracking-wide text-[var(--rs-muted)]">
-              7 · 掌握与复习
+              7 · {t("掌握与复习", "Mastery and review")}
             </div>
             <Meta
-              label="掌握度"
+              label={t("掌握度", "Mastery")}
               value={
-                concept.mastery_score == null ? "未练习" : concept.mastery_score.toFixed(2)
+                concept.mastery_score == null
+                  ? t("未练习", "Not practiced")
+                  : concept.mastery_score.toFixed(2)
               }
             />
             <Meta
-              label="下次复习"
+              label={t("下次复习", "Next review")}
               value={
                 concept.next_review_at
                   ? new Date(concept.next_review_at).toLocaleString()
-                  : "完成自测后生成"
+                  : t("完成自测后生成", "Set after you finish a self-check")
               }
             />
-            <Meta label="难度" value={String(concept.difficulty)} />
-            <Meta label="重要度" value={concept.importance.toFixed(2)} />
-            <Meta label="预计学习" value={`${concept.estimated_minutes ?? 15} 分钟`} />
+            <Meta label={t("难度", "Difficulty")} value={String(concept.difficulty)} />
+            <Meta label={t("重要度", "Importance")} value={concept.importance.toFixed(2)} />
+            <Meta
+              label={t("预计学习", "Estimated time")}
+              value={`${concept.estimated_minutes ?? 15} ${t("分钟", "min")}`}
+            />
             {items.length > 0 && (
               <Link
                 to={`/session/${(probeItem || items[0]).id}`}
                 className="block text-center w-full px-4 py-2.5 bg-[var(--rs-accent)] text-white rounded-lg text-sm"
               >
-                开始练习会话
+                {t("开始练习会话", "Start practice session")}
               </Link>
             )}
             <Link
               to={`/repositories/${concept.repository_id}?mode=learn`}
               className="block text-center w-full px-4 py-2.5 border border-[var(--rs-line-strong)] rounded-lg text-sm text-[var(--rs-ink-2)]"
             >
-              回到学习路径
+              {t("回到学习路径", "Back to learning path")}
             </Link>
             <Link
               to="/reviews"
               className="block text-center w-full px-4 py-2.5 border border-[var(--rs-line-strong)] rounded-lg text-sm text-[var(--rs-ink-2)]"
             >
-              打开复习队列
+              {t("打开复习队列", "Open review queue")}
             </Link>
           </aside>
         </div>

@@ -88,10 +88,12 @@ def classify_page(page_id: str) -> str:
         return "overview"
     if page_id == "architecture":
         return "architecture"
-    if page_id in {"reading-guide", "dependencies"}:
+    if page_id in {"reading-guide", "dependencies", "getting-started"}:
         return "guide"
     if page_id.startswith("concepts/"):
         return "concept"
+    if page_id.startswith("topics/"):
+        return "topic"
     if page_id.startswith("modules/"):
         return "module"
     return "page"

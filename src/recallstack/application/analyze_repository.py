@@ -30,6 +30,7 @@ from recallstack.learning.question_generator import QuestionGenerator
 from recallstack.learning.stale import compute_changed_paths, mark_stale_for_changed_files
 from recallstack.learning.wiki_generator import build_wiki_payload
 from recallstack.security import SecurityError, validate_git_url, validate_local_path
+from repowiki.core.models import ProjectContext
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +39,15 @@ logger = logging.getLogger(__name__)
 # rather than to nothing.
 _PROGRESS_PHRASES: tuple[tuple[re.Pattern[str], str, str], ...] = (
     (re.compile(r"^Analyzed module (\d+)/(\d+)$"), "Analyzed module {0}/{1}", "已分析模块 {0}/{1}"),
+    (re.compile(r"^Wrote module (\d+)/(\d+)$"), "Wrote module {0}/{1}", "已撰写模块 {0}/{1}"),
     (re.compile(r"^Analyzing (\d+) modules"), "Analyzing {0} modules", "正在分析 {0} 个模块"),
+    (re.compile(r"^Writing (\d+) modules"), "Writing {0} modules", "正在撰写 {0} 个模块"),
     (re.compile(r"^Preparing file context"), "Preparing file context", "正在准备文件上下文"),
+    (re.compile(r"^Outlining wiki"), "Outlining wiki", "正在规划 Wiki 大纲"),
     (re.compile(r"^Generating project overview"), "Generating overview", "正在生成项目概览"),
     (re.compile(r"^Detecting architecture"), "Detecting architecture", "正在识别架构"),
     (re.compile(r"^Creating reading guide"), "Creating reading guide", "正在生成阅读指南"),
+    (re.compile(r"^Verifying citations"), "Verifying citations", "正在核验引用"),
     (re.compile(r"^Done!?$"), "Done", "完成"),
 )
 
@@ -125,27 +130,67 @@ class AnalyzeRepositoryService:
             default_branch=default_branch,
         )
 
-    def analyze(self, repository_id: str) -> RepositoryVersion:
+    def analyze(self, repository_id: str, lang: str | None = None) -> RepositoryVersion:
+        from recallstack.learning.i18n import content_lang, content_lang_scope, normalize_lang
+
+        resolved_lang = normalize_lang(lang) if lang else content_lang()
+        with content_lang_scope(resolved_lang):
+            return self._analyze_in_lang(repository_id, resolved_lang)
+
+    def _analyze_in_lang(self, repository_id: str, resolved_lang: str) -> RepositoryVersion:
         repo = self.store.get_repository(repository_id)
         if not repo:
             raise KeyError("repository_not_found")
 
-        # ingest
-        project, root = self._ingest(repo)
+        try:
+            project, root = self._ingest(repo)
+        except Exception as exc:  # noqa: BLE001
+            latest = self.store.get_latest_version(repo.id)
+            if latest:
+                latest.status = "failed"
+                latest.error_message = str(exc)[:2000]
+                latest.completed_at = utcnow()
+                self.session.commit()
+            raise
         commit_sha = detect_commit_sha(root)
         file_hashes = {
             f.path: _sha256_text(f.content or f.preview or f.path) for f in project.files
         }
         content_hash = compute_repo_content_hash(file_hashes)
         existing = self.store.get_version_by_commit(repo.id, commit_sha)
+        existing_lang = getattr(existing, "content_lang", None) if existing else None
+        lang_mismatch = bool(existing_lang and existing_lang != resolved_lang)
         if (
             existing
+            and not lang_mismatch
             and existing.content_hash == content_hash
             and existing.status == "ready"
             and existing.wiki_pages
             and (existing.wiki_pages or {}).get("pages")
         ):
             logger.info("idempotent hit for %s@%s", repo.id, commit_sha)
+            self._save_version_file_texts(existing, project)
+            from recallstack.learning.wiki_serve import (
+                materialize_analyzed_version,
+                path_is_materialized,
+                wiki_is_materialized,
+            )
+
+            path = self.store.get_learning_path(existing.id)
+            if not wiki_is_materialized(existing.wiki_pages) or not path_is_materialized(
+                getattr(path, "resolved", None) if path else None
+            ):
+                texts = {
+                    f.path: (f.content or f.preview or "")
+                    for f in project.files
+                    if (f.content or f.preview)
+                }
+                materialize_analyzed_version(
+                    self.session, existing, self.store.list_concepts(repo.id, existing.id), texts
+                )
+            if not existing_lang:
+                existing.content_lang = resolved_lang
+            self.session.commit()
             return existing
 
         old_version = self.store.get_latest_version(repo.id)
@@ -162,6 +207,7 @@ class AnalyzeRepositoryService:
                 content_hash=content_hash,
                 status="pending",
             )
+        version.content_lang = resolved_lang
         self.session.commit()
 
         try:
@@ -236,7 +282,14 @@ class AnalyzeRepositoryService:
                     stale=False,
                     why_learn=draft.why_learn,
                     estimated_minutes=draft.estimated_minutes,
-                    wiki_page_id=f"concepts/{draft.slug}",
+                    wiki_page_id=draft.wiki_page_id
+                    or (
+                        "index"
+                        if draft.slug in {"project-goal", "overview"}
+                        else f"topics/{draft.slug}"
+                        if draft.slug != "getting-started"
+                        else "getting-started"
+                    ),
                 )
                 self.session.add(row)
                 self.session.flush()
@@ -336,6 +389,17 @@ class AnalyzeRepositoryService:
             # Use a lightweight sidecar table alternative: encode in version by separate file not needed for MVP;
             # recompute from concepts is enough for stale next time if we persist hashes in JSON file under data/.
             self._save_version_file_hashes(version, file_hashes)
+            self._save_version_file_texts(version, project)
+            texts = {
+                f.path: (f.content or f.preview or "")
+                for f in project.files
+                if (f.content or f.preview)
+            }
+            from recallstack.learning.wiki_serve import materialize_analyzed_version
+
+            materialize_analyzed_version(
+                self.session, version, list(concept_rows.values()), texts
+            )
 
             version.status = "ready"
             version.completed_at = utcnow()
@@ -498,3 +562,13 @@ class AnalyzeRepositoryService:
             return json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return {}
+
+    def _save_version_file_texts(self, version: RepositoryVersion, project: ProjectContext) -> None:
+        from recallstack.learning.code_loader import save_version_file_texts
+
+        texts = {
+            f.path: (f.content or f.preview or "")
+            for f in project.files
+            if (f.content or f.preview)
+        }
+        save_version_file_texts(version.id, texts)

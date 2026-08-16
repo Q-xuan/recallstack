@@ -151,6 +151,47 @@ a {
   color: var(--rs-muted);
 }
 
+.rs-import-row {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.rs-input.rs-import-source {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 8.5rem;
+  height: 44px;
+}
+
+.rs-input.rs-import-path {
+  flex: 1 1 12rem;
+  min-width: 12rem;
+  width: auto;
+  height: 44px;
+}
+
+.rs-import-browse,
+.rs-import-create {
+  flex: 0 0 auto;
+  height: 44px;
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+.rs-import-browse[hidden] {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .rs-import-row {
+    flex-wrap: nowrap;
+  }
+}
+
 .rs-alert {
   border-radius: 12px;
   border: 1px solid var(--rs-danger);
@@ -447,6 +488,101 @@ a {
   -webkit-backdrop-filter: saturate(180%) blur(18px);
 }
 
+.rs-scan-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rs-scan-phases {
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--rs-muted);
+  scrollbar-width: none;
+}
+
+.rs-scan-phases::-webkit-scrollbar {
+  display: none;
+}
+
+.rs-scan-hash {
+  color: var(--rs-muted);
+}
+
+.rs-scan-arrow {
+  margin: 0 0.32em;
+  color: var(--rs-muted);
+  opacity: 0.5;
+}
+
+.rs-scan-phase {
+  color: var(--rs-muted);
+  font-weight: 400;
+}
+
+.rs-scan-phase.is-now {
+  color: var(--rs-accent);
+  font-weight: 600;
+}
+
+.rs-scan-phase.is-now.is-pulse {
+  animation: rs-scan-word 1.4s ease-in-out infinite;
+}
+
+@keyframes rs-scan-word {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.42;
+  }
+}
+
+.rs-scan-elapsed {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--rs-muted);
+  opacity: 0.8;
+}
+
+.rs-scan-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--rs-line) 85%, transparent);
+}
+
+.rs-scan-bar-fill {
+  height: 100%;
+  width: 28%;
+  background: var(--rs-accent);
+  transition: width 400ms ease;
+}
+
+.rs-scan-bar.is-indeterminate .rs-scan-bar-fill {
+  width: 28%;
+  animation: rs-scan-shimmer 1.25s ease-in-out infinite;
+}
+
+@keyframes rs-scan-shimmer {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(380%);
+  }
+}
+
 /* Reading progress, pinned under the two sticky bars. */
 .rs-progress {
   position: fixed;
@@ -469,6 +605,14 @@ a {
   align-items: start;
 }
 
+.rs-wiki-body.is-asking {
+  grid-template-columns: 272px minmax(0, 1fr) minmax(280px, 400px);
+}
+
+.rs-wiki-shell.is-asking .rs-wiki-aside {
+  display: none;
+}
+
 /*
  * Affordances that only exist once the wiki grid collapses. Keeping the switch
  * in CSS ties the drawer, its trigger and the grid to one breakpoint — a
@@ -482,6 +626,10 @@ a {
 @media (max-width: 960px) {
   .rs-wiki-body {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rs-wiki-body.is-asking {
+    grid-template-columns: minmax(0, 1fr) minmax(240px, 42vw);
   }
 
   .rs-wiki-sidebar:not(.rs-drawer) {
@@ -585,6 +733,28 @@ a {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--rs-muted);
+}
+
+html[lang="zh-CN"] .rs-wiki-nav-group {
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+.rs-wiki-nav-disclosure {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.rs-wiki-nav-disclosure:hover {
+  color: var(--rs-ink);
 }
 
 /* Mobile nav drawer. */
@@ -989,6 +1159,94 @@ a {
   word-break: break-word;
 }
 
+/* 相关源码 row: label + pills. Wrap the row, never each chip as a block. */
+.rs-related-source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  align-content: flex-start;
+  gap: 0.35rem 0.45rem;
+  margin: 0.85rem 0;
+}
+
+.rs-related-source-label {
+  flex: 0 0 auto;
+  font-weight: 650;
+  color: var(--rs-ink);
+  margin-right: 0.1rem;
+}
+
+.rs-related-source > code:not(.rs-ref) {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  white-space: nowrap;
+  width: auto;
+  max-width: 100%;
+  border-color: var(--rs-accent);
+  background: var(--rs-accent-soft);
+  color: var(--rs-accent);
+}
+
+/* Clickable `path:line` citations — hitbox is the pill, not the row. */
+.rs-ref {
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  width: auto;
+  max-width: 100%;
+  word-break: keep-all;
+  border-color: var(--rs-accent) !important;
+  background: var(--rs-accent-soft) !important;
+  color: var(--rs-accent);
+  transition: background-color 120ms ease;
+}
+
+.rs-ref-sym {
+  margin-left: 0.4em;
+  padding-left: 0.4em;
+  border-left: 1px solid color-mix(in srgb, currentColor 32%, transparent);
+  color: var(--rs-muted, color-mix(in srgb, currentColor 62%, transparent));
+  font-weight: 500;
+  pointer-events: none;
+}
+
+.rs-prose li > [data-md-block="list-item"] {
+  display: block;
+}
+
+.rs-prose ul.rs-md-item,
+.rs-prose ol.rs-md-item {
+  margin: 0.3rem 0;
+}
+
+[data-md-block-index] > [data-peek-slot] {
+  display: block;
+  margin: 0.45rem 0 0.85rem;
+}
+
+.rs-ref:hover {
+  background: var(--rs-accent) !important;
+  color: #fff;
+}
+
+.rs-ref:hover .rs-ref-sym {
+  color: inherit;
+  border-left-color: color-mix(in srgb, currentColor 50%, transparent);
+}
+
+.rs-ref:focus-visible {
+  outline: 2px solid var(--rs-accent);
+  outline-offset: 2px;
+}
+
+[data-theme="dark"] .rs-ref:hover {
+  color: #0b0b0d;
+}
+
 .rs-prose a {
   color: var(--rs-accent);
   text-decoration: none;
@@ -1015,24 +1273,6 @@ a {
   color: inherit;
   border-radius: 3px;
   padding: 0 2px;
-}
-
-/* Clickable `path:line` citations — the wiki's claim-to-evidence link. */
-.rs-ref {
-  cursor: pointer;
-  border-color: var(--rs-accent) !important;
-  background: var(--rs-accent-soft) !important;
-  color: var(--rs-accent);
-  transition: background-color 120ms ease;
-}
-
-.rs-ref:hover {
-  background: var(--rs-accent) !important;
-  color: #fff;
-}
-
-[data-theme="dark"] .rs-ref:hover {
-  color: #0b0b0d;
 }
 
 /* Tables scroll rather than blow out the column width. */
@@ -1197,6 +1437,71 @@ a {
   color: var(--rs-danger);
 }
 
+.rs-peek-body {
+  margin: 0;
+  padding: 6px 0 8px;
+  overflow-x: auto;
+  background: var(--rs-surface);
+  font-family: var(--rs-mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.rs-peek-row {
+  display: grid;
+  grid-template-columns: 3.2rem minmax(0, 1fr);
+  column-gap: 8px;
+  padding: 0 10px;
+}
+
+.rs-peek-row.is-noted {
+  background: var(--rs-surface-2);
+  padding-bottom: 4px;
+}
+
+.rs-peek-ln {
+  color: var(--rs-muted);
+  text-align: right;
+  user-select: none;
+}
+
+.rs-peek-src {
+  display: block;
+  white-space: pre;
+  color: var(--rs-ink-2);
+  overflow: hidden;
+}
+
+.rs-peek-note {
+  grid-column: 2;
+  margin: 2px 0 6px;
+  padding: 5px 8px;
+  border-left: 2px solid var(--rs-accent);
+  background: var(--rs-surface-2);
+  color: var(--rs-ink);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+@media (min-width: 880px) {
+  .rs-peek-row.is-noted {
+    grid-template-columns: 3.2rem minmax(0, 1fr) minmax(11rem, 17rem);
+    align-items: start;
+  }
+  .rs-peek-note {
+    grid-column: 3;
+    grid-row: 1;
+    margin: 0 0 0 4px;
+  }
+}
+
+.rs-ident {
+  pointer-events: none;
+  cursor: default;
+  color: var(--rs-muted);
+}
+
 .rs-peek .rs-code {
   margin: 0;
   border: 0;
@@ -1253,6 +1558,46 @@ a {
   color: var(--rs-accent);
   border-left-color: var(--rs-accent);
   font-weight: 600;
+}
+
+.rs-sources {
+  font-size: 12.5px;
+  margin-bottom: 22px;
+}
+
+.rs-sources-tree,
+.rs-sources-tree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.rs-sources-tree ul {
+  padding-left: 12px;
+}
+
+.rs-sources-dir {
+  padding: 3px 0;
+  color: var(--rs-muted);
+  font-weight: 600;
+}
+
+.rs-sources-file {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 3px 0;
+  color: var(--rs-ink-2);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+.rs-sources-file:hover {
+  color: var(--rs-accent);
 }
 
 /* ── Command palette ────────────────────────────────────────────────────── */
@@ -1646,6 +1991,9 @@ a {
 .rs-modal {
   width: 100%;
   max-width: 640px;
+  max-height: min(720px, calc(100vh - 32px));
+  display: flex;
+  flex-direction: column;
   border-radius: 18px;
   border: 1px solid var(--rs-line-strong);
   background: var(--rs-surface);
@@ -1660,6 +2008,7 @@ a {
   gap: 12px;
   padding: 16px 20px;
   border-bottom: 1px solid var(--rs-line);
+  flex-shrink: 0;
 }
 
 .rs-modal-title {
@@ -1682,12 +2031,14 @@ a {
   gap: 8px;
   padding: 12px 20px;
   border-bottom: 1px solid var(--rs-line);
+  flex-shrink: 0;
 }
 
 .rs-modal-path {
   padding: 12px 20px;
   background: var(--rs-surface-2);
   border-bottom: 1px solid var(--rs-line);
+  flex-shrink: 0;
 }
 
 .rs-modal-pathvalue {
@@ -1698,18 +2049,24 @@ a {
 }
 
 .rs-modal-body {
-  max-height: 320px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   padding: 8px;
 }
 
 .rs-modal-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding: 14px 20px;
   border-top: 1px solid var(--rs-line);
+  background: var(--rs-surface);
+  flex-shrink: 0;
 }
 
 .rs-fs-row {
@@ -1733,26 +2090,17 @@ a {
   color: var(--rs-ink);
 }
 
-/* ── Ask the repository ──────────────────────────────────────────────── */
-
-.rs-ask-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  justify-content: flex-end;
-  background: rgba(0, 0, 0, 0.28);
-  backdrop-filter: blur(2px);
-}
+/* ── Ask the repository (docked column, never a dimmed modal) ───────── */
 
 .rs-ask-panel {
-  width: min(520px, 94vw);
-  height: 100%;
+  position: sticky;
+  top: calc(var(--rs-header) + var(--rs-topbar));
+  height: calc(100vh - var(--rs-header) - var(--rs-topbar));
+  min-width: 0;
   display: flex;
   flex-direction: column;
   background: var(--rs-surface);
-  border-left: 1px solid var(--rs-line-strong);
-  box-shadow: var(--rs-shadow-lg);
+  border-left: 1px solid var(--rs-line);
   animation: rs-ask-in 0.18s ease-out;
 }
 
@@ -1781,21 +2129,44 @@ a {
 
 .rs-ask-hint {
   font-size: 13.5px;
-  color: var(--rs-muted);
   line-height: 1.6;
 }
 
-.rs-ask-hint ul {
+.rs-ask-hint p {
+  color: var(--rs-muted);
+}
+
+.rs-ask-suggests {
   margin-top: 10px;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-.rs-ask-hint li {
+.rs-ask-suggest {
+  display: block;
+  width: 100%;
+  text-align: left;
   padding: 8px 12px;
-  border: 1px dashed var(--rs-line-strong);
+  border: 1px solid var(--rs-line-strong);
   border-radius: 10px;
+  background: var(--rs-surface-2);
+  color: var(--rs-ink);
+  font-size: 13px;
+  line-height: 1.45;
+  cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
+}
+
+.rs-ask-suggest:hover:not(:disabled) {
+  border-color: var(--rs-accent);
+  background: var(--rs-accent-soft);
+  color: var(--rs-accent);
+}
+
+.rs-ask-suggest:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .rs-ask-turn {

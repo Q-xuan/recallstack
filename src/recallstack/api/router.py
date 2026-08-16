@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from recallstack import __version__
@@ -48,7 +50,26 @@ from recallstack.domain.schemas import (
     WikiSearchOut,
 )
 from recallstack.jobs import get_job_runner
+from recallstack.learning.code_loader import (
+    enrich_file_texts_from_working_copy,
+    load_version_file_texts,
+)
+from recallstack.learning.wiki_serve import (
+    PATH_SERVE_REVISION,
+    cheap_upgrade_path_resolved,
+    materialize_path_resolved,
+    materialize_wiki_payload,
+    path_chips_ready,
+    path_needs_chip_restamp,
+    persist_path_from_loaded_store,
+    persist_path_resolved,
+    persist_wiki_payload,
+    restamp_weak_path_chips,
+    sync_path_contract_items,
+    wiki_is_materialized,
+)
 from recallstack.security import SecurityError
+from repowiki.ingest.github import GitIngestError
 
 router = APIRouter(prefix="/recallstack", tags=["recallstack"])
 
@@ -151,6 +172,73 @@ def list_fs_directory(path: str | None = None) -> dict[str, Any]:
 
 
 
+def _abandon_import(db: Session, repository_id: str) -> None:
+    """Remove a repo we just created so a failed analyze start is not a silent empty wiki."""
+    from sqlalchemy import select
+
+    from recallstack.db.models import RepositoryVersion
+
+    store = RepositoryStore(db)
+    repo = store.get_repository(repository_id)
+    if not repo:
+        return
+    extra = list(
+        db.scalars(
+            select(RepositoryVersion).where(RepositoryVersion.repository_id == repository_id)
+        )
+    )
+    for version in extra:
+        db.delete(version)
+    db.delete(repo)
+    try:
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+
+
+def _queue_analyze(db: Session, repository_id: str, lang: str | None = None):
+    """Same background analyze the 「开始分析」 button uses. Does not wait."""
+    from recallstack.db.models import RepositoryVersion
+    from recallstack.learning.i18n import normalize_lang
+
+    store = RepositoryStore(db)
+    latest = store.get_latest_version(repository_id)
+    if latest:
+        latest.status = "queued"
+        latest.error_message = None
+        if lang:
+            latest.content_lang = normalize_lang(lang)
+        db.commit()
+        db.refresh(latest)
+    try:
+        get_job_runner().enqueue("analyze", _run_analyze, repository_id, lang)
+    except Exception as exc:  # noqa: BLE001
+        if latest:
+            latest.status = "failed"
+            latest.error_message = (
+                f"Could not start analysis: {exc}. "
+                "Retry 「开始分析」. The import did not finish scanning."
+            )[:2000]
+            try:
+                db.commit()
+            except Exception:  # noqa: BLE001
+                db.rollback()
+        raise
+    if latest:
+        return latest
+    pending = RepositoryVersion(
+        repository_id=repository_id,
+        commit_sha="pending",
+        content_hash="",
+        status="pending",
+        content_lang=normalize_lang(lang) if lang else None,
+    )
+    db.add(pending)
+    db.commit()
+    db.refresh(pending)
+    return pending
+
+
 @router.post("/repositories", response_model=RepositoryOut)
 def create_repository(
     body: RepositoryCreate,
@@ -168,11 +256,25 @@ def create_repository(
         )
         db.commit()
         db.refresh(repo)
-        return repo_out(repo)
     except SecurityError as exc:
         raise api_error(400, exc.code, exc.message) from exc
     except FileNotFoundError as exc:
         raise api_error(400, "path_not_found", str(exc)) from exc
+
+    repo_id = repo.id
+    try:
+        _queue_analyze(db, repo_id, lang=body.lang)
+    except Exception as exc:  # noqa: BLE001
+        _abandon_import(db, repo_id)
+        raise api_error(
+            503,
+            "analyze_start_failed",
+            "Repository was not imported: analysis could not start. "
+            f"{exc}. Fix the queue or retry import — an empty wiki was not left behind.",
+        ) from exc
+    store = RepositoryStore(db)
+    created = store.get_repository(repo_id)
+    return repo_out(created or repo)
 
 
 @router.get("/repositories", response_model=list[RepositoryOut])
@@ -190,12 +292,12 @@ def get_repository(repository_id: str, db: Session = Depends(get_db_session)) ->
     return repo_out(repo)
 
 
-def _run_analyze(repository_id: str) -> None:
+def _run_analyze(repository_id: str, lang: str | None = None) -> None:
     from recallstack.db.session import session_scope
 
     with session_scope() as session:
         svc = AnalyzeRepositoryService(session)
-        svc.analyze(repository_id)
+        svc.analyze(repository_id, lang=lang)
 
 
 @router.post("/repositories/{repository_id}/analyze", response_model=VersionOut)
@@ -205,6 +307,7 @@ def analyze_repository(
     db: Session = Depends(get_db_session),
     config: RecallStackConfig = Depends(get_config),
     wait: bool = False,
+    lang: str | None = None,
 ) -> VersionOut:
     store = RepositoryStore(db)
     repo = store.get_repository(repository_id)
@@ -214,40 +317,25 @@ def analyze_repository(
     if wait:
         try:
             svc = AnalyzeRepositoryService(db, config)
-            version = svc.analyze(repository_id)
+            version = svc.analyze(repository_id, lang=lang)
             return version_out(version)
         except SecurityError as exc:
             raise api_error(400, exc.code, exc.message) from exc
+        except GitIngestError as exc:
+            status = 504 if exc.code == "clone_timeout" else 400
+            raise api_error(status, exc.code, exc.message) from exc
         except Exception as exc:  # noqa: BLE001
             raise api_error(500, "analyze_failed", "Analysis failed", {"error": str(exc)[:500]}) from exc
 
-    # Background path. Flip the existing version to "queued" *before* enqueuing so
-    # a poller never sees a stale "ready" and concludes the rescan already finished.
-    latest = store.get_latest_version(repository_id)
-    if latest:
-        latest.status = "queued"
-        latest.error_message = None
-        db.commit()
-        db.refresh(latest)
-
-    runner = get_job_runner()
-    runner.enqueue("analyze", _run_analyze, repository_id)
-    if latest:
-        return version_out(latest)
-
-    # ensure a pending version exists for UI polling
-    from recallstack.db.models import RepositoryVersion
-
-    pending = RepositoryVersion(
-        repository_id=repository_id,
-        commit_sha="pending",
-        content_hash="",
-        status="pending",
-    )
-    db.add(pending)
-    db.commit()
-    db.refresh(pending)
-    return version_out(pending)
+    try:
+        queued = _queue_analyze(db, repository_id, lang=lang)
+    except Exception as exc:  # noqa: BLE001
+        raise api_error(
+            503,
+            "analyze_start_failed",
+            f"Analysis could not start: {exc}. Retry 「开始分析」.",
+        ) from exc
+    return version_out(queued)
 
 
 @router.get("/repositories/{repository_id}/versions/latest", response_model=VersionOut)
@@ -304,6 +392,18 @@ def get_repository_wiki(
     if not version.wiki_pages or not (version.wiki_pages or {}).get("pages"):
         raise api_error(404, "wiki_not_found", "Wiki not generated yet — re-analyze repository")
     concepts = store.list_concepts(repository_id, version.id)
+    payload = version.wiki_pages or {}
+    if not wiki_is_materialized(payload):
+        repo = store.get_repository(repository_id)
+        file_texts = enrich_file_texts_from_working_copy(
+            load_version_file_texts(str(version.id)),
+            source_type=getattr(repo, "source_type", "") or "",
+            source_location=getattr(repo, "source_location", "") or "",
+        )
+        payload = materialize_wiki_payload(payload, concepts, file_texts)
+        persist_wiki_payload(db, version, payload)
+        version.wiki_pages = payload
+        persist_path_from_loaded_store(db, store.get_learning_path(version.id), file_texts)
     return wiki_out(repository_id, version, concepts)
 
 
@@ -401,6 +501,46 @@ async def ask_repository_wiki(
     )
 
 
+@router.post("/repositories/{repository_id}/ask/stream")
+async def ask_repository_wiki_stream(
+    repository_id: str,
+    body: WikiAskIn,
+    db: Session = Depends(get_db_session),
+    config: RecallStackConfig = Depends(get_config),
+) -> StreamingResponse:
+    """SSE token stream. No key / LLM failure yields the extractive fallback."""
+    from recallstack.learning.wiki_qa import stream_answer_question
+
+    store = RepositoryStore(db)
+    repo = store.get_repository(repository_id)
+    if not repo:
+        raise api_error(404, "repository_not_found", "Repository not found")
+    docs = _wiki_documents(store, repository_id)
+    if not docs:
+        raise api_error(409, "wiki_not_ready", "Analyze the repository first")
+
+    question = body.question.strip()
+    history = [{"question": t.question, "answer": t.answer} for t in body.history]
+    llm = _qa_llm_client(config)
+    project_name = repo.name
+
+    async def event_stream():
+        async for event in stream_answer_question(
+            question,
+            docs,
+            project_name=project_name,
+            llm=llm,
+            history=history,
+        ):
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.get("/repositories/{repository_id}/wiki/pages/{page_id:path}", response_model=WikiPageOut)
 def get_repository_wiki_page(
     repository_id: str, page_id: str, db: Session = Depends(get_db_session)
@@ -413,7 +553,11 @@ def get_repository_wiki_page(
 
 
 @router.get("/repositories/{repository_id}/learning-path", response_model=LearningPathOut)
-def get_learning_path(repository_id: str, db: Session = Depends(get_db_session)) -> LearningPathOut:
+def get_learning_path(
+    repository_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db_session),
+) -> LearningPathOut:
     store = RepositoryStore(db)
     if not store.get_repository(repository_id):
         raise api_error(404, "repository_not_found", "Repository not found")
@@ -423,7 +567,52 @@ def get_learning_path(repository_id: str, db: Session = Depends(get_db_session))
     path = store.get_learning_path(version.id)
     if not path:
         raise api_error(404, "path_not_found", "Learning path not found")
-    return path_out(path)
+    resolved = getattr(path, "resolved", None)
+    if path_chips_ready(resolved):
+        if path_needs_chip_restamp(path, resolved):
+            repo = store.get_repository(repository_id)
+            file_texts = enrich_file_texts_from_working_copy(
+                load_version_file_texts(str(version.id)),
+                source_type=getattr(repo, "source_type", "") or "",
+                source_location=getattr(repo, "source_location", "") or "",
+            )
+            upgraded = restamp_weak_path_chips(path, resolved or {}, file_texts)
+            persist_path_resolved(db, path, upgraded)
+            path.resolved = upgraded
+            sync_path_contract_items(db, path, file_texts)
+            try:
+                db.commit()
+            except Exception:  # noqa: BLE001
+                db.rollback()
+        elif (resolved or {}).get("serve_revision") != PATH_SERVE_REVISION:
+            upgraded = cheap_upgrade_path_resolved(path, resolved or {})
+            persist_path_resolved(db, path, upgraded)
+            path.resolved = upgraded
+            sync_path_contract_items(db, path, None)
+            try:
+                db.commit()
+            except Exception:  # noqa: BLE001
+                db.rollback()
+        out = path_out(path)
+        _schedule_path_annotation_prefetch(background_tasks, str(version.id), out, {})
+        return out
+    repo = store.get_repository(repository_id)
+    file_texts = enrich_file_texts_from_working_copy(
+        load_version_file_texts(str(version.id)),
+        source_type=getattr(repo, "source_type", "") or "",
+        source_location=getattr(repo, "source_location", "") or "",
+    )
+    resolved = materialize_path_resolved(path, file_texts)
+    persist_path_resolved(db, path, resolved)
+    path.resolved = resolved
+    sync_path_contract_items(db, path, file_texts)
+    try:
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+    out = path_out(path, file_texts=file_texts)
+    _schedule_path_annotation_prefetch(background_tasks, str(version.id), out, file_texts)
+    return out
 
 
 @router.get("/concepts/{concept_id}", response_model=ConceptOut)
@@ -757,56 +946,106 @@ def dashboard(
     )
 
 
+def _schedule_path_annotation_prefetch(
+    background_tasks: BackgroundTasks,
+    version_id: str,
+    out: LearningPathOut,
+    file_texts: dict[str, str],
+) -> None:
+    """Warm the first 过关 chip so the first peek is instant. Never blocks GET."""
+    from recallstack.learning.code_loader import slice_lines
+    from recallstack.learning.peek_annotations import (
+        build_annotate_llm,
+        parse_evidence_chip,
+        prefetch_annotations_sync,
+    )
+
+    if build_annotate_llm() is None:
+        return
+    for node in out.nodes or []:
+        chip = getattr(node, "evidence_chip", None) or ""
+        parsed = parse_evidence_chip(chip)
+        if not parsed:
+            continue
+        rel, start = parsed
+        text = file_texts.get(rel) or ""
+        if not text:
+            continue
+        snippet, s, e = slice_lines(text, start, None)
+        slug = ""
+        concept = getattr(node, "concept", None)
+        if concept is not None:
+            slug = getattr(concept, "slug", "") or ""
+        background_tasks.add_task(
+            prefetch_annotations_sync,
+            version_id=version_id,
+            path=rel,
+            start_line=s,
+            end_line=e,
+            snippet=snippet,
+            slug=slug,
+        )
+        return
+
+
 @router.get("/source")
-def get_source_snippet(
+async def get_source_snippet(
     path: str,
     repository_id: str,
     start_line: int | None = None,
     end_line: int | None = None,
+    slug: str | None = None,
     db: Session = Depends(get_db_session),
 ) -> dict[str, Any]:
-    """Return a short source snippet for a repository-relative path."""
+    """Return a short source snippet for a repository-relative path.
+
+    Uses scanned file text from the last analyze (so GitHub clones work), then
+    the local working copy / clone cache. Blocked files are never served.
+    Teaching annotations are generated lazily on first peek and cached.
+    """
     store = RepositoryStore(db)
     repo = store.get_repository(repository_id)
     if not repo:
         raise api_error(404, "repository_not_found", "Repository not found")
-    if repo.source_type != "local":
-        raise api_error(400, "unsupported", "Snippet preview currently supports local repos")
 
-    from recallstack.security import (
-        is_blocked_filename,
-        normalize_repo_path,
-        validate_local_path,
+    from recallstack.learning.code_loader import (
+        missing_working_copy_message,
+        resolve_file_text,
+        slice_lines,
     )
-
-    try:
-        root = validate_local_path(repo.source_location)
-    except SecurityError as exc:
-        raise api_error(400, exc.code, exc.message) from exc
+    from recallstack.learning.peek_annotations import annotations_for_snippet
+    from recallstack.security import is_blocked_filename, normalize_repo_path
 
     rel = normalize_repo_path(path)
-    if ".." in rel.split("/"):
+    if not rel or ".." in rel.split("/") or rel.startswith("/"):
         raise api_error(400, "path_escape", "Invalid path")
-    # `path` is caller-supplied, not restricted to paths some concept cited, so
-    # the block list has to be enforced here too. Without it this endpoint hands
-    # out .env files and private keys from anywhere inside the repository.
     if is_blocked_filename(rel):
         raise api_error(403, "blocked_file", "This file cannot be previewed")
-    file_path = (root / rel).resolve()
-    try:
-        file_path.relative_to(root)
-    except ValueError as exc:
-        raise api_error(400, "path_escape", "Path escapes repository") from exc
-    if not file_path.is_file():
-        raise api_error(404, "file_not_found", "File not found")
-    text = file_path.read_text(encoding="utf-8", errors="replace")
-    lines = text.splitlines()
-    s = max(1, start_line or 1)
-    e = min(len(lines), end_line or (s + 40))
-    snippet = "\n".join(lines[s - 1 : e])
+
+    version = store.get_latest_version(repository_id)
+    text = resolve_file_text(
+        source_type=repo.source_type,
+        source_location=repo.source_location,
+        rel_path=rel,
+        version_id=version.id if version else None,
+    )
+    if text is None:
+        raise api_error(404, "file_not_found", missing_working_copy_message())
+    snippet, s, e = slice_lines(text, start_line, end_line)
+    notes: list[dict[str, Any]] = []
+    if snippet.strip():
+        notes = await annotations_for_snippet(
+            version_id=str(version.id) if version else "",
+            path=rel,
+            start_line=s,
+            end_line=e,
+            snippet=snippet,
+            slug=(slug or "").strip(),
+        )
     return {
         "path": rel,
         "start_line": s,
         "end_line": e,
         "content": snippet,
+        "annotations": notes,
     }

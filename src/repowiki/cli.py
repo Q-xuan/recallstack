@@ -146,7 +146,7 @@ async def _run_analysis(project, cfg: Config, fmt: str, open_browser: bool):
 
     graph = DependencyGraph.build_from_project(project)
     builder = WikiBuilder()
-    wiki = builder.build(project, wiki_data, graph)
+    wiki = builder.build(project, wiki_data, graph, language=cfg.language)
 
     output_dir = cfg.output_dir
     if fmt == "markdown":

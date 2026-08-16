@@ -35,6 +35,16 @@ class Rubric(BaseModel):
     required_points: list[RubricPoint] = Field(default_factory=list)
     common_misconceptions: list[str] = Field(default_factory=list)
     maximum_score: float = 1.0
+    # Path-step contract copied onto the item so scoring does not join the store.
+    # {path, line, symbol, failure_tokens, gate}
+    contract: dict[str, Any] = Field(default_factory=dict)
+
+
+class ConceptTermTip(BaseModel):
+    """Repo-specific jargon on a learning concept page (术语小贴士)."""
+
+    term: str
+    tip: str = ""
 
 
 class ConceptDraft(BaseModel):
@@ -47,6 +57,10 @@ class ConceptDraft(BaseModel):
     estimated_minutes: int = 15
     source_references: list[SourceReference] = Field(default_factory=list)
     prerequisites: list[str] = Field(default_factory=list)  # slugs
+    not_this: list[str] = Field(default_factory=list)
+    term_tips: list[ConceptTermTip] = Field(default_factory=list)
+    wiki_page_id: str | None = None
+    task: str = ""
 
 
 class ConceptGenerationResult(BaseModel):
@@ -106,6 +120,8 @@ class RepositoryCreate(BaseModel):
     source_type: Literal["local", "github"] = "local"
     source_location: str
     default_branch: str = "main"
+    # UI language for the analyze this create kicks off (en/zh/…).
+    lang: str | None = None
 
 
 class RepositoryOut(BaseModel):
@@ -127,6 +143,7 @@ class VersionOut(BaseModel):
     progress_message: str | None = None
     error_message: str | None = None
     has_wiki: bool = False
+    content_lang: str | None = None
     created_at: datetime
     completed_at: datetime | None = None
 
@@ -153,6 +170,7 @@ class WikiOut(BaseModel):
     project_name: str
     pages: list[WikiPageOut]
     sidebar: list[WikiSidebarItemOut]
+    suggested_questions: list[str] = Field(default_factory=list)
 
 
 class WikiSearchResultOut(BaseModel):
@@ -234,6 +252,10 @@ class LearningPathNodeOut(BaseModel):
     position: int
     reason: str
     concept: ConceptOut | None = None
+    principles: str = ""
+    evidence_chip: str | None = None
+    pass_gate: str = ""
+    worksheet: str = ""
 
 
 class LearningPathOut(BaseModel):

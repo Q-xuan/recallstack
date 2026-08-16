@@ -47,3 +47,8 @@ export function useT(): (zh: string, en: string) => string {
 export function tNow(zh: string, en: string): string {
   return current === "zh" ? zh : en;
 }
+
+/** Current UI language without subscribing (API calls, module-level). */
+export function currentLang(): Lang {
+  return current;
+}

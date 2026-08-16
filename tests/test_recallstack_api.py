@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import re
 from pathlib import Path
 
@@ -12,6 +13,17 @@ from recallstack.bootstrap import init_recallstack
 from recallstack.db.session import reset_engine
 
 
+class _RecordingRunner:
+    """Capture analyze jobs without running them (avoids racing wait=true)."""
+
+    def __init__(self) -> None:
+        self.jobs: list[tuple] = []
+
+    def enqueue(self, name, func, *args, **kwargs):
+        self.jobs.append((name, func, args, kwargs))
+        return f"{name}-{len(self.jobs)}"
+
+
 @pytest.fixture()
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     db_path = tmp_path / "test.db"
@@ -19,6 +31,10 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # Keep API tests deterministic: never call external LLMs.
     monkeypatch.setenv("RECALLSTACK_LLM_ENABLED", "0")
     monkeypatch.setenv("RECALLSTACK_LLM_EVALUATION", "0")
+    runner = _RecordingRunner()
+    api_router_mod = importlib.import_module("recallstack.api.router")
+    monkeypatch.setattr(api_router_mod, "get_job_runner", lambda: runner)
+    monkeypatch.setattr("recallstack.jobs.get_job_runner", lambda: runner)
     reset_engine()
     init_recallstack(f"sqlite:///{db_path.as_posix()}")
 
@@ -42,6 +58,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     app = create_app()
     with TestClient(app) as c:
         c.fixture_repo = str(repo)  # type: ignore[attr-defined]
+        c.jobs = runner  # type: ignore[attr-defined]
         yield c
     reset_engine()
 
@@ -76,7 +93,7 @@ def test_create_repository_and_analyze_and_attempt(client: TestClient):
     concepts = client.get(f"/api/recallstack/repositories/{repo_id}/concepts")
     assert concepts.status_code == 200
     concept_list = concepts.json()["concepts"]
-    assert len(concept_list) >= 5
+    assert len(concept_list) >= 3
 
     path = client.get(f"/api/recallstack/repositories/{repo_id}/learning-path")
     assert path.status_code == 200
@@ -150,6 +167,82 @@ def test_reject_bad_git_url(client: TestClient):
     assert r.status_code == 400
 
 
+def test_create_repository_starts_analyze(client: TestClient):
+    runner: _RecordingRunner = client.jobs  # type: ignore[attr-defined]
+    runner.jobs.clear()
+    created = client.post(
+        "/api/recallstack/repositories",
+        json={
+            "source_type": "local",
+            "source_location": client.fixture_repo,  # type: ignore[attr-defined]
+            "name": "fixture",
+            "lang": "zh",
+        },
+    )
+    assert created.status_code == 200, created.text
+    assert any(job[0] == "analyze" for job in runner.jobs)
+    repo_id = created.json()["id"]
+    latest = client.get(f"/api/recallstack/repositories/{repo_id}/versions/latest")
+    assert latest.status_code == 200
+    assert latest.json()["status"] in {"pending", "queued"}
+    analyze_jobs = [job for job in runner.jobs if job[0] == "analyze"]
+    assert analyze_jobs[0][2][0] == repo_id
+    assert analyze_jobs[0][2][1] == "zh"
+
+
+def test_create_repository_analyze_start_failure_leaves_no_empty_repo(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    class _Boom:
+        def enqueue(self, *args, **kwargs):
+            raise RuntimeError("queue down")
+
+    api_router_mod = importlib.import_module("recallstack.api.router")
+    monkeypatch.setattr(api_router_mod, "get_job_runner", lambda: _Boom())
+    r = client.post(
+        "/api/recallstack/repositories",
+        json={
+            "source_type": "local",
+            "source_location": client.fixture_repo,  # type: ignore[attr-defined]
+        },
+    )
+    assert r.status_code == 503
+    detail = r.json()["detail"]
+    assert detail["code"] == "analyze_start_failed"
+    assert "could not start" in detail["message"].lower()
+    listed = client.get("/api/recallstack/repositories")
+    assert listed.status_code == 200
+    assert listed.json() == []
+
+
+def test_github_analyze_error_is_actionable(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    from repowiki.ingest.github import GitIngestError
+
+    def boom(*_a, **_k):
+        raise GitIngestError(
+            "private_or_not_found",
+            "GitHub returned not found. Private repos need REPOWIKI_GITHUB_TOKEN or GITHUB_TOKEN.",
+        )
+
+    monkeypatch.setattr("repowiki.ingest.github.ingest_github", boom)
+    created = client.post(
+        "/api/recallstack/repositories",
+        json={
+            "source_type": "github",
+            "source_location": "https://github.com/acme/private-demo",
+        },
+    )
+    assert created.status_code == 200, created.text
+    repo_id = created.json()["id"]
+    analyzed = client.post(
+        f"/api/recallstack/repositories/{repo_id}/analyze?wait=true"
+    )
+    assert analyzed.status_code == 400, analyzed.text
+    detail = analyzed.json()["detail"]
+    assert detail["code"] == "private_or_not_found"
+    assert "GITHUB_TOKEN" in detail["message"]
+
+
 def _analyzed_repo(client: TestClient) -> str:
     created = client.post(
         "/api/recallstack/repositories",
@@ -220,7 +313,10 @@ def test_concept_pages_cross_link_and_cite_evidence(client: TestClient):
     assert concept_pages, "analyze should emit concept pages"
     for page in concept_pages:
         assert page["concept_id"], "concept pages must resolve back to their concept row"
-        assert "difficulty" in page["content"].lower() or "难度" in page["content"]
+        assert "difficulty" not in page["content"].lower()
+        assert "难度" not in page["content"]
+        assert "本步要你干什么" not in page["content"]
+        assert "## 过关" not in page["content"]
 
     # At least one concept cites a source location in `path:line` form, which is
     # what the reader turns into an inline snippet.
@@ -228,10 +324,10 @@ def test_concept_pages_cross_link_and_cite_evidence(client: TestClient):
         re.search(r"`[\w./\-]+\.\w+:\d+", p["content"]) for p in concept_pages
     ), "expected at least one path:line source citation"
 
-    # Reading Guide steps link to the concept pages they describe.
+    # Reading Guide steps link to the concept pages they describe (zh 步骤 / en Step).
     guide = pages.get("reading-guide")
-    if guide:
-        assert "](concepts/" in guide["content"]
+    assert guide, "analyze should emit a reading-guide page"
+    assert "](concepts/" in guide["content"]
 
 
 def test_background_analyze_marks_version_queued(client: TestClient):
@@ -252,6 +348,157 @@ def test_source_preview_reads_a_nested_file(client: TestClient):
 
     assert r.status_code == 200, r.text
     assert "def main" in r.json()["content"] or "boot" in r.json()["content"]
+    assert r.json().get("annotations") == []
+
+
+def test_source_preview_serves_scanned_text_without_working_copy(client: TestClient, monkeypatch):
+    """GitHub/cloned repos have no local path; peek must use the analyze cache."""
+    import shutil
+
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    repo_id = _analyzed_repo(client)
+    fixture = Path(client.fixture_repo)  # type: ignore[attr-defined]
+    shutil.rmtree(fixture)
+
+    r = client.get(
+        "/api/recallstack/source",
+        params={"repository_id": repo_id, "path": "README.md", "start_line": 1, "end_line": 2},
+    )
+    assert r.status_code == 200, r.text
+    assert "Fixture" in r.json()["content"] or "Demo" in r.json()["content"]
+
+
+def test_source_preview_github_repo_uses_scan_cache(client: TestClient, monkeypatch):
+    from recallstack.db.models import Repository
+    from recallstack.db.session import session_scope
+
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    repo_id = _analyzed_repo(client)
+    with session_scope() as session:
+        row = session.get(Repository, repo_id)
+        assert row is not None
+        row.source_type = "github"
+        row.source_location = "https://github.com/example/fixture"
+        session.commit()
+
+    r = client.get(
+        "/api/recallstack/source",
+        params={"repository_id": repo_id, "path": "README.md", "start_line": 1, "end_line": 48},
+    )
+    assert r.status_code == 200, r.text
+    assert "Fixture" in r.json()["content"] or "Demo" in r.json()["content"]
+
+
+def test_source_preview_missing_file_is_chinese_error(client: TestClient, monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    repo_id = _analyzed_repo(client)
+    r = client.get(
+        "/api/recallstack/source",
+        params={"repository_id": repo_id, "path": "no-such-file.py"},
+    )
+    assert r.status_code == 404, r.text
+    body = r.json()
+    message = body.get("detail", {}).get("message") or body.get("detail") or ""
+    assert "找不到工作副本里的这个文件" in str(message)
+
+
+def test_source_preview_mini_repo_readme(client: TestClient, monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    mini = Path("fixtures/mini_repo").resolve()
+    created = client.post(
+        "/api/recallstack/repositories",
+        json={"source_type": "local", "source_location": str(mini), "name": "mini"},
+    )
+    assert created.status_code == 200, created.text
+    repo_id = created.json()["id"]
+    analyzed = client.post(f"/api/recallstack/repositories/{repo_id}/analyze?wait=true")
+    assert analyzed.status_code == 200, analyzed.text
+
+    r = client.get(
+        "/api/recallstack/source",
+        params={"repository_id": repo_id, "path": "README.md", "start_line": 1, "end_line": 48},
+    )
+    assert r.status_code == 200, r.text
+    assert "Mini Repo" in r.json()["content"]
+
+
+def test_learning_path_api_omits_filler_and_states_mission(client: TestClient, monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    repo_id = _analyzed_repo(client)
+    path = client.get(f"/api/recallstack/repositories/{repo_id}/learning-path")
+    assert path.status_code == 200, path.text
+    body = path.json()
+    assert (
+        "你要能指出进程怎么进" in body["description"]
+        or "先看进程怎么进" in body["description"]
+        or "Walk the trunk" in body["description"]
+        or "You own the trunk" in body["description"]
+    )
+    slugs = [n["concept"]["slug"] for n in body["nodes"] if n.get("concept")]
+    titles = [n["concept"]["title"] for n in body["nodes"] if n.get("concept")]
+    assert all(not s.startswith(("module-", "focus-", "file-")) for s in slugs)
+    assert all("README.md" not in t and "Cargo.toml" not in t for t in titles)
+    assert any(
+        "指出" in (n.get("reason") or "") or "point" in (n.get("reason") or "").lower()
+        for n in body["nodes"]
+    )
+    assert all(n.get("worksheet") for n in body["nodes"])
+    worksheet = body["nodes"][0]["worksheet"]
+    assert "## 本步要你干什么" in worksheet or "## What this step asks of you" in worksheet
+
+
+def test_wiki_get_upgrades_legacy_concept_markdown(client: TestClient, monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    repo_id = _analyzed_repo(client)
+    from sqlalchemy import select
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from recallstack.db.models import RepositoryVersion
+    from recallstack.db.session import session_scope
+
+    old = (
+        "# 项目目标\n\n"
+        "> why-line\n\n"
+        "## 为什么重要\n\n"
+        "> why-line\n\n"
+        "## 这份仓库做什么\n\n"
+        "goal body\n\n"
+        "## 源码证据\n\n"
+        "- `README.md:1-48`\n\n"
+        "## 自测\n\n"
+        "1. x\n"
+    )
+    with session_scope() as session:
+        version = session.scalars(
+            select(RepositoryVersion)
+            .where(RepositoryVersion.repository_id == repo_id)
+            .order_by(RepositoryVersion.created_at.desc())
+        ).first()
+        assert version is not None
+        payload = dict(version.wiki_pages or {})
+        pages = []
+        for page in payload.get("pages") or []:
+            if page.get("id") == "concepts/project-goal":
+                pages.append({**page, "content": old})
+            else:
+                pages.append(dict(page))
+        payload["pages"] = pages
+        version.wiki_pages = payload
+        flag_modified(version, "wiki_pages")
+        session.commit()
+
+    wiki = client.get(f"/api/recallstack/repositories/{repo_id}/wiki")
+    assert wiki.status_code == 200, wiki.text
+    page = next(p for p in wiki.json()["pages"] if p["id"] == "concepts/project-goal")
+    assert "## 本步要你干什么" not in page["content"]
+    assert "用两句话写出这个仓库为谁" not in page["content"]
+    assert "为什么重要" not in page["content"]
+    assert "`README.md:1-48`" in page["content"]
+    assert "点击展开" not in page["content"]
+    assert "## 过关" not in page["content"]
+    assert "## 它是什么" in page["content"]
+    assert "## 先回到原理" not in page["content"]
+    assert "goal body" in page["content"]
 
 
 def test_source_preview_refuses_secret_files(client: TestClient):
@@ -299,6 +546,17 @@ def test_unrecognized_progress_lines_pass_through():
     from recallstack.application.analyze_repository import AnalyzeRepositoryService
 
     assert AnalyzeRepositoryService._localize_progress("Something new") == "Something new"
+
+
+def test_multipass_progress_lines_are_localized(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    from recallstack.application.analyze_repository import AnalyzeRepositoryService
+
+    loc = AnalyzeRepositoryService._localize_progress
+    assert loc("Outlining wiki...") == "正在规划 Wiki 大纲"
+    assert loc("Writing 4 modules...") == "正在撰写 4 个模块"
+    assert loc("Wrote module 2/4") == "已撰写模块 2/4"
+    assert loc("Verifying citations...") == "正在核验引用"
 
 
 def test_starting_a_phase_clears_the_previous_detail():
@@ -420,3 +678,51 @@ def test_ask_unknown_repo_is_404(client: TestClient):
         "/api/recallstack/repositories/nope/ask", json={"question": "hi"}
     )
     assert resp.status_code == 404
+
+
+def test_ask_stream_falls_back_without_llm(client: TestClient):
+    """No API key: /ask/stream still exists and yields the extractive answer."""
+    repo_id = _analyzed_repo(client)
+    resp = client.post(
+        f"/api/recallstack/repositories/{repo_id}/ask/stream",
+        json={"question": "boot 函数在哪里定义?"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert "text/event-stream" in resp.headers.get("content-type", "")
+    body = resp.text
+    assert '"engine": "search"' in body or '"engine":"search"' in body
+    assert '"type": "content"' in body or '"type":"content"' in body
+    assert '"type": "done"' in body or '"type":"done"' in body
+
+
+def test_ask_stream_before_analysis_is_409(client: TestClient):
+    repo = client.post(
+        "/api/recallstack/repositories",
+        json={"source_type": "local", "source_location": client.fixture_repo},
+    ).json()
+    resp = client.post(
+        f"/api/recallstack/repositories/{repo['id']}/ask/stream",
+        json={"question": "anything"},
+    )
+    assert resp.status_code == 409
+
+
+def test_analyze_accepts_and_persists_lang(client: TestClient):
+    created = client.post(
+        "/api/recallstack/repositories",
+        json={
+            "source_type": "local",
+            "source_location": client.fixture_repo,
+            "name": "fixture",
+        },
+    )
+    assert created.status_code == 200, created.text
+    repo_id = created.json()["id"]
+    analyzed = client.post(
+        f"/api/recallstack/repositories/{repo_id}/analyze?wait=true&lang=zh"
+    )
+    assert analyzed.status_code == 200, analyzed.text
+    assert analyzed.json()["content_lang"] == "zh"
+    latest = client.get(f"/api/recallstack/repositories/{repo_id}/versions/latest")
+    assert latest.status_code == 200
+    assert latest.json()["content_lang"] == "zh"

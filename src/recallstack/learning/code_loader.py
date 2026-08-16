@@ -1,15 +1,63 @@
-"""Safely load source snippets for hints and evidence UI (local repos only)."""
+"""Load source snippets for the wiki peek and learning hints.
+
+Prefers scanned file text persisted at analyze time so GitHub/cloned
+repos can still expand citations. Falls back to the local working copy
+or the GitHub clone cache. Secrets are never served.
+"""
 
 from __future__ import annotations
 
+import json
+import logging
+import os
 from pathlib import Path
 from typing import Any
 
+from recallstack.learning.i18n import t
 from recallstack.security import (
     is_blocked_filename,
     normalize_repo_path,
     validate_local_path,
 )
+
+logger = logging.getLogger(__name__)
+
+_VERSION_FILES_DIR = Path("data") / "version_files"
+
+
+def _package_repo_root() -> Path:
+    # src/recallstack/learning/code_loader.py → checkout root
+    return Path(__file__).resolve().parents[3]
+
+
+def version_file_lookup_paths(version_id: str) -> list[Path]:
+    """CWD, RECALLSTACK_DATA_DIR, then the checkout's data/version_files."""
+    name = f"{str(version_id).strip()}.json"
+    if name == ".json":
+        return []
+    seen: set[str] = set()
+    out: list[Path] = []
+
+    def add(path: Path) -> None:
+        key = str(path)
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(path)
+
+    data_dir = os.environ.get("RECALLSTACK_DATA_DIR", "").strip()
+    if data_dir:
+        add(Path(data_dir) / "version_files" / name)
+    add(Path("data") / "version_files" / name)
+    add(_package_repo_root() / "data" / "version_files" / name)
+    return out
+
+
+def missing_working_copy_message() -> str:
+    return t(
+        "This file is not in the scanned working copy.",
+        "找不到工作副本里的这个文件",
+    )
 
 
 def resolve_local_repo_root(source_location: str) -> Path | None:
@@ -18,6 +66,170 @@ def resolve_local_repo_root(source_location: str) -> Path | None:
         return validate_local_path(source_location)
     except Exception:  # noqa: BLE001 — treat any security/path error as unavailable
         return None
+
+
+def version_files_path(version_id: str) -> Path:
+    return _VERSION_FILES_DIR / f"{str(version_id).strip()}.json"
+
+
+def save_version_file_texts(version_id: str, files: dict[str, str]) -> None:
+    """Persist scanned file texts keyed by repo-relative path."""
+    _VERSION_FILES_DIR.mkdir(parents=True, exist_ok=True)
+    clean: dict[str, str] = {}
+    for raw_path, text in files.items():
+        path = normalize_repo_path(raw_path)
+        if not path or not text or is_blocked_filename(path):
+            continue
+        if ".." in path.split("/") or path.startswith("/"):
+            continue
+        clean[path] = text
+    version_files_path(version_id).write_text(
+        json.dumps(clean, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+_HINT_BASENAMES = frozenset(
+    {
+        "tool_bridge.rs",
+        "bridge.rs",
+        "pager.rs",
+        "runtime.rs",
+        "conversation_util.rs",
+        "agent.rs",
+    }
+)
+
+
+def enrich_file_texts_from_working_copy(
+    file_texts: dict[str, str],
+    *,
+    source_type: str = "",
+    source_location: str = "",
+) -> dict[str, str]:
+    """Replace truncated store previews with the on-disk file when it is longer.
+
+    GET-only. Does not re-scan. ``version_id`` is omitted so we do not read
+    the same short cache back.
+    """
+    if not file_texts or not source_location:
+        return file_texts
+    out = dict(file_texts)
+    for path, text in list(file_texts.items()):
+        base = path.replace("\\", "/").rsplit("/", 1)[-1]
+        if base not in _HINT_BASENAMES:
+            continue
+        full = resolve_file_text(
+            source_type=source_type or "local",
+            source_location=source_location,
+            rel_path=path,
+            version_id=None,
+        )
+        if full and len(full.splitlines()) > len((text or "").splitlines()):
+            out[path] = full
+    return out
+
+
+def load_version_file_texts(version_id: str) -> dict[str, str]:
+    vid = str(version_id or "").strip()
+    if not vid:
+        return {}
+    tried: list[str] = []
+    for path in version_file_lookup_paths(vid):
+        tried.append(str(path))
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            logger.warning("learning-path: failed to parse scan store %s", path)
+            continue
+        if not isinstance(data, dict):
+            continue
+        texts = {
+            str(k): str(v)
+            for k, v in data.items()
+            if isinstance(k, str) and isinstance(v, str)
+        }
+        logger.debug("learning-path: loaded %d files from %s", len(texts), path)
+        return texts
+    logger.warning(
+        "learning-path: scan store missing for version %s (tried %s)",
+        vid,
+        tried,
+    )
+    return {}
+
+
+def _read_under(root: Path, rel: str) -> str | None:
+    if not root.is_dir():
+        return None
+    root = root.resolve()
+    file_path = (root / rel).resolve()
+    try:
+        file_path.relative_to(root)
+    except ValueError:
+        return None
+    if not file_path.is_file():
+        return None
+    try:
+        return file_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+def _github_clone_root(source_location: str) -> Path | None:
+    try:
+        from repowiki.ingest.github import cached_clone_path
+
+        return cached_clone_path(source_location)
+    except Exception:  # noqa: BLE001
+        logger.debug("github clone lookup failed for %s", source_location, exc_info=True)
+        return None
+
+
+def resolve_file_text(
+    *,
+    source_type: str,
+    source_location: str,
+    rel_path: str,
+    version_id: str | None = None,
+) -> str | None:
+    """Return full file text from scan cache, local disk, or github clone cache."""
+    rel = normalize_repo_path(rel_path)
+    if not rel or ".." in rel.split("/") or rel.startswith("/"):
+        return None
+    if is_blocked_filename(rel):
+        return None
+
+    if version_id:
+        cached = load_version_file_texts(version_id).get(rel)
+        if cached:
+            return cached
+
+    if source_type == "local":
+        root = resolve_local_repo_root(source_location)
+        if root:
+            text = _read_under(root, rel)
+            if text is not None:
+                return text
+
+    clone = _github_clone_root(source_location)
+    if clone:
+        return _read_under(clone, rel)
+    return None
+
+
+def slice_lines(text: str, start_line: int | None, end_line: int | None) -> tuple[str, int, int]:
+    lines = text.splitlines()
+    if not lines:
+        return "", 1, 1
+    s = max(1, start_line or 1)
+    s = min(s, len(lines))
+    e = min(len(lines), end_line or (s + 40))
+    e = max(e, s)
+    snippet = "\n".join(lines[s - 1 : e])
+    return snippet, s, e
 
 
 def load_code_lookup(
