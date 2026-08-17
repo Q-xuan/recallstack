@@ -276,7 +276,7 @@ _SLUG_PREFER_NEEDLES: dict[str, tuple[str, ...]] = {
 }
 
 _SOURCE_CHIP_RE = re.compile(
-    r"(?i)^[\w./\-]+(?:\.[A-Za-z0-9]+)+(?::\d+(?:-\d+)?)?$"
+    r"(?i)^[\w./\-]+(?:\.[A-Za-z0-9]+)+(?::\d+(?:-\d+)?)?(?:[ \t]+[A-Za-z_][A-Za-z0-9_]*)?$"
 )
 _CHROME_LINE_RE = re.compile(
     r"(?i)(\*\*(难度|Difficulty)\*\*.*(阅读时长|Reading time)|"

@@ -98,7 +98,7 @@ def test_bind_concept_refs_rust_ts_not_readme_or_manifest():
     store = {
         "README.md": "# grok\nA pager.\n",
         "Cargo.toml": "[workspace]\n",
-        "package.json": '{"name":"grok"}\n",
+        "package.json": '{"name": "grok"}\n',
         "crates/codegen/xai-grok-pager/src/app/agent.rs": ("\n" * 790)
         + "    pub fn start_turn(&mut self) {\n",
         "packages/cli/src/command.ts": (
