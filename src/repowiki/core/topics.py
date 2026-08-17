@@ -24,6 +24,12 @@ from repowiki.core.module_handbook import (
     is_canned_handbook_stub_text,
     topic_slug_is_pty_related,
 )
+from repowiki.core.path_class import (
+    is_agent_memory_path,
+    name_is_notes_product,
+    repo_is_notes_primary,
+    topic_paths_are_agent_memory,
+)
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 _SKIP_DIRS = {
@@ -333,6 +339,7 @@ def build_deterministic_topics(
     topics: list[TopicOutline] = []
     all_paths = [f.path for f in project.files]
     grok_product = repo_has_grok_product(all_paths)
+    notes_primary = repo_is_notes_primary(all_paths)
 
     readme = _find_readme(project)
     if readme:
@@ -395,6 +402,7 @@ def build_deterministic_topics(
                 f.path
                 for f in project.files
                 if _file_matches_system(f.path, topic_id, names)
+                and (notes_primary or not is_agent_memory_path(f.path))
             ]
             if not matched:
                 continue
@@ -403,6 +411,7 @@ def build_deterministic_topics(
                 f.path
                 for f in project.files
                 if _file_matches_system(f.path, topic_id, names)
+                and (notes_primary or not is_agent_memory_path(f.path))
             ]
         if not matched:
             continue
@@ -468,8 +477,10 @@ def build_deterministic_topics(
         for path, _ in ranked[:40]:
             if path in claimed or path not in files_by_path:
                 continue
+            if is_agent_memory_path(path) and not notes_primary:
+                continue
             leaf = _system_leaf(path)
-            if not leaf:
+            if not leaf or (leaf.startswith(".") and not notes_primary):
                 continue
             clusters[leaf].append(path)
         for leaf, paths in sorted(clusters.items(), key=lambda kv: -len(kv[1])):
@@ -614,6 +625,7 @@ def merge_topics(
         )
     _rebind_loop_and_assembly(by_id, known, base)
     _rebind_entry_and_boot(by_id, known, base)
+    _drop_notes_sidebar_topics(by_id, known, base)
     getting = [t for t in by_id.values() if t.section == "getting-started"]
     deep = [t for t in by_id.values() if t.section != "getting-started"]
     # Preserve LLM order for deep-dive, then leftover deterministic.
@@ -630,6 +642,52 @@ def merge_topics(
             ordered.append(item)
             seen.add(item.id)
     return (getting + ordered)[: TOPIC_PATH_CAP + 2]
+
+
+def _drop_notes_sidebar_topics(
+    by_id: dict[str, TopicOutline],
+    known: set[str],
+    base: list[TopicOutline],
+) -> None:
+    """Keep getting-started as how-to-run; drop notes-only sidebar peers."""
+    if repo_is_notes_primary(known):
+        return
+    zh = _topics_look_zh(list(by_id.values()) + list(base))
+    getting = by_id.get(GETTING_STARTED_ID)
+    if getting:
+        getting.id = GETTING_STARTED_ID
+        getting.section = "getting-started"
+        getting.title = "快速开始" if zh else "Quick start"
+        getting.purpose = (
+            "从 README / 上手步骤跑起来，再进架构。"
+            if zh
+            else "Get a working run from the README, then read architecture."
+        )
+        readme = next(
+            (p for p in getting.key_files if p.replace("\\", "/").lower() in {"readme.md", "readme"}),
+            "",
+        )
+        if not readme:
+            readme = next(
+                (
+                    p
+                    for p in known
+                    if p.replace("\\", "/").lower() in {"readme.md", "readme"}
+                ),
+                "",
+            )
+        if readme:
+            getting.key_files = [readme]
+    drop: list[str] = []
+    for tid, item in by_id.items():
+        if item.section == "getting-started" or item.id == GETTING_STARTED_ID:
+            continue
+        if topic_paths_are_agent_memory(item.key_files) or name_is_notes_product(
+            item.title or item.id
+        ):
+            drop.append(tid)
+    for tid in drop:
+        by_id.pop(tid, None)
 
 
 def _is_zh(language: str) -> bool:
@@ -858,6 +916,8 @@ def is_agent_loop_file(path: str) -> bool:
 
 def is_tool_system_file(path: str) -> bool:
     """ToolBridge / tools crate — not worktree CLIs."""
+    if is_agent_memory_path(path):
+        return False
     low = _norm_topic_path(path)
     if any(n in low for n in _BOOT_SKIP_NEEDLES):
         return False
@@ -949,6 +1009,8 @@ def _file_matches_system(path: str, topic_id: str, names: tuple[str, ...]) -> bo
 def _production_rank(path: str) -> int:
     low = _norm_topic_path(path)
     leaf = low.rsplit("/", 1)[-1]
+    if is_agent_memory_path(path):
+        return 8
     if (
         "/tests/" in f"/{low}/"
         or "/test/" in f"/{low}/"
@@ -1154,8 +1216,12 @@ def _pick_keys(
 
 
 def _system_leaf(path: str) -> str:
+    if is_agent_memory_path(path):
+        return ""
     parts = [p for p in path.replace("\\", "/").split("/") if p and p not in _SKIP_DIRS]
     if not parts:
+        return ""
+    if parts[0].startswith("."):
         return ""
     if len(parts) >= 2 and parts[0] in {"crates", "packages", "apps"}:
         return parts[1]
@@ -1250,6 +1316,8 @@ def codebase_structure_for(
         parts = [p for p in f.path.replace("\\", "/").split("/") if p]
         if not parts or parts[0] in _SKIP_DIRS:
             continue
+        if is_agent_memory_path(f.path) or parts[0].startswith("."):
+            continue
         if parts[0] in {"crates", "packages", "apps"} and len(parts) > 1:
             name, loc = parts[1], f"{parts[0]}/{parts[1]}"
         elif len(parts) == 1:
@@ -1272,6 +1340,10 @@ def subsystems_from_topics(topics: list[TopicOutline], *, limit: int = 8) -> lis
     out: list[Subsystem] = []
     for topic in topics:
         if topic.section == "getting-started" or topic.id == GETTING_STARTED_ID:
+            continue
+        if topic_paths_are_agent_memory(topic.key_files) or name_is_notes_product(
+            topic.title or topic.id
+        ):
             continue
         types = [
             KeyType(

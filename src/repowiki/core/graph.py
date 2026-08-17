@@ -10,6 +10,7 @@ import networkx as nx
 
 from repowiki.core.models import ProjectContext
 from repowiki.core.modules import group_into_modules, module_index
+from repowiki.core.path_class import is_agent_memory_path, repo_is_notes_primary
 
 # import pattern regexes by language
 _IMPORT_PATTERNS = {
@@ -140,9 +141,17 @@ class DependencyGraph:
         return "\n".join(lines)
 
     def module_weights(self) -> dict[str, float]:
-        """Total PageRank each module's files carry."""
+        """Total PageRank each module's files carry.
+
+        Agent-notes files stay in the graph (and version_files) but do not
+        out-sum ``packages/`` / ``apps/`` just because there are hundreds of
+        isolated markdown nodes.
+        """
+        notes_primary = repo_is_notes_primary(self._file_paths)
         weights: dict[str, float] = {}
         for path, score in self.rank_files():
+            if is_agent_memory_path(path) and not notes_primary:
+                score *= 0.02
             weights[self.module_of(path)] = weights.get(self.module_of(path), 0.0) + score
         return weights
 

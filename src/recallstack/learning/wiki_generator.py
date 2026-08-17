@@ -38,6 +38,7 @@ from repowiki.core.models import (
 )
 from repowiki.core.module_handbook import fallback_module_doc
 from repowiki.core.modules import group_into_modules
+from repowiki.core.path_class import prefer_product_overview
 from repowiki.core.topics import (
     codebase_structure_for,
     fallback_topic_doc,
@@ -179,7 +180,9 @@ def build_deterministic_wiki_data(
         see_also=topic_wiki_links(outline.topics),
         citations=cites,
         term_tips=_generic_term_tips(),
+        setup_instructions=_setup_instructions(project),
     )
+    prefer_product_overview(overview, project, language=lang)
 
     module_docs = [
         fallback_module_doc(
@@ -904,6 +907,7 @@ def build_wiki_payload(
         wiki_data = build_deterministic_wiki_data(project, graph, concepts)
     wiki_data = verify_wiki_data(wiki_data, project)
     lang = content_lang()
+    prefer_product_overview(wiki_data.overview, project, language=lang)
     entry_files = [
         f.path for f in project.files if getattr(f, "is_entrypoint", False)
     ]
@@ -958,6 +962,32 @@ def build_wiki_payload(
         "topic_plan": topic_plan,
         "ground_revision": WIKI_GROUND_REVISION,
     }
+
+
+def _setup_instructions(project: ProjectContext) -> list[str]:
+    """How-to-run steps when the tree looks like an npm / source / Web UI repo."""
+    paths = {(f.path or "").replace("\\", "/").lower() for f in project.files}
+    js_workspace = bool(
+        paths
+        & {
+            "package.json",
+            "pnpm-workspace.yaml",
+            "yarn.lock",
+            "pnpm-lock.yaml",
+        }
+    )
+    if not js_workspace:
+        return []
+    return [
+        t(
+            "Install at the repo root with the package manager the README names (npm / pnpm / yarn).",
+            "在仓库根按 README 写的包管理器安装（npm / pnpm / yarn）。",
+        ),
+        t(
+            "Start from source or the Web UI the README documents, then read architecture.",
+            "按 README 从源码或 Web UI 启动，确认进程起来后再读架构。",
+        ),
+    ]
 
 
 def _sidebar_to_dict(item: Any) -> dict[str, Any]:

@@ -38,6 +38,11 @@ from repowiki.core.models import (
 from repowiki.core.module_handbook import fallback_module_doc, is_unusable_topic_stub_doc
 from repowiki.core.modules import group_into_modules
 from repowiki.core.outline import build_deterministic_outline, merge_outline
+from repowiki.core.path_class import (
+    is_agent_memory_path,
+    prefer_product_overview,
+    repo_is_notes_primary,
+)
 from repowiki.core.topics import (
     GROK_LOOP_SEQUENCE,
     codebase_structure_for,
@@ -173,7 +178,7 @@ class Analyzer:
         base = build_deterministic_outline(
             project, modules, graph, language=self._lang()
         )
-        cache_key = f"outline:v3:{self.language}:{tree_hash}"
+        cache_key = f"outline:v4:{self.language}:{tree_hash}"
         cached = await self.cache.get(cache_key)
         if cached:
             try:
@@ -210,7 +215,14 @@ class Analyzer:
 
         module_lines = []
         weights = graph.module_weights()
+        notes_primary = repo_is_notes_primary(f.path for f in project.files)
         for name, files in sorted(modules.items(), key=lambda kv: -weights.get(kv[0], 0.0)):
+            if (
+                not notes_primary
+                and files
+                and all(is_agent_memory_path(f.path) for f in files)
+            ):
+                continue
             module_lines.append(
                 f"- {name}: {len(files)} files, PageRank weight {weights.get(name, 0.0):.4f}"
             )
@@ -277,7 +289,7 @@ class Analyzer:
         outline: WikiOutline | None = None,
         graph: DependencyGraph | None = None,
     ) -> ProjectOverview:
-        cache_key = f"overview:v4:{self.language}:{tree_hash}"
+        cache_key = f"overview:v5:{self.language}:{tree_hash}"
         cached = await self.cache.get(cache_key)
         if cached:
             try:
@@ -769,13 +781,22 @@ class Analyzer:
         limit: int = 20,
     ) -> str:
         ranked = graph.rank_files()
+        notes_primary = repo_is_notes_primary(f.path for f in project.files)
+        if not notes_primary:
+            ranked = [
+                (path, score)
+                for path, score in ranked
+                if not is_agent_memory_path(path)
+            ]
         by_path = {f.path: f for f in project.files}
         ranked_paths = [path for path, _ in ranked[:limit]]
         seen = set(ranked_paths)
         for f in project.files:
             if len(ranked_paths) >= limit:
                 break
-            if f.path not in seen:
+            if f.path not in seen and (
+                notes_primary or not is_agent_memory_path(f.path)
+            ):
                 ranked_paths.append(f.path)
                 seen.add(f.path)
 
@@ -916,6 +937,36 @@ class Analyzer:
             overview.tech_stack = filter_tech_stack(overview.tech_stack, project)
         if not overview.term_tips:
             overview.term_tips = _generic_term_tips(self._lang())
+        prefer_product_overview(overview, project, language=self._lang())
+        if not overview.runtime_flow:
+            if zh:
+                overview.runtime_flow = (
+                    "请求从入口进程进来，经过枢纽包上的类型，再交到依赖方。"
+                    "下面的结构图按这条链路画，而不是按 crate 目录。"
+                )
+            else:
+                overview.runtime_flow = (
+                    "Work enters at the process entrypoint, moves through hub types, "
+                    "then out to dependents. The diagram follows that call, not the crate tree."
+                )
+        if not overview.document_scope:
+            if zh:
+                overview.document_scope = (
+                    f"{project.name} 的目标、一次真实调用经过谁、仓库怎么拆。"
+                    "关键类型保持英文 identifier，证据用 `path:line Symbol` 贴在断言旁边。"
+                )
+            else:
+                overview.document_scope = (
+                    f"{project.name}: the goal, who a real call passes through, "
+                    "and how the repo is split. Key types stay English identifiers; "
+                    "evidence is `path:line Symbol` next to the claim."
+                )
+        if not overview.description:
+            overview.description = (
+                (readme.content or readme.preview or "").strip()[:800]
+                if readme and (readme.content or readme.preview)
+                else (outline.overview_focus if outline else "")
+            )
         return overview
 
     def _refill_grounded_diagrams(

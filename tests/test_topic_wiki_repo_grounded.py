@@ -20,6 +20,9 @@ from repowiki.core.models import (
     ProjectOverview,
     WikiData,
 )
+from repowiki.core.modules import group_into_modules
+from repowiki.core.outline import build_deterministic_outline, merge_outline
+from repowiki.core.scanner import build_file_tree
 from repowiki.core.topics import build_deterministic_topics
 from repowiki.core.wiki_builder import collapse_repeated_mermaid_labels
 
@@ -110,6 +113,57 @@ are providers. `vendor/cordis` loads plugins onto ctx.
         ],
         file_tree="",
     )
+
+
+def _dsh_project_with_notes() -> ProjectContext:
+    """Harness product plus a bulky `.agents/notes` tree (DeepWiki gap)."""
+    project = _dsh_project()
+    readme = next(f for f in project.files if f.path == "README.md")
+    readme.content = (
+        (readme.content or "")
+        + "\n\n## Install\n\n```bash\npnpm install\npnpm --filter dsh start\n"
+        "pnpm --filter @dsh/web dev\n```\n"
+    )
+    readme.preview = readme.content[:400]
+    extras = [
+        _file(
+            ".i18n.yaml",
+            "nav:\n  overview: 概述\n  notes: 决策日志\n",
+            language="yaml",
+        ),
+        _file(
+            ".agents/notes/archived/old-decision.md",
+            "# archived\n旧决策，不是产品主线。\n",
+            language="markdown",
+        ),
+        _file(
+            ".agents/notes/tools-schema.md",
+            "# 工具系统与 schema\n笔记，不是 ToolBridge。\n",
+            language="markdown",
+        ),
+    ]
+    for i in range(36):
+        extras.append(
+            _file(
+                f".agents/notes/decision-{i:02d}.md",
+                f"# Decision {i}\n这是决策日志，不是 dsh 源码。\n",
+                language="markdown",
+            )
+        )
+    project.files.extend(extras)
+    project.file_tree = build_file_tree(project.files)
+    return project
+
+
+_NOTES_AS_PRODUCT = (
+    "不是源码实现",
+    "只是决策日志",
+    "决策日志仓库",
+    "架构记忆库",
+    "notes 目录层级",
+    "i18n 元数据与导航翻译",
+    "archived 决策日志",
+)
 
 
 def _all_text(payload: dict) -> str:
@@ -256,6 +310,131 @@ def test_dsh_like_polluted_llm_overview_is_rewritten_to_tree(monkeypatch):
     assert wiki_payload_cites_foreign_tree(stale, texts)
     assert not should_reuse_analyzed_wiki(stale, texts)
     assert should_reuse_analyzed_wiki(payload, texts)
+
+
+def test_dsh_like_notes_volume_does_not_steal_overview(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    project = _dsh_project_with_notes()
+    graph = DependencyGraph.build_from_project(project)
+    topics = build_deterministic_topics(project, graph, language="zh")
+    ids = {t.id for t in topics}
+    titles = " ".join(t.title for t in topics)
+    blob = " ".join(
+        f"{t.id} {t.title} {t.purpose} {' '.join(t.key_files)}" for t in topics
+    )
+
+    assert "getting-started" in ids
+    gs = next(t for t in topics if t.id == "getting-started")
+    assert gs.title == "快速开始"
+    assert gs.key_files == ["README.md"]
+    assert "notes 目录" not in gs.title
+    assert any(
+        token in ids
+        for token in ("capability-seam", "plugin-architecture", "cordis", "core")
+    )
+    assert any(token in blob.lower() for token in ("plugin", "cordis", "seam"))
+    assert "i18n" not in ids
+    assert "archived" not in ids
+    assert "agents" not in ids
+    assert "决策日志" not in titles
+    assert "i18n 元数据" not in titles
+    assert not any(p.startswith(".agents/") for t in topics for p in t.key_files)
+    assert not any(p == ".i18n.yaml" for t in topics for p in t.key_files)
+
+    payload = build_wiki_payload(project, graph, [])
+    text = _all_text(payload)
+    index = next(p for p in payload["pages"] if p["id"] == "index")
+    gs_page = next(p for p in payload["pages"] if p["id"] == "getting-started")
+    assert index["title"] == "概述"
+    assert "# deepseek-harness" in index["content"]
+    assert "决策日志仓库" not in index["content"]
+    for phrase in _NOTES_AS_PRODUCT:
+        assert phrase not in index["content"], phrase
+        assert phrase not in gs_page["title"], phrase
+        assert phrase not in gs_page["content"].split("\n")[0], phrase
+    assert gs_page["title"] == "快速开始"
+    assert "notes 目录层级" not in gs_page["title"]
+    assert "跑起来" in gs_page["content"]
+    assert any(tok in gs_page["content"] for tok in ("pnpm", "npm", "源码", "Web UI"))
+    assert any(
+        token in text
+        for token in ("Cordis", "plugin", "Capability Seam", "packages/core")
+    )
+    sidebar_titles = []
+    for item in payload.get("sidebar") or []:
+        sidebar_titles.append(item.get("title") or "")
+        for child in item.get("children") or []:
+            sidebar_titles.append(child.get("title") or "")
+    side = " ".join(sidebar_titles)
+    assert "Cordis" in side or "Plugin" in side or "Capability Seam" in side
+    assert "i18n 元数据" not in side
+    assert "archived 决策日志" not in side
+    assert "notes 目录层级" not in side
+
+    modules = group_into_modules(project.files)
+    outline = build_deterministic_outline(project, modules, graph, language="zh")
+    assert ".agents" not in outline.overview_focus
+    assert "packages" in outline.overview_focus or "apps" in outline.overview_focus
+    tree = project.file_tree
+    assert "packages/" in tree or "core" in tree
+    assert "decision-00.md" not in tree
+    assert "agent-notes files" in tree
+
+    concepts = ConceptExtractor().extract(project, graph).concepts
+    path = PathBuilder().build(concepts)
+    path_slugs = [n.concept_slug for n in path.nodes]
+    assert path_slugs[0] == "project-goal"
+    assert "agents" not in path_slugs
+    assert "notes" not in path_slugs
+    assert "i18n" not in path_slugs
+    assert "archived" not in path_slugs
+
+
+def test_dsh_like_notes_as_product_llm_overview_is_rewritten(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    project = _dsh_project_with_notes()
+    graph = DependencyGraph.build_from_project(project)
+    polluted = WikiData(
+        overview=ProjectOverview(
+            name="DeepSeek Harness 决策日志仓库（.agents/notes）",
+            one_liner="这个仓库不是 dsh 的源码实现，而是决策日志与架构记忆库。",
+            document_scope="这个仓库不是 dsh 的源码实现，而是决策日志与架构记忆库。",
+            description="notes 目录层级与生命周期。",
+            runtime_flow="从 `.agents/notes` 读决策日志。",
+        )
+    )
+    cleaned = verify_wiki_data(polluted, project)
+    payload = build_wiki_payload(project, graph, [], wiki_data=cleaned)
+    index = next(p for p in payload["pages"] if p["id"] == "index")
+    assert "决策日志仓库" not in index["content"]
+    assert "不是" not in index["content"].split("\n")[0]
+    assert "# deepseek-harness" in index["content"]
+    assert any(
+        token in _all_text(payload)
+        for token in ("Cordis", "plugin", "Capability Seam", "packages/core")
+    )
+    gs = next(p for p in payload["pages"] if p["id"] == "getting-started")
+    assert gs["title"] == "快速开始"
+    assert "notes 目录层级" not in gs["title"]
+
+
+def test_merge_outline_drops_notes_as_product_focus():
+    project = _dsh_project_with_notes()
+    modules = group_into_modules(project.files)
+    graph = DependencyGraph.build_from_project(project)
+    base = build_deterministic_outline(project, modules, graph, language="zh")
+    from repowiki.core.models import WikiOutline
+
+    llm = WikiOutline(
+        overview_focus="这个仓库不是源码实现，只是决策日志。",
+        architecture_focus="Hub packages to explain first: `.agents/notes`.",
+        topics=[],
+    )
+    merged = merge_outline(
+        base, llm, known_modules=set(modules), known_paths={f.path for f in project.files}
+    )
+    assert "不是源码" not in merged.overview_focus
+    assert "只是决策日志" not in merged.overview_focus
 
 
 def test_mermaid_does_not_keep_start_turn_self_loop():

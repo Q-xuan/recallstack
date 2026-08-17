@@ -137,6 +137,9 @@ class WikiBuilder:
         pages: list[WikiPage] = []
 
         overview = wiki_data.overview
+        from repowiki.core.path_class import prefer_product_overview
+
+        prefer_product_overview(overview, project, language=lang)
         overview_md = self._build_overview_page(
             overview,
             project,
@@ -151,13 +154,17 @@ class WikiBuilder:
             (t for t in (wiki_data.topics or []) if t.section == "getting-started" or t.name == "getting-started"),
             None,
         )
+        has_readme = any(
+            (f.path or "").replace("\\", "/").lower() in {"readme.md", "readme"}
+            for f in project.files
+        )
         if gs_topic and (overview.setup_instructions or gs_topic.files or overview.description):
-            gs_title = gs_topic.title or structural_title("quick-start", lang)
+            gs_title = structural_title("quick-start", lang)
             gs_md = self._build_getting_started_page(
                 overview, gs_topic, lang, topics=wiki_data.topics
             )
             pages.append(WikiPage(id="getting-started", title=gs_title, content=gs_md, order=1))
-        elif overview.setup_instructions:
+        elif overview.setup_instructions or overview.description or has_readme:
             gs_title = structural_title("quick-start", lang)
             gs_md = self._build_getting_started_page(
                 overview, None, lang, topics=wiki_data.topics
@@ -351,23 +358,27 @@ class WikiBuilder:
                 f"{follow}\n"
             )
         one = (getattr(overview, "one_liner", "") or "").strip()
-        if one:
+        from repowiki.core.path_class import prose_treats_notes_as_product
+
+        if one and not prose_treats_notes_as_product(one):
             lines.append(f"{one}\n")
         if language == "zh":
             lines.append(f"## {structural_title('what-is', language)}\n")
             desc = (overview.description or "").strip()
-            if desc:
-                lines.append(f"{desc[:1200]}\n")
-            else:
-                lines.append("从 README 的启动步骤跑起来，确认 TUI / headless / ACP 三种模式之一能进主循环。\n")
-        else:
-            lines.append(f"## {structural_title('what-is', language)}\n")
-            desc = (overview.description or "").strip()
-            if desc:
+            if desc and not prose_treats_notes_as_product(desc):
                 lines.append(f"{desc[:1200]}\n")
             else:
                 lines.append(
-                    "Follow the README until the process actually starts, then read architecture.\n"
+                    "从 README 的 npm / pnpm / 源码 / Web UI 启动步骤把项目跑起来，再进架构。\n"
+                )
+        else:
+            lines.append(f"## {structural_title('what-is', language)}\n")
+            desc = (overview.description or "").strip()
+            if desc and not prose_treats_notes_as_product(desc):
+                lines.append(f"{desc[:1200]}\n")
+            else:
+                lines.append(
+                    "Follow the README (npm / pnpm / source / Web UI) until the process starts, then read architecture.\n"
                 )
         flow = (getattr(overview, "runtime_flow", "") or "").strip()
         if flow:
@@ -899,7 +910,24 @@ def _planned_page_ids(topics) -> set[str]:
 
 
 def _keep_built_topic(topic, project_paths: list[str]) -> bool:
+    from repowiki.core.path_class import (
+        name_is_notes_product,
+        repo_is_notes_primary,
+        topic_paths_are_agent_memory,
+    )
+
     slug = getattr(topic, "name", "") or ""
+    title = getattr(topic, "title", "") or ""
+    files = getattr(topic, "files", None) or []
+    paths = [
+        getattr(item, "path", None) or (item if isinstance(item, str) else "")
+        for item in files
+    ]
+    paths = [p for p in paths if p]
+    if not repo_is_notes_primary(project_paths) and (
+        topic_paths_are_agent_memory(paths) or name_is_notes_product(title or slug)
+    ):
+        return False
     if not is_generic_web_slug(slug):
         return True
     return repo_has_web_system(project_paths, slug)
