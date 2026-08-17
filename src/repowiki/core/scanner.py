@@ -8,6 +8,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 
 from repowiki.core.models import FileInfo
+from repowiki.core.path_class import is_agent_memory_path, walk_dir_priority
 
 logger = logging.getLogger(__name__)
 
@@ -217,18 +218,31 @@ def _is_entrypoint(rel_path: str) -> bool:
 
 
 def build_file_tree(files: list[FileInfo], max_lines: int = 200) -> str:
-    """render an ascii tree from the file list, similar to `tree` command."""
-    # collect unique directories + files
+    """render an ascii tree from the file list, similar to `tree` command.
+
+    Agent-notes trees (``.agents/notes``, ``.i18n.yaml``) collapse to a
+    one-line summary so a 200-line cap cannot hide ``packages/`` / ``apps/``.
+    """
+    product_files = [f for f in files if not is_agent_memory_path(f.path)]
+    notes_files = [f for f in files if is_agent_memory_path(f.path)]
+
     entries: set[str] = set()
-    for f in files:
+    for f in product_files:
         entries.add(f.path)
         parts = Path(f.path).parts
         for i in range(1, len(parts)):
             entries.add(str(Path(*parts[:i])) + "/")
 
     sorted_entries = sorted(entries)
+    notes_roots: dict[str, int] = {}
+    for f in notes_files:
+        root = f.path.replace("\\", "/").split("/", 1)[0]
+        notes_roots[root] = notes_roots.get(root, 0) + 1
+    reserve = len(notes_roots) + (1 if len(sorted_entries) > max_lines else 0)
+    budget = max(8, max_lines - reserve)
+
     lines = []
-    for entry in sorted_entries[:max_lines]:
+    for entry in sorted_entries[:budget]:
         depth = entry.rstrip("/").count(os.sep)
         indent = "  " * depth
         name = Path(entry.rstrip("/")).name
@@ -236,8 +250,12 @@ def build_file_tree(files: list[FileInfo], max_lines: int = 200) -> str:
             name += "/"
         lines.append(f"{indent}{name}")
 
-    if len(sorted_entries) > max_lines:
-        lines.append(f"  ... and {len(sorted_entries) - max_lines} more entries")
+    if len(sorted_entries) > budget:
+        lines.append(f"  ... and {len(sorted_entries) - budget} more entries")
+    for root, n in sorted(notes_roots.items()):
+        lines.append(
+            f"{root}/  ({n} agent-notes files; decision log, not the product)"
+        )
     return "\n".join(lines)
 
 
@@ -265,7 +283,7 @@ def scan_directory(
             if ignore_rules.matches(rel_dir, is_dir=True):
                 continue
             kept_dirs.append(dirname)
-        dirnames[:] = kept_dirs
+        dirnames[:] = sorted(kept_dirs, key=walk_dir_priority)
 
         for fname in filenames:
             if len(results) >= max_files:

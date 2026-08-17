@@ -1,4 +1,5 @@
-from repowiki.core.scanner import scan_directory
+from repowiki.core.models import FileInfo
+from repowiki.core.scanner import build_file_tree, scan_directory
 
 
 def test_scan_skips_minified_suffixes(tmp_path):
@@ -71,3 +72,46 @@ def test_scanned_paths_are_posix_so_imports_can_resolve(tmp_path):
 
     assert "src/app/services/users.py" in paths
     assert not any("\\" in p for p in paths)
+
+
+def test_scan_walks_packages_before_agents_notes(tmp_path):
+    notes = tmp_path / ".agents" / "notes"
+    notes.mkdir(parents=True)
+    for i in range(40):
+        (notes / f"decision-{i:02d}.md").write_text(f"# n{i}\n", encoding="utf-8")
+    pkg = tmp_path / "packages" / "core" / "src"
+    pkg.mkdir(parents=True)
+    (pkg / "index.ts").write_text("export class Harness {}\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# harness\n", encoding="utf-8")
+
+    files = scan_directory(tmp_path, max_files=20)
+    paths = [f.path.replace("\\", "/") for f in files]
+    assert "packages/core/src/index.ts" in paths
+    assert "README.md" in paths
+
+
+def test_file_tree_collapses_agents_notes_so_packages_remain():
+    files = [
+        FileInfo(path="README.md", size=8, language="markdown", content="# hi\n"),
+        FileInfo(
+            path="packages/core/src/index.ts",
+            size=20,
+            language="typescript",
+            content="export class Harness {}\n",
+        ),
+    ]
+    for i in range(80):
+        files.append(
+            FileInfo(
+                path=f".agents/notes/decision-{i:02d}.md",
+                size=10,
+                language="markdown",
+                content=f"# n{i}\n",
+            )
+        )
+    tree = build_file_tree(files, max_lines=30)
+    assert "packages" in tree
+    assert "index.ts" in tree
+    assert "decision-00.md" not in tree
+    assert "agent-notes files" in tree
+    assert ".agents/" in tree

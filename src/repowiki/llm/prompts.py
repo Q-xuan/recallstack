@@ -70,6 +70,25 @@ def _tree_has_grok_product(file_tree: str, key_files: str) -> bool:
     return tree_has_grok_product(file_tree or "", key_files or "")
 
 
+def _product_vs_notes_rules() -> str:
+    """Keep overview / topics on the product tree, not agent decision logs."""
+    return (
+        "PRODUCT vs NOTES: `.agents/notes`, archived notes, and `.i18n.yaml` are "
+        "decision logs / nav metadata — NOT the product. "
+        "When the tree has `packages/`, `apps/`, `docs/architecture.md`, or README "
+        "describing a plugin harness, the overview MUST name that product "
+        "(Cordis / plugin / Capability Seam / packages / apps). "
+        "FORBIDDEN overview name: '决策日志仓库（.agents/notes）' or any notes-tree nickname. "
+        "FORBIDDEN lede: claiming this repo is not the source implementation, "
+        "or that it is only a decision-log / architecture memory. "
+        "getting-started is how to run (npm / pnpm / source / Web UI from README), "
+        "never a notes-directory lifecycle page. "
+        "Do not mint deep-dive topics for i18n metadata, archived notes, or "
+        "notes-only trees when product packages exist. Notes may be mentioned "
+        "in passing; they must not be the H1 or the first sentence. "
+    )
+
+
 def _tree_grounding_rules(file_tree: str, key_files: str) -> str:
     """Hard constraint: only cite paths/symbols that appear in this tree."""
     if _tree_has_grok_product(file_tree, key_files):
@@ -188,7 +207,8 @@ def build_outline_prompt(
                 "Do NOT emit modules[], reading_order, or emphasized_pages — those are planned locally. "
                 "Do NOT dump a crate inventory. Keep purpose to one sentence. "
                 "overview_focus and architecture_focus must be narrative (responsibilities and wiring), "
-                "never a PageRank file dump.\n\n"
+                "never a PageRank file dump. "
+                f"{_product_vs_notes_rules()}\n\n"
                 f"{_json_instruction(language)}"
             ),
         },
@@ -310,6 +330,7 @@ def build_overview_prompt(
                 "actually appear in the tree. Leave tech_stack empty when unsure. "
                 f"{_term_tips_rules(required=True)} "
                 "citations.path MUST be a real path from the tree. Omit citations rather than invent paths. "
+                f"{_product_vs_notes_rules()} "
                 f"{_tree_grounding_rules(file_tree, key_files)}\n\n"
                 f"{_json_instruction(language)}"
             ),
@@ -566,6 +587,7 @@ def build_architecture_prompt(
                 "description must explain the system as a call path, not list heaviest files. "
                 "Never write a method dump or homework worksheet. "
                 "Never invent AgentLoop. "
+                f"{_product_vs_notes_rules()} "
                 f"{_tree_grounding_rules(file_tree, key_files)}"
                 + (
                     " WHEN start_turn exists: live agent loop is pager dispatch → start_turn → "

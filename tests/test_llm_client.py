@@ -113,6 +113,12 @@ def test_zh_prompts_ask_for_handbook_prose_and_term_tips():
     assert "AgentLoop" in arch[-1]["content"]
     assert "xai-grok-pager" in arch[-1]["content"]
     assert "version_files" in arch[-1]["content"]
+    assert "PRODUCT vs NOTES" in overview_user
+    assert ".agents/notes" in overview_user
+    assert "决策日志仓库" in overview_user
+    outline = build_outline_prompt("tree", "mods", "ranks", "entries", "zh")
+    assert "PRODUCT vs NOTES" in outline[-1]["content"]
+    assert "getting-started is how to run" in outline[-1]["content"]
     assert "TurnRunning" not in arch[-1]["content"]
     grok_arch = build_architecture_prompt(
         "crates/xai-grok-pager/src/lib.rs\ncrates/xai-grok-agent/src/turn.rs",

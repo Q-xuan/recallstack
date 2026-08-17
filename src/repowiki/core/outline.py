@@ -11,6 +11,12 @@ from repowiki.core.models import (
     ProjectContext,
     WikiOutline,
 )
+from repowiki.core.path_class import (
+    is_agent_memory_path,
+    is_product_path,
+    prose_treats_notes_as_product,
+    repo_is_notes_primary,
+)
 
 # How many modules get the DeepWiki-style write prompt. A third of a 24-page
 # wiki is eight longform pages; the rest stay standard/brief so token cost
@@ -44,7 +50,7 @@ def build_deterministic_outline(
     ranked_files = graph.rank_files()
     rank_index = {path: i for i, (path, _) in enumerate(ranked_files)}
 
-    names = sorted(modules, key=lambda n: (-weights.get(n, 0.0), n))
+    names = sorted(modules, key=lambda n: _module_hub_key(n, modules, weights))
     n_deep = 0
     if names:
         n_deep = max(_MIN_DEEP, min(_MAX_DEEP, ceil(len(names) * _DEEP_FRACTION)))
@@ -98,7 +104,16 @@ def build_deterministic_outline(
             )
         )
 
-    top_mods = names[: min(6, len(names))]
+    top_mods = [
+        n
+        for n in names
+        if not (
+            modules.get(n)
+            and all(is_agent_memory_path(f.path) for f in modules[n])
+        )
+    ][:6]
+    if not top_mods:
+        top_mods = names[: min(6, len(names))]
     overview_bits = [
         f"{project.name} is organized as directory modules ({len(project.files)} files)."
     ]
@@ -187,13 +202,44 @@ def merge_outline(
 
     topics = merge_topics(list(base.topics), list(llm.topics or []), known_paths)
 
+    overview_focus = llm.overview_focus or base.overview_focus
+    architecture_focus = llm.architecture_focus or base.architecture_focus
+    if not repo_is_notes_primary(known_paths):
+        if prose_treats_notes_as_product(overview_focus):
+            overview_focus = base.overview_focus
+        if prose_treats_notes_as_product(architecture_focus):
+            architecture_focus = base.architecture_focus
+
     return WikiOutline(
-        overview_focus=llm.overview_focus or base.overview_focus,
-        architecture_focus=llm.architecture_focus or base.architecture_focus,
+        overview_focus=overview_focus,
+        architecture_focus=architecture_focus,
         emphasized_pages=emphasized,
         reading_order=reading,
         modules=[by_name[n] for n in by_name],
         topics=topics,
+    )
+
+
+def _module_hub_key(
+    name: str,
+    modules: dict[str, list[FileInfo]],
+    weights: dict[str, float],
+) -> tuple:
+    """Product packages first; notes-only trees sort last even if numerous."""
+    files = modules.get(name) or []
+    notes_only = bool(files) and all(is_agent_memory_path(f.path) for f in files)
+    has_entry = any(getattr(f, "is_entrypoint", False) for f in files)
+    has_product = has_entry or any(is_product_path(f.path) for f in files)
+    readme_only = bool(files) and all(
+        (f.path or "").replace("\\", "/").lower() in {"readme.md", "readme"}
+        or getattr(f, "is_config", False)
+        for f in files
+    )
+    return (
+        1 if notes_only else 0,
+        0 if (has_product and not readme_only) or has_entry else 1,
+        -weights.get(name, 0.0),
+        name,
     )
 
 

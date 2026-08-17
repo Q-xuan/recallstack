@@ -96,6 +96,11 @@ _SHALLOW_PATH_LEAVES = frozenset(
         "codegen",
         "headless-modes",
         "subagent-scheduling",
+        "agents",
+        "notes",
+        "archived",
+        "i18n",
+        "i18n-yaml",
     }
 )
 _PATH_RANK = {slug: i for i, slug in enumerate(_PATH_TRUNK)}
@@ -431,6 +436,13 @@ def is_filler_slug_title(slug: str, title: str) -> bool:
     if _FILLER_TITLE_RE.match(title):
         return True
     if _FILLER_NAME_RE.search(title):
+        return True
+    if slug in {"agents", "notes", "archived", "i18n", "i18n-yaml"}:
+        return True
+    if any(
+        token in (title or "")
+        for token in ("决策日志", "i18n 元数据", "notes 目录", "archived")
+    ):
         return True
     return False
 

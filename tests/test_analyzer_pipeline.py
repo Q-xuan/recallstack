@@ -506,7 +506,7 @@ def test_cached_grok_overview_is_ignored_for_dsh_tree(tmp_path):
         try:
             tree_hash = content_hash(project.file_tree + pack_key_files(project))
             await cache.put(
-                f"overview:v4:zh:{tree_hash}",
+                f"overview:v5:zh:{tree_hash}",
                 {
                     "name": "deepseek-harness",
                     "description": "xai-grok-pager 负责进程启动，xai-grok-agent 驱动循环。",
