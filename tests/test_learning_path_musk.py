@@ -1262,10 +1262,10 @@ def test_pager_and_runtime_stamp_def_line_not_one():
 
 def test_suggested_ask_questions_are_wiki_grounded_not_fsrs():
     grok_pages = [
-        {"id": "topics/entry-and-boot", "title": "入口与启动", "content": "acp connect"},
-        {"id": "topics/agent-loop", "title": "Agent Loop", "content": "start_turn"},
-        {"id": "topics/acp-protocol", "title": "ACP", "content": "protocol"},
-        {"id": "topics/terminal-ui", "title": "Terminal UI", "content": "Pager"},
+        {"id": "topics/entry-and-boot", "title": "入口与启动", "content": "`app.rs:4 connect`"},
+        {"id": "topics/agent-loop", "title": "Agent Loop", "content": "`app.rs:10 start_turn`"},
+        {"id": "topics/acp-protocol", "title": "ACP", "content": "`protocol.rs:1 acp`"},
+        {"id": "topics/terminal-ui", "title": "Terminal UI", "content": "`pager.rs:8 Pager`"},
     ]
     qs = suggested_ask_questions(grok_pages)
     assert len(qs) == 3
@@ -1304,7 +1304,7 @@ def test_wiki_out_applies_key_type_line_from_store(monkeypatch):
             "project_name": "grok-study",
             "pages": [
                 {"id": "topics/tool-system", "title": "工具层", "content": md},
-                {"id": "topics/agent-loop", "title": "Agent Loop", "content": "start_turn\n"},
+                {"id": "topics/agent-loop", "title": "Agent Loop", "content": "`app.rs:10 start_turn`\n"},
             ],
             "sidebar": [],
         }

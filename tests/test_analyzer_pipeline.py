@@ -474,3 +474,75 @@ def test_failed_topic_write_retries_then_succeeds(tmp_path):
     assert doc.purpose == "render assistant markdown in the pager"
     assert not any(t.term == "PTY" for t in (doc.term_tips or []))
 
+
+def test_cached_grok_overview_is_ignored_for_dsh_tree(tmp_path):
+    from repowiki.core.cache import content_hash
+    from repowiki.core.context_pack import pack_key_files
+
+    readme = (
+        "# DeepSeek Harness\n\nplugin-based harness. Cordis. Capability Seam.\n"
+        "`packages/core` is the spine.\n"
+    )
+    files = [
+        _file("README.md", readme, config=True),
+        _file("docs/architecture.md", "Capability Seam. packages/core.\n", config=True),
+        _file("apps/dsh/src/main.ts", "export function main() { harness.boot(); }\n", entry=True),
+        _file("packages/core/src/index.ts", "export class Harness { boot() {} }\n"),
+        _file("packages/core/src/plugin.ts", "export function definePlugin() {}\n"),
+        _file("vendor/cordis/src/context.ts", "export class Context { plugin() {} }\n"),
+    ]
+    project = ProjectContext(
+        name="deepseek-harness",
+        root=".",
+        files=files,
+        file_tree="\n".join(f.path for f in files),
+    )
+    project.file_tree = "\n".join(f.path for f in project.files)
+    llm = ScriptedLLM()
+
+    async def _run_one():
+        cache = Cache(db_path=tmp_path / "c.db")
+        await cache.init()
+        try:
+            tree_hash = content_hash(project.file_tree + pack_key_files(project))
+            await cache.put(
+                f"overview:v4:zh:{tree_hash}",
+                {
+                    "name": "deepseek-harness",
+                    "description": "xai-grok-pager 负责进程启动，xai-grok-agent 驱动循环。",
+                    "runtime_flow": "Pager → start_turn → Agent Loop",
+                    "mermaid_component": (
+                        'flowchart LR\n  A["Pager"] --> B["start_turn"]\n'
+                    ),
+                    "codebase_structure": [
+                        {
+                            "name": "xai-grok-pager",
+                            "location": "packages/xai-grok-pager",
+                            "purpose": "boot",
+                        }
+                    ],
+                },
+            )
+            analyzer = Analyzer(llm=llm, cache=cache, language="zh")
+            return await analyzer.analyze(project)
+        finally:
+            await cache.close()
+
+    wiki = _run(_run_one())
+    assert any("Generate a project overview" in c for c in llm.calls)
+    blob = " ".join(
+        [
+            wiki.overview.description,
+            wiki.overview.runtime_flow,
+            wiki.overview.mermaid_component,
+            " ".join(
+                f"{p.name} {p.location}" for p in wiki.overview.codebase_structure
+            ),
+            wiki.architecture.description,
+            wiki.architecture.mermaid_component,
+        ]
+    )
+    assert "xai-grok-pager" not in blob
+    assert "start_turn" not in blob
+    assert "packages/xai-grok-pager" not in blob
+

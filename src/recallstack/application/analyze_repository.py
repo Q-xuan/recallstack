@@ -160,6 +160,13 @@ class AnalyzeRepositoryService:
         existing = self.store.get_version_by_commit(repo.id, commit_sha)
         existing_lang = getattr(existing, "content_lang", None) if existing else None
         lang_mismatch = bool(existing_lang and existing_lang != resolved_lang)
+        texts = {
+            f.path: (f.content or f.preview or "")
+            for f in project.files
+            if (f.content or f.preview)
+        }
+        from repowiki.core.grounding import should_reuse_analyzed_wiki
+
         if (
             existing
             and not lang_mismatch
@@ -167,6 +174,7 @@ class AnalyzeRepositoryService:
             and existing.status == "ready"
             and existing.wiki_pages
             and (existing.wiki_pages or {}).get("pages")
+            and should_reuse_analyzed_wiki(existing.wiki_pages, texts)
         ):
             logger.info("idempotent hit for %s@%s", repo.id, commit_sha)
             self._save_version_file_texts(existing, project)
@@ -180,11 +188,6 @@ class AnalyzeRepositoryService:
             if not wiki_is_materialized(existing.wiki_pages) or not path_is_materialized(
                 getattr(path, "resolved", None) if path else None
             ):
-                texts = {
-                    f.path: (f.content or f.preview or "")
-                    for f in project.files
-                    if (f.content or f.preview)
-                }
                 materialize_analyzed_version(
                     self.session, existing, self.store.list_concepts(repo.id, existing.id), texts
                 )

@@ -1705,19 +1705,31 @@ def upgrade_architecture_loop_wording(content: str) -> str:
     return content
 
 
+def _page_has_grok_loop(content: str) -> bool:
+    """True when this page already names the grok runtime (do not invent it)."""
+    return bool(
+        re.search(r"\bstart_turn\b", content or "")
+        or re.search(r"xai-grok-(?:pager|agent)", content or "", re.I)
+    )
+
+
 def _rewrite_agentloop_token(content: str) -> str:
-    """Map invented AgentLoop to start_turn, but never draw start_turn → start_turn."""
+    """Map invented AgentLoop to start_turn only when this page already has that loop."""
+    grok = _page_has_grok_loop(content)
+    replacement = "start_turn" if grok else "Agent Loop"
 
     def mermaid_repl(match: re.Match[str]) -> str:
         body = match.group(1)
-        if re.search(r"\bstart_turn\b", body):
-            body = re.sub(r"\bAgentLoop\b", "Agent Loop", body)
-        else:
+        if grok and re.search(r"\bstart_turn\b", body):
             body = re.sub(r"\bAgentLoop\b", "start_turn", body)
+        elif grok:
+            body = re.sub(r"\bAgentLoop\b", "start_turn", body)
+        else:
+            body = re.sub(r"\bAgentLoop\b", "Agent Loop", body)
         return f"```mermaid\n{collapse_repeated_mermaid_labels(body)}\n```"
 
     content = re.sub(r"```mermaid\n(.*?)```", mermaid_repl, content, flags=re.S)
-    return re.sub(r"\bAgentLoop\b", "start_turn", content)
+    return re.sub(r"\bAgentLoop\b", replacement, content)
 
 
 def collapse_repeated_mermaid_labels(source: str) -> str:

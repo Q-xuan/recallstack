@@ -158,7 +158,7 @@ class Analyzer:
             reading_guide=reading_guide,
             outline=outline,
         )
-        wiki = await self._verify_citations(wiki, project, outline)
+        wiki = await self._verify_citations(wiki, project, outline, graph)
 
         progress("Done!")
         return wiki
@@ -173,17 +173,35 @@ class Analyzer:
         base = build_deterministic_outline(
             project, modules, graph, language=self._lang()
         )
-        cache_key = f"outline:v2:{self.language}:{tree_hash}"
+        cache_key = f"outline:v3:{self.language}:{tree_hash}"
         cached = await self.cache.get(cache_key)
         if cached:
             try:
-                llm_outline = WikiOutline(**cached)
-                return merge_outline(
-                    base,
-                    llm_outline,
-                    known_modules=set(modules),
-                    known_paths={f.path for f in project.files},
+                from repowiki.core.cite_check import CiteIndex
+                from repowiki.core.grounding import (
+                    scrub_ungrounded_prose,
+                    text_cites_foreign_tree,
                 )
+
+                llm_outline = WikiOutline(**cached)
+                index = CiteIndex.from_project(project)
+                if not (
+                    text_cites_foreign_tree(llm_outline.overview_focus, index)
+                    or text_cites_foreign_tree(llm_outline.architecture_focus, index)
+                ):
+                    merged = merge_outline(
+                        base,
+                        llm_outline,
+                        known_modules=set(modules),
+                        known_paths={f.path for f in project.files},
+                    )
+                    merged.overview_focus = scrub_ungrounded_prose(
+                        merged.overview_focus, index
+                    )
+                    merged.architecture_focus = scrub_ungrounded_prose(
+                        merged.architecture_focus, index
+                    )
+                    return merged
             except Exception:
                 pass
 
@@ -236,7 +254,18 @@ class Analyzer:
             known_modules=set(modules),
             known_paths={f.path for f in project.files},
         )
-        if llm_outline.topics or llm_outline.overview_focus:
+        from repowiki.core.cite_check import CiteIndex
+        from repowiki.core.grounding import scrub_ungrounded_prose, text_cites_foreign_tree
+
+        index = CiteIndex.from_project(project)
+        merged.overview_focus = scrub_ungrounded_prose(merged.overview_focus, index)
+        merged.architecture_focus = scrub_ungrounded_prose(
+            merged.architecture_focus, index
+        )
+        if (llm_outline.topics or llm_outline.overview_focus) and not (
+            text_cites_foreign_tree(llm_outline.overview_focus, index)
+            or text_cites_foreign_tree(llm_outline.architecture_focus, index)
+        ):
             await self.cache.put(cache_key, llm_outline.model_dump())
         return merged
 
@@ -248,11 +277,19 @@ class Analyzer:
         outline: WikiOutline | None = None,
         graph: DependencyGraph | None = None,
     ) -> ProjectOverview:
-        cache_key = f"overview:v3:{self.language}:{tree_hash}"
+        cache_key = f"overview:v4:{self.language}:{tree_hash}"
         cached = await self.cache.get(cache_key)
         if cached:
             try:
-                return ProjectOverview(**cached)
+                from repowiki.core.cite_check import CiteIndex
+                from repowiki.core.grounding import overview_cites_foreign_tree
+
+                cached_overview = ProjectOverview(**cached)
+                index = CiteIndex.from_project(project)
+                if not overview_cites_foreign_tree(cached_overview, index):
+                    return self._fill_overview_gaps(
+                        cached_overview, project, outline, graph
+                    )
             except Exception:
                 pass
 
@@ -289,11 +326,21 @@ class Analyzer:
         if not overview.name:
             overview.name = project.name
         overview = self._fill_overview_gaps(overview, project, outline, graph)
+        from repowiki.core.cite_check import CiteIndex
+        from repowiki.core.grounding import ground_overview, overview_cites_foreign_tree
+
+        overview = ground_overview(overview, CiteIndex.from_project(project))
+        overview = self._fill_overview_gaps(overview, project, outline, graph)
         if (
-            overview.one_liner
-            or overview.description
-            or overview.what_it_is
-            or overview.subsystems
+            (
+                overview.one_liner
+                or overview.description
+                or overview.what_it_is
+                or overview.subsystems
+            )
+            and not overview_cites_foreign_tree(
+                overview, CiteIndex.from_project(project)
+            )
         ):
             await self.cache.put(cache_key, overview.model_dump())
         return overview
@@ -515,11 +562,19 @@ class Analyzer:
         outline: WikiOutline | None = None,
         graph: DependencyGraph | None = None,
     ) -> ArchitectureDiagram:
-        cache_key = f"arch:v3:{self.language}:{tree_hash}"
+        cache_key = f"arch:v4:{self.language}:{tree_hash}"
         cached = await self.cache.get(cache_key)
         if cached:
             try:
-                return ArchitectureDiagram(**cached)
+                from repowiki.core.cite_check import CiteIndex
+                from repowiki.core.grounding import architecture_cites_foreign_tree
+
+                cached_arch = ArchitectureDiagram(**cached)
+                index = CiteIndex.from_project(project)
+                if not architecture_cites_foreign_tree(cached_arch, index):
+                    return self._fill_architecture_gaps(
+                        cached_arch, project, outline, graph
+                    )
             except Exception:
                 pass
 
@@ -564,7 +619,20 @@ class Analyzer:
                 return fallback
 
         arch = self._fill_architecture_gaps(arch, project, outline, graph)
-        if arch.architecture_type or arch.description or arch.mermaid_component:
+        from repowiki.core.cite_check import CiteIndex
+        from repowiki.core.grounding import (
+            architecture_cites_foreign_tree,
+            ground_architecture,
+        )
+
+        arch = ground_architecture(arch, CiteIndex.from_project(project))
+        arch = self._fill_architecture_gaps(arch, project, outline, graph)
+        if (
+            (arch.architecture_type or arch.description or arch.mermaid_component)
+            and not architecture_cites_foreign_tree(
+                arch, CiteIndex.from_project(project)
+            )
+        ):
             await self.cache.put(cache_key, arch.model_dump())
         return arch
 
@@ -630,6 +698,7 @@ class Analyzer:
         wiki: WikiData,
         project: ProjectContext,
         outline: WikiOutline,
+        graph: DependencyGraph | None = None,
     ) -> WikiData:
         index = CiteIndex.from_project(project)
         invalid_by_module: dict[str, list[str]] = {}
@@ -639,6 +708,7 @@ class Analyzer:
                 invalid_by_module[mod.name] = bad
 
         wiki = verify_wiki_data(wiki, project)
+        self._refill_grounded_diagrams(wiki, project, outline, graph)
 
         if not self._llm_enabled() or not invalid_by_module:
             return wiki
@@ -777,8 +847,16 @@ class Analyzer:
                 else (outline.overview_focus if outline else "")
             )
         if not overview.runtime_flow:
+            focus = ""
             if outline and outline.overview_focus:
-                overview.runtime_flow = outline.overview_focus
+                from repowiki.core.cite_check import CiteIndex
+                from repowiki.core.grounding import scrub_ungrounded_prose
+
+                focus = scrub_ungrounded_prose(
+                    outline.overview_focus, CiteIndex.from_project(project)
+                )
+            if focus:
+                overview.runtime_flow = focus
             elif zh:
                 overview.runtime_flow = (
                     "请求从入口进程进来，经过枢纽包上的类型，再交到依赖方。"
@@ -839,6 +917,43 @@ class Analyzer:
         if not overview.term_tips:
             overview.term_tips = _generic_term_tips(self._lang())
         return overview
+
+    def _refill_grounded_diagrams(
+        self,
+        wiki: WikiData,
+        project: ProjectContext,
+        outline: WikiOutline | None,
+        graph: DependencyGraph | None,
+    ) -> None:
+        """Restore mermaid / structure after grounding emptied invented diagrams."""
+        topics = outline.topics if outline else None
+        entries = [f.path for f in project.files if f.is_entrypoint]
+        if not (wiki.overview.mermaid_component or "").strip():
+            wiki.overview.mermaid_component = (graph.to_mermaid() if graph else "") or ""
+        if not (wiki.overview.mermaid_component or "").strip():
+            wiki.overview.mermaid_component = runtime_mermaid_for(
+                entry_files=entries, topics=topics
+            )
+        if not wiki.overview.codebase_structure:
+            wiki.overview.codebase_structure = codebase_structure_for(
+                project, language=self._lang()
+            )
+        if not (wiki.overview.runtime_flow or "").strip():
+            wiki.overview = self._fill_overview_gaps(
+                wiki.overview, project, outline, graph
+            )
+        if not (wiki.architecture.mermaid_component or "").strip():
+            wiki.architecture.mermaid_component = (
+                graph.to_mermaid() if graph else ""
+            ) or ""
+        if not (wiki.architecture.mermaid_component or "").strip():
+            wiki.architecture.mermaid_component = runtime_mermaid_for(
+                entry_files=entries, topics=topics
+            )
+        if not (wiki.architecture.description or "").strip():
+            wiki.architecture = self._fill_architecture_gaps(
+                wiki.architecture, project, outline, graph
+            )
 
     def _fallback_architecture(
         self,

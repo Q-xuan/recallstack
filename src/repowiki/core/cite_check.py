@@ -132,6 +132,9 @@ def verify_wiki_data(data: WikiData, project: ProjectContext) -> WikiData:
                 continue
             kept.append(verified)
         data.topics = kept
+    from repowiki.core.grounding import ground_wiki_data
+
+    data = ground_wiki_data(data, index)
     if data.file_index:
         cleaned: dict[str, FileDoc] = {}
         for path, doc in data.file_index.items():
@@ -248,7 +251,8 @@ def sanitize_text(text: str, index: CiteIndex) -> str:
         path, start_s, end_s = match.group(1), match.group(2), match.group(3)
         resolved = index.resolve(path)
         if not resolved:
-            return path.split("/")[-1]
+            # Invented paths must disappear; do not keep the leaf (xai-grok-pager).
+            return ""
         start = int(start_s) if start_s else 0
         end = int(end_s) if end_s else 0
         start = index.clamp_line(resolved, start)

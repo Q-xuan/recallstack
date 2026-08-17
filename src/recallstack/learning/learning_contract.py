@@ -2333,21 +2333,49 @@ def fill_wiki_key_type_lines(content: str, file_texts: dict[str, str] | None) ->
     return re.sub(r"`([^`]+)`", pill_repl, content)
 
 
-_ASK_QUESTION_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
-    (("connect",), "这个项目的入口在哪，connect 之后谁接手？"),
-    (("start_turn",), "一轮里 start_turn 之后谁调模型？"),
-    (("acp",), "ACP 会话是在哪建立的？"),
-    (("pager",), "Pager 把模型流式输出写进哪块缓冲区？"),
-    (("toolbridge", "tool_bridge"), "模型返回 tool call 之后谁按名字执行？"),
-    (("capability seam", "ctx.llm", "ctx.fs"), "Capability Seam 上 Service Definition / Provider / Consumer 怎么接？"),
-    (("cordis",), "vendored Cordis 如何装上 plugin？"),
-    (("plugin", "defineplugin"), "everything-is-a-plugin 里谁声明、谁装上、谁可被替换？"),
+_ASK_QUESTION_RULES: tuple[tuple[tuple[str, ...], str, bool], ...] = (
+    (("connect",), "这个项目的入口在哪，connect 之后谁接手？", True),
+    (("start_turn",), "一轮里 start_turn 之后谁调模型？", True),
+    (("acp",), "ACP 会话是在哪建立的？", True),
+    (("pager",), "Pager 把模型流式输出写进哪块缓冲区？", True),
+    (("toolbridge", "tool_bridge"), "模型返回 tool call 之后谁按名字执行？", True),
+    (("capability seam", "ctx.llm", "ctx.fs"), "Capability Seam 上 Service Definition / Provider / Consumer 怎么接？", False),
+    (("cordis",), "vendored Cordis 如何装上 plugin？", False),
+    (("plugin", "defineplugin"), "everything-is-a-plugin 里谁声明、谁装上、谁可被替换？", False),
 )
 _ASK_HOST_LEFTOVERS = ("复习调度", "复训调度", "FSRS", "依赖图是怎么构建")
+_ASK_CHIP_RE = re.compile(r"`([^`]+)`")
 
 
-def suggested_ask_questions(pages: list[Any] | None) -> list[str]:
-    """Three Chinese questions grounded in THIS wiki. Never host-product leftovers."""
+def _ask_grounded_tokens(pages: list[Any], known_tokens: set[str] | None) -> set[str]:
+    """Symbols that appear as chips / identifiers — not grok words leaked into prose."""
+    found = {t.lower() for t in (known_tokens or set()) if t}
+    for page in pages:
+        if isinstance(page, dict):
+            body = str(page.get("content") or "")
+        else:
+            body = str(getattr(page, "content", "") or "")
+        for match in _ASK_CHIP_RE.finditer(body):
+            inner = (match.group(1) or "").strip()
+            if not inner:
+                continue
+            bits = inner.replace("\\", "/").split()
+            if bits:
+                found.add(bits[-1].lower())
+            path = bits[0].split(":")[0] if bits else ""
+            for part in path.split("/"):
+                stem = part.rsplit(".", 1)[0].lower()
+                if len(stem) >= 2:
+                    found.add(stem)
+    return found
+
+
+def suggested_ask_questions(
+    pages: list[Any] | None,
+    *,
+    known_tokens: set[str] | None = None,
+) -> list[str]:
+    """Three Chinese questions grounded in THIS wiki / version_files. Never grok leftovers."""
     items = list(pages or [])
     if not items:
         return []
@@ -2365,11 +2393,16 @@ def suggested_ask_questions(pages: list[Any] | None) -> list[str]:
         titles.append(title)
         blobs.append(f"{pid} {title} {body}".lower())
     hay = "\n".join(blobs)
+    grounded = _ask_grounded_tokens(items, known_tokens)
     out: list[str] = []
-    for needles, question in _ASK_QUESTION_RULES:
-        if any(tok.lower() in hay for tok in needles):
-            if question not in out:
-                out.append(question)
+    for needles, question, needs_symbol in _ASK_QUESTION_RULES:
+        if needs_symbol:
+            if not any(tok.lower() in grounded for tok in needles):
+                continue
+        elif not any(tok.lower() in hay for tok in needles):
+            continue
+        if question not in out:
+            out.append(question)
         if len(out) >= 3:
             break
     if len(out) < 3:
