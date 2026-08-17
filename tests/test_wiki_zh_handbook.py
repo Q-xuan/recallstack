@@ -91,3 +91,41 @@ def test_high_importance_concept_is_handbook_zh(monkeypatch):
     assert "## 边界" in page.content
     assert "Agent" in page.content
     assert "代理人" not in page.content
+
+
+def test_generated_path_and_quiz_drop_dump_stamps(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    from recallstack.learning.learning_contract import path_mission, path_worksheet, step_task_for_slug
+    from recallstack.learning.question_generator import QuestionGenerator
+    from recallstack.learning.wiki_judge import LECTURE_MARKERS
+
+    draft = ConceptDraft(
+        slug="agent-loop",
+        title="Agent Loop",
+        description="Agent Loop 接住一轮对话。",
+        source_references=[
+            SourceReference(path="app/agent.py", start_line=1, symbol="start_turn"),
+        ],
+    )
+    worksheet = path_worksheet(draft)
+    mission = path_mission()
+    task = step_task_for_slug("agent-loop", "Agent Loop")
+    quiz = QuestionGenerator().generate_from_contract(
+        title="Agent Loop",
+        contract={
+            "chip": "app/agent.py:1 start_turn",
+            "path": "app/agent.py",
+            "line": 1,
+            "symbol": "start_turn",
+            "task": task,
+            "gate": "核对：start_turn 之后谁调模型？",
+            "failure_tokens": ["失败"],
+        },
+    )
+    blob = "\n".join([worksheet, mission, task, *(item.prompt for item in quiz.items)])
+    for marker in LECTURE_MARKERS:
+        assert marker not in blob, marker
+    assert "## 这一步" in worksheet
+    assert "## 核对" in worksheet
+    assert "## 本步要你干什么" not in worksheet
+    assert "## 过关" not in worksheet

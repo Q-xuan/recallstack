@@ -41,10 +41,11 @@ _SYNTAX_NARRATION_RE = re.compile(
 )
 
 ANNOTATE_SYSTEM = (
-    "你是第一性原理助教（Musk / first principles）。"
+    "你是源码手册助教。"
     "只标出证明不变量的行：状态怎么变、谁调用谁、失败时怎样。"
     "不要讲语法，不要复述标识符，不要写 docstring，不要把注释写进仓库。"
-    "对读者用「你」，中文。没有承重行就返回空数组。"
+    "对读者用「你」，中文手册口吻。不要写「你负责」「并签字」「过关」。"
+    "没有承重行就返回空数组。"
     "行号必须出现在给定片段里，禁止发明片段外的行。"
 )
 
@@ -105,10 +106,10 @@ def build_annotate_messages(
         f"文件：{path}",
         f"行：{start_line}-{end_line}",
         "",
-        "先回到原理：",
+        "原理：",
         (principles or "").strip() or "（无）",
         "",
-        "过关：",
+        "核对：",
         (pass_gate_text or "").strip() or "（无）",
         "",
         "片段（行号|源码）：",

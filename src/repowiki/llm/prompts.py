@@ -23,13 +23,15 @@ def _lang_instruction(language: str) -> str:
             "or 'submodules are …'. Never write 'Heaviest modules by PageRank'."
         ),
         "zh": (
-            "请用手册体简体中文撰写手册正文（对齐 DeepSeek Harness README.zh / DeepWiki）："
-            "直接陈述概念、seam 和角色，再讲目录。不要讲义腔，不要机翻。"
+            "请用手册体简体中文撰写手册正文（对齐 DeepWiki grok-build / DeepSeek Harness README.zh）："
+            "直接陈述概念、seam 和角色，再讲目录。不要讲义腔，不要机翻，不要作业单口吻。"
             "禁止「读完应能」「读完你应该能」「这篇文档讲…读完应能…」"
-            "「它是什么」「一次调用怎么走」「缺了它哪条能力会断」「用户能察觉的行为会坏」。"
+            "「它是什么」「一次调用怎么走」「缺了它哪条能力会断」「用户能察觉的行为会坏」"
+            "「你负责」「并签字」「你签字」「过关」「复述标题不算过关」「本步要你干什么」"
+            "「北极星」「你要能指出」「用户能看见的哪件事会死」「出现在上文链路中的角色」。"
             "专有名词保持英文（Agent、plugin、harness、chip、wiki、concept、Capability Seam）；"
             "必要时括号补中文，例如 harness（智能体框架）、agent（智能体）。"
-            "禁止翻译 identifier、类型名、crate/包名、协议名（如 ACP、`PtyHandle`）。"
+            "禁止翻译 identifier、类型名、crate/包名、协议名（如 ACP、`PtyHandle`、`start_turn`）。"
             "plugin 可写作「插件」（约定译名），不要用「插件系统」来翻译 plugin；"
             "Agent 不要译成「代理人」。"
             "用「你」不用「您」，禁止翻译腔。"
@@ -80,7 +82,10 @@ def _json_instruction(language: str = "en") -> str:
     return (
         f"{base}\n\n"
         f"LANGUAGE: keep the JSON keys exactly as shown above in English, but write "
-        f"every human-readable value in {name}. The placeholder values in the schema "
+        f"every human-readable value in {name}. "
+        "JSON keys stay English; values are Simplified Chinese handbook prose "
+        "when the output language is zh — not lecture or worksheet voice. "
+        f"The placeholder values in the schema "
         f"are English only to show the shape — do not copy their language. "
         f"{_lang_instruction(language)}"
     )

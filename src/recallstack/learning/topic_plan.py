@@ -66,8 +66,8 @@ def topics_to_concepts(
                 title=topic.title or topic.id,
                 description=topic.purpose
                 or t(
-                    f"How `{topic.title}` sits on a real call path.",
-                    f"「{topic.title}」在一次真实调用里做什么。",
+                    f"How `{topic.title}` sits on the call path.",
+                    f"{topic.title} 在调用链上接住哪一段工作。",
                 ),
                 difficulty=3 if topic.depth == "deep" else 2,
                 importance=0.9 if topic.depth == "deep" else 0.75,

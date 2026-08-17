@@ -22,8 +22,16 @@ SUPPORTED_LANGS: tuple[ContentLang, ...] = ("en", "zh", "ja", "ko")
 
 # Keep in sync with repowiki.llm.prompts._lang_instruction
 _LANG_INSTRUCTIONS: dict[str, str] = {
-    "en": "Respond in English.",
-    "zh": "请用中文回答。",
+    "en": (
+        "Write handbook English. Do not write 'You own this step', 'sign off', "
+        "or 'Restating the heading does not pass'."
+    ),
+    "zh": (
+        "请用手册体简体中文撰写。直接陈述，不要讲义腔或作业单口吻。"
+        "禁止「你负责」「并签字」「过关」「复述标题不算过关」「北极星」"
+        "「缺了它哪条能力会断」「用户能察觉的行为会坏」。"
+        "ACP、`PtyHandle`、`start_turn` 等 identifier 留英文。"
+    ),
     "ja": "日本語で回答してください。",
     "ko": "한국어로 답변해주세요.",
 }

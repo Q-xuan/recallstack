@@ -61,98 +61,98 @@ const FILLER_SLUG = /^(module-|file-|focus-)/;
 const FILLER_NAME = /(README\.md|Cargo\.toml|__init__\.py|package\.json)/i;
 
 export const PATH_MISSION: [string, string] = [
-  "你要能指出进程怎么进、一轮怎么转，以及硬弯：工具写回、取消、ACP 和 TUI 两扇门。每一层你签字：这一层不存在，用户能看见的哪件事会死。",
-  "You own the trunk: how the process starts, how one turn runs, then the hard turns — tool write-back, cancel, ACP vs TUI. You sign off each layer: if it vanished, which user-visible thing dies?",
+  "主干是进程怎么进、一轮怎么转，以及硬弯：工具写回、取消、ACP 和 TUI 两扇门。每一层对照证据看调用，不按目录名走。",
+  "The trunk is how the process starts, how one turn runs, then the hard turns — tool write-back, cancel, ACP vs TUI. Follow the evidence on the call path, not the folder names.",
 ];
 
 const STEP_TASKS: Record<string, [string, string]> = {
   "project-goal": [
-    "你负责：对着证据那一行，证明用户被放在终端对话里还是 crate 清单里。说出入口、一轮循环、start_turn 里少了哪一层回车没回答，并签字。",
-    "You own this: on the evidence line, prove whether the user lives in a terminal turn or a crate list. Name which of entry / one turn / start_turn would make Enter produce no answer — then sign off.",
+    "对着证据那一行，说明用户被放在终端对话里还是 crate 清单里。说出入口、一轮循环、start_turn 里少了哪一层回车没回答。",
+    "On the evidence line, say whether the user lives in a terminal turn or a crate list. Name which of entry / one turn / start_turn would make Enter produce no answer.",
   ],
   "entry-and-boot": [
-    "你负责：排除「都是入口」。指出 connect 之后谁接手、TUI 那扇门交给谁，并签字。",
-    "You own this: rule out “both are entry”. Point to who receives control after connect, and who receives it after the TUI door — then sign off.",
+    "排除「都是入口」。指出 connect 之后谁接手、TUI 那扇门交给谁。",
+    "Rule out “both are entry”. Point to who receives control after connect, and who receives it after the TUI door.",
   ],
   "application-entry": [
-    "你负责：打开入口文件，指出进程启动后最先调用的三步（不是某个 crate 的名字），并签字。",
-    "You own this: open the entrypoint and name the first three calls after the process starts — not a crate name — then sign off.",
+    "打开入口文件，指出进程启动后最先调用的三步（不是某个 crate 的名字）。",
+    "Open the entrypoint and name the first three calls after the process starts — not a crate name.",
   ],
   "agent-loop": [
-    "你负责：打开证据，指出谁在 start_turn 之后调模型（不是先跑工具）。写出那个函数名，并签字。",
-    "You own this: open the evidence and point to who calls the model after start_turn (not tools first). Write that function name and sign off.",
+    "打开证据：start_turn 之后谁调模型（不是先跑工具）。写出那个函数名。",
+    "Open the evidence: who calls the model after start_turn (not tools first). Write that function name.",
   ],
   "call-flow": [
-    "你负责：顺着一轮对话，指出输入进 turn 之后到模型被调用之间经过谁，并签字。",
-    "You own this: follow one turn and name who runs between input entering the turn and the model being called — then sign off.",
+    "顺着一轮对话，指出输入进 turn 之后到模型被调用之间经过谁。",
+    "Follow one turn and name who runs between input entering the turn and the model being called.",
   ],
   "runtime-loop": [
-    "你负责：打开证据，指出谁在 start_turn 之后调模型（不是先跑工具）。写出那个函数名，并签字。",
-    "You own this: open the evidence and point to who calls the model after start_turn (not tools first). Write that function name and sign off.",
+    "打开证据：start_turn 之后谁调模型（不是先跑工具）。写出那个函数名。",
+    "Open the evidence: who calls the model after start_turn (not tools first). Write that function name.",
   ],
   "tool-system": [
-    "你负责：指出 start_turn 之后谁把 tool 结果写回再调模型。写出函数名，不要说「工具层」，并签字。",
-    "You own this: point to who writes the tool result back and calls the model again after start_turn. Name the function — not “the tool layer” — and sign off.",
+    "指出 start_turn 之后谁把 tool 结果写回再调模型。写出函数名，不要说「工具层」。",
+    "Point to who writes the tool result back and calls the model again after start_turn. Name the function — not “the tool layer”.",
   ],
   "terminal-ui": [
-    "你负责：打开 Pager，指出模型流式输出时字写进哪一块缓冲区。写出字段或函数名，并签字。",
-    "You own this: open Pager and point to which buffer streaming output is written into. Name the field or function and sign off.",
+    "打开 Pager，指出模型流式输出时字写进哪一块缓冲区。写出字段或函数名。",
+    "Open Pager and point to which buffer streaming output is written into. Name the field or function.",
   ],
   "tui-pager": [
-    "你负责：打开 Pager，指出模型流式输出时字写进哪一块缓冲区。写出字段或函数名，并签字。",
-    "You own this: open Pager and point to which buffer streaming output is written into. Name the field or function and sign off.",
+    "打开 Pager，指出模型流式输出时字写进哪一块缓冲区。写出字段或函数名。",
+    "Open Pager and point to which buffer streaming output is written into. Name the field or function.",
   ],
   "context-assembly": [
-    "你负责：打开 replace_or_insert_system_head，证明系统头是写进窗口头还是拼在用户消息后面，并签字。",
-    "You own this: open replace_or_insert_system_head and prove whether the system head is written at the window head or appended after the user — then sign off.",
+    "打开 replace_or_insert_system_head，证明系统头是写进窗口头还是拼在用户消息后面。",
+    "Open replace_or_insert_system_head and prove whether the system head is written at the window head or appended after the user.",
   ],
   "agent-runtime": [
-    "你负责：指出用户取消一轮时谁把还在飞的模型调用停掉。若停不掉，说出终端上会留下什么，并签字。",
-    "You own this: point to who stops an in-flight model call when the user cancels. If that stop never fires, name what the terminal still shows — then sign off.",
+    "指出用户取消一轮时谁把还在飞的模型调用停掉。若停不掉，说出终端上会留下什么。",
+    "Point to who stops an in-flight model call when the user cancels. If that stop never fires, name what the terminal still shows.",
   ],
   "session-lifecycle": [
-    "你负责：指出用户取消一轮时谁把还在飞的模型调用停掉。若停不掉，说出终端上会留下什么，并签字。",
-    "You own this: point to who stops an in-flight model call when the user cancels. If that stop never fires, name what the terminal still shows — then sign off.",
+    "指出用户取消一轮时谁把还在飞的模型调用停掉。若停不掉，说出终端上会留下什么。",
+    "Point to who stops an in-flight model call when the user cancels. If that stop never fires, name what the terminal still shows.",
   ],
   "acp-protocol": [
-    "你负责：证明 ACP 的 connect 和 TUI 入口是两扇门还是同一条路。connect 之后谁持有会话，并签字。",
-    "You own this: prove whether ACP connect and the TUI entry are two doors or one road. After connect, who holds the session? Sign off.",
+    "证明 ACP 的 connect 和 TUI 入口是两扇门还是同一条路。connect 之后谁持有会话。",
+    "Prove whether ACP connect and the TUI entry are two doors or one road. After connect, who holds the session?",
   ],
   "configuration": [
-    "你负责：找出配置从哪进入运行时，指出它改变的一个行为，并签字。",
-    "You own this: find where config enters runtime and name one behaviour it changes — then sign off.",
+    "找出配置从哪进入运行时，指出它改变的一个行为。",
+    "Find where config enters runtime and name one behaviour it changes.",
   ],
   "request-routing": [
-    "你负责：顺着一个外部请求往里追，指出哪个文件接住它、哪个函数处理它，并签字。",
-    "You own this: trace one request and name the file that receives it and the function that handles it — then sign off.",
+    "顺着一个外部请求往里追，指出哪个文件接住它、哪个函数处理它。",
+    "Trace one request and name the file that receives it and the function that handles it.",
   ],
   "authentication": [
-    "你负责：指出身份在哪被检查，以及失败时会发生什么，并签字。",
-    "You own this: point to where identity is checked and what happens if it fails — then sign off.",
+    "指出身份在哪被检查，以及失败时会发生什么。",
+    "Point to where identity is checked and what happens if it fails.",
   ],
   "data-persistence": [
-    "你负责：说出被写入或读出的对象，以及做这件事的函数，并签字。",
-    "You own this: name the object that is written or read, and the function that does it — then sign off.",
+    "说出被写入或读出的对象，以及做这件事的函数。",
+    "Name the object that is written or read, and the function that does it.",
   ],
   "caching": [
-    "你负责：说出缓存了什么，以及缓存过期时会错在哪，并签字。",
-    "You own this: say what is cached and what becomes wrong if the cache is stale — then sign off.",
+    "说出缓存了什么，以及缓存过期时会错在哪。",
+    "Say what is cached and what becomes wrong if the cache is stale.",
   ],
   "error-handling": [
-    "你负责：指出一条失败路径，以及它在哪里被接住或返回，并签字。",
-    "You own this: name one failure path and where it is caught or returned — then sign off.",
+    "指出一条失败路径，以及它在哪里被接住或返回。",
+    "Name one failure path and where it is caught or returned.",
   ],
   "background-tasks": [
-    "你负责：找出一条异步/任务路径，说出它产生的副作用，并签字。",
-    "You own this: find one async/job path and say what side effect it performs — then sign off.",
+    "找出一条异步/任务路径，说出它产生的副作用。",
+    "Find one async/job path and say what side effect it performs.",
   ],
   "testing-structure": [
-    "你负责：打开一个测试，说出它锁住的是哪段行为，并签字。",
-    "You own this: open one test and say which behaviour it is locking down — then sign off.",
+    "打开一个测试，说出它锁住的是哪段行为。",
+    "Open one test and say which behaviour it is locking down.",
   ],
   "module-boundaries": [
-    "你负责：指出两个模块，以及绝不能漏过去的那条职责边界，并签字。",
-    "You own this: name two modules and the one responsibility that must not leak across them — then sign off.",
+    "指出两个模块，以及绝不能漏过去的那条职责边界。",
+    "Name two modules and the one responsibility that must not leak across them.",
   ],
 };
 
@@ -190,8 +190,8 @@ export function stepTask(
   if (mapped) return t(mapped[0], mapped[1]);
   const shown = title || slug;
   return t(
-    `你负责：打开证据，指出「${shown}」在一次真实调用里必须发生的那一步（不要用目录名回答），并签字。`,
-    `You own this: open the evidence and point to the step \`${shown}\` must perform on a real call — not a directory name — then sign off.`,
+    `打开证据，指出「${shown}」在调用链上必须发生的那一步（不要用目录名回答）。`,
+    `Open the evidence and point to the step \`${shown}\` must perform on the call path — not a directory name.`,
   );
 }
 

@@ -284,12 +284,12 @@ class QuestionGenerator:
             LearningItemDraft(
                 item_type="active_recall",
                 prompt=t(
-                    f"You own this step. Look only at `{chip or loc}`. "
+                    f"Look only at `{chip or loc}`. "
                     f"Name `{symbol or title}` and say what that line must keep true. "
-                    "Restating the heading does not pass.",
-                    f"你负责这一步。只看 `{chip or loc}`。"
+                    "Restating the heading is not enough.",
+                    f"只看 `{chip or loc}`。"
                     f"点名 `{symbol or title}`，说出这一行必须保住的不变量。"
-                    "复述标题不算过关。",
+                    "只复述标题不够。",
                 ),
                 expected_answer_outline=t(
                     f"- Symbol: {symbol}\n- Chip: {chip}\n- Task: {task}",
@@ -379,10 +379,10 @@ class QuestionGenerator:
                 LearningItemDraft(
                     item_type="teach_back",
                     prompt=t(
-                        f"{gate or 'Sign off this step.'} You must name `{symbol or title}` "
-                        "and the failure path. Copying the heading does not pass.",
-                        f"{gate or '你签字。'}必须点名 `{symbol or title}`，并写出失败路径。"
-                        "复述标题不算过关。",
+                        f"{gate or 'Check this step.'} Name `{symbol or title}` "
+                        "and the failure path. Copying the heading is not enough.",
+                        f"{gate or '核对这一步。'}必须点名 `{symbol or title}`，并写出失败路径。"
+                        "只复述标题不够。",
                     ),
                     expected_answer_outline=t(
                         f"- Function/type: {symbol}\n- Failure path: {', '.join(failure) or 'user-visible break'}\n- Chip: {chip}",
@@ -403,8 +403,8 @@ class QuestionGenerator:
                             RubricPoint(
                                 id="failure_path",
                                 description=t(
-                                    "Name the failure path the gate asks for",
-                                    "写出过关要求的那条失败路径",
+                                    "Name the failure path the check asks for",
+                                    "写出核对要求的那条失败路径",
                                 ),
                                 weight=0.6,
                                 source_references=chip_ref,

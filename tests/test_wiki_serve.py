@@ -314,7 +314,8 @@ def test_path_out_uses_rev1_chips_without_store(monkeypatch):
     out = path_out(path)
     assert out.nodes[0].evidence_chip == "crates/tui/src/app.rs:791 start_turn"
     assert "`crates/tui/src/app.rs:791 start_turn`" in out.nodes[0].worksheet
-    assert "你签字" in out.nodes[0].pass_gate
+    assert "核对" in out.nodes[0].pass_gate
+    assert "你签字" not in out.nodes[0].pass_gate
 
 
 def test_cheap_upgrade_path_fills_contract_without_store(monkeypatch):

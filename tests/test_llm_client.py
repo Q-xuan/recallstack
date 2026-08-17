@@ -99,6 +99,9 @@ def test_zh_prompts_ask_for_handbook_prose_and_term_tips():
     assert "file inventory" in overview_user
     assert "key_features" in overview_user
     assert "本步要你干什么" in overview[0]["content"]
+    assert "你负责" in overview[0]["content"]
+    assert "北极星" in overview[0]["content"]
+    assert "PtyHandle" in overview[0]["content"]
     arch = build_architecture_prompt("tree", "files", "zh")
     assert "PageRank file dump" in arch[-1]["content"]
     assert "term_tips" in arch[-1]["content"]

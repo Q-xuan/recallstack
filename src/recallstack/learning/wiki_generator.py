@@ -787,7 +787,8 @@ def _concept_enrich_messages(
                 "Be specific to THIS repository. No HTML. No file inventory. "
                 "No homework headings (what this step asks, pass check, first principles worksheet). "
                 "Handbook Chinese: state facts; keep identifiers English; "
-                "never write 读完应能 / After reading you should. "
+                "never write 读完应能 / After reading you should / "
+                "你负责 / 并签字 / 过关 / 北极星 / 缺了它哪条能力会断. "
                 f"{_lang_instruction(language)}"
             ),
         },
