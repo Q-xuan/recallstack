@@ -35,5 +35,21 @@ def init_db() -> None:
     click.echo("RecallStack database initialized.")
 
 
+@cli.command("wiki-judge")
+@click.option("--candidate", required=True, type=click.Path(exists=True), help="要打分的 wiki markdown")
+@click.option("--reference", multiple=True, type=click.Path(exists=True), help="对照页（可重复）")
+@click.option("--heuristic-only", is_flag=True, help="只走 heuristic，不调 DeepSeek")
+def wiki_judge(candidate: str, reference: tuple[str, ...], heuristic_only: bool) -> None:
+    """用 DeepSeek 当 judge，对照 DeepWiki / README.zh 给中文 wiki 打分。"""
+    from recallstack.learning.wiki_judge import main as judge_main
+
+    argv = ["--candidate", candidate]
+    for path in reference:
+        argv.extend(["--reference", path])
+    if heuristic_only:
+        argv.append("--heuristic-only")
+    raise SystemExit(judge_main(argv))
+
+
 if __name__ == "__main__":
     cli()

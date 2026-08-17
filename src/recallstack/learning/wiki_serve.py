@@ -52,7 +52,7 @@ from repowiki.core.wiki_builder import (
 logger = logging.getLogger(__name__)
 
 # Bump when materialize logic changes so stale persisted pages re-upgrade once.
-WIKI_SERVE_REVISION = 3
+WIKI_SERVE_REVISION = 4
 PATH_SERVE_REVISION = 2
 # Bump when leftover chip rules change so store-backed persist restamps once.
 PATH_CHIP_RESTAMP = 2

@@ -58,7 +58,7 @@ class CallChain(BaseModel):
 
 
 class TermTip(BaseModel):
-    """Repo-specific jargon note rendered as 术语小贴士 / Term tips.
+    """Repo-specific jargon note rendered as 术语 / Terms.
 
     ``term`` stays the identifier as it appears in code (PageRank, ACP, crate).
     Older cached JSON without this field still parses as an empty list.

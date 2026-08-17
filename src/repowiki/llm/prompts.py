@@ -17,16 +17,22 @@ def _lang_instruction(language: str) -> str:
     lang_map = {
         "en": (
             "Write a professional handbook page, not an API catalog or file tree. "
-            "Open with what the reader should be able to explain afterwards "
-            "(startup / one request / one session / failure), then walk one real flow. "
+            "State what the system is and how one real flow is wired. "
+            "Do not write 'After reading you should be able to…' or homework ledes. "
             "Never list every method on a type. Never say 'the entry point is lib.rs' "
             "or 'submodules are …'. Never write 'Heaviest modules by PageRank'."
         ),
         "zh": (
-            "请用专业简体中文撰写手册正文（接近 DeepWiki / zread）："
-            "先讲这篇文档要让读者能讲清什么（启动 / 一次请求 / 一次会话 / 失败），"
-            "再顺着一条真实调用把类型当角色写进去。"
-            "用「你」不用「您」，句式用「读完应能…」，禁止翻译腔。"
+            "请用手册体简体中文撰写手册正文（对齐 DeepSeek Harness README.zh / DeepWiki）："
+            "直接陈述概念、seam 和角色，再讲目录。不要讲义腔，不要机翻。"
+            "禁止「读完应能」「读完你应该能」「这篇文档讲…读完应能…」"
+            "「它是什么」「一次调用怎么走」「缺了它哪条能力会断」「用户能察觉的行为会坏」。"
+            "专有名词保持英文（Agent、plugin、harness、chip、wiki、concept、Capability Seam）；"
+            "必要时括号补中文，例如 harness（智能体框架）、agent（智能体）。"
+            "禁止翻译 identifier、类型名、crate/包名、协议名（如 ACP、`PtyHandle`）。"
+            "plugin 可写作「插件」（约定译名），不要用「插件系统」来翻译 plugin；"
+            "Agent 不要译成「代理人」。"
+            "用「你」不用「您」，禁止翻译腔。"
             "路径、crate/包名、符号、协议名保持英文原文（如 ACP、`PtyHandle`），不要音译。"
             "禁止目录腔，禁止 “Heaviest modules”，禁止接口清单"
             "（入口是 lib.rs、子模块是 keys/pty/server、给 struct 列 spawn/resize/is_alive）。"
@@ -201,7 +207,7 @@ def build_overview_prompt(
                 "{\n"
                 '  "name": "project name",\n'
                 '  "one_liner": "what this project does in one sentence (max 20 words)",\n'
-                '  "document_scope": "This page covers X. After reading you should be able to Y.",\n'
+                '  "document_scope": "what this is and where it sits on the call path — no After-reading-you-should",\n'
                 '  "what_it_is": [\n'
                 '    "concrete characteristic with a `path:line` cite",\n'
                 '    "another characteristic with a `path:line` cite"\n'
@@ -229,8 +235,8 @@ def build_overview_prompt(
                 f"{_term_tips_field()}"
                 "}\n\n"
                 "REQUIRED (DeepWiki handbook, not a README): "
-                "document_scope is the lede (what this document covers / what the reader can explain; "
-                "in 简体中文: 这篇文档讲…读完应能…, 用你不用您). "
+                "document_scope is a handbook lede (what this is / where it sits; "
+                "in 简体中文: 直接陈述，禁止「这篇文档讲…读完应能…」, 用你不用您). "
                 "what_it_is: 3-6 characteristic sentences, each with a real `path:line` cite "
                 "(not a crate folder and not a path without a line). "
                 "runtime_flow: types as roles on one real call. "
@@ -315,8 +321,8 @@ def build_module_prompt(
         term_tips_required = depth == "deep"
         extra_rules = (
             "Write a DeepWiki handbook page for one subsystem, not an interface catalog. "
-            "document_scope: what this document is for, and what the reader can explain afterwards "
-            "(startup / one request / one session / failure). "
+            "document_scope: what this is and where it sits on the call path. "
+            "No 'After reading you should' / 「读完应能」. "
             "what_it_is: 2-4 characteristic sentences, each with a `path:line` cite. "
             "purpose: role in the system — who calls this, what it calls, what "
             "breaks if it disappeared. Do not repeat document_scope. "
@@ -355,7 +361,7 @@ def build_module_prompt(
         extra_rules += (
             "THIS PAGE IS THE RUNTIME AGENT LOOP, not context assembly. "
             "Title must stay Agent Loop — never 'Agent Loop 与上下文装配'. "
-            "一次调用怎么走 MUST be this spine, in this order: "
+            "调用链 MUST be this spine, in this order: "
             "收用户输入 → 组会话/prompt → 调模型 → 解析 tool calls → 执行工具 → "
             "把结果写回 → 再调模型 / 结束 "
             "(English: user input → assemble session/prompt → model call → parse tool calls → "
@@ -414,7 +420,7 @@ def build_module_prompt(
                 "Output JSON:\n"
                 "{\n"
                 f'  "name": "{module_name}",\n'
-                '  "document_scope": "what this page is for, and what the reader can explain afterwards",\n'
+                '  "document_scope": "what this is and where it sits on the call path",\n'
                 '  "what_it_is": ["characteristic with `path:line`", "characteristic with `path:line`"],\n'
                 '  "purpose": "what this page is for, and what the reader can explain afterwards",\n'
                 '  "description": "who calls this, what it calls, what breaks if it disappears",\n'

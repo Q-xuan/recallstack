@@ -759,14 +759,14 @@ class Analyzer:
         if not overview.document_scope:
             if zh:
                 overview.document_scope = (
-                    f"这篇文档讲 {project.name} 是什么、一次真实调用怎么走、仓库怎么拆。"
-                    "读完你应能不靠目录讲清目标与边界，并指出链路上的关键类型。"
+                    f"{project.name} 的目标、一次真实调用经过谁、仓库怎么拆。"
+                    "关键类型保持英文 identifier，证据用 `path:line Symbol` 贴在断言旁边。"
                 )
             else:
                 overview.document_scope = (
-                    f"This page covers what {project.name} is, how one real call runs, "
-                    "and how the repo is split. After reading you should name the "
-                    "goal and the types on that path without leaning on the folder tree."
+                    f"{project.name}: the goal, who a real call passes through, "
+                    "and how the repo is split. Key types stay English identifiers; "
+                    "evidence is `path:line Symbol` next to the claim."
                 )
         if not overview.what_it_is:
             overview.what_it_is = _fallback_what_it_is(project, outline, zh)

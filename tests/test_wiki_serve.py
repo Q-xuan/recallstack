@@ -610,9 +610,9 @@ def test_materialize_deepens_watery_high_importance_concept(monkeypatch):
     out = materialize_wiki_payload(payload, [concept], store)
     page = next(p for p in out["pages"] if p["id"] == "concepts/agent-loop")
     assert out["serve_revision"] == WIKI_SERVE_REVISION
-    assert "## 实现要点" in page["content"]
-    assert "## 关键类型在链路上的职责" in page["content"]
-    assert "## 边界条件" in page["content"]
+    assert "## 实现" in page["content"]
+    assert "## 关键类型" in page["content"]
+    assert "## 边界" in page["content"]
     assert "`crates/codegen/xai-grok-pager/src/app/agent.rs:791 start_turn`" in page["content"]
     assert "README.md:1" not in page["content"]
 

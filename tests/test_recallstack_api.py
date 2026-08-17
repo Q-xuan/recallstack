@@ -496,7 +496,7 @@ def test_wiki_get_upgrades_legacy_concept_markdown(client: TestClient, monkeypat
     assert "`README.md:1-48`" in page["content"]
     assert "点击展开" not in page["content"]
     assert "## 过关" not in page["content"]
-    assert "## 它是什么" in page["content"]
+    assert "## 概述" in page["content"]
     assert "## 先回到原理" not in page["content"]
     assert "goal body" in page["content"]
 

@@ -85,6 +85,8 @@ def test_zh_prompts_ask_for_handbook_prose_and_term_tips():
     assert "手册正文" in overview[0]["content"]
     assert "用「你」不用「您」" in overview[0]["content"]
     assert "禁止翻译腔" in overview[0]["content"]
+    assert "读完应能" in overview[0]["content"]
+    assert "代理人" in overview[0]["content"]
     assert "term_tips" in overview[-1]["content"]
     overview_user = overview[-1]["content"]
     assert "what_it_is" in overview_user

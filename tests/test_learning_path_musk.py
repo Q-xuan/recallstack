@@ -225,8 +225,8 @@ def test_concept_wiki_pages_stay_handbook(monkeypatch):
     draft = _loop_draft()
     page = append_concept_pages(wiki, [draft]).get_page("concepts/agent-loop")
     assert page is not None
-    assert "## 它是什么" in page.content
-    assert "## 它在系统里的位置" in page.content
+    assert "## 概述" in page.content
+    assert "## 架构" in page.content
     assert "## 本步要你干什么" not in page.content
     assert "## 先回到原理" not in page.content
     assert "## 只看这一处证据" not in page.content
@@ -244,7 +244,7 @@ def test_upgrade_legacy_concept_markdown_still_strips_path_homework(monkeypatch)
     assert "## 过关" not in upgraded
     assert "## 只看这一处证据" not in upgraded
     assert "## 先回到原理" not in upgraded
-    assert "## 它是什么" in upgraded or "## 它在系统里的位置" in upgraded
+    assert "## 概述" in upgraded or "## 架构" in upgraded
 
 
 def test_path_out_rebuilds_worksheet_on_get(monkeypatch):

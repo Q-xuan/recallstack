@@ -306,6 +306,8 @@ _HOMEWORK_HEADINGS = {
     "Why this matters",
 }
 _WHAT_HEADINGS = {
+    "概述",
+    "Overview",
     "它是什么",
     "What it is",
     "What is this",
@@ -317,22 +319,32 @@ _WHAT_HEADINGS = {
     "Responsibility and boundaries",
 }
 _POSITION_HEADINGS = {
+    "架构",
+    "Architecture",
     "它在系统里的位置",
     "Where it sits",
 }
 _FLOW_HEADINGS = {
+    "调用链",
+    "Call path",
     "一次调用怎么走",
     "How a call runs",
 }
 _TYPE_ROLE_HEADINGS = {
+    "关键类型",
+    "Key types",
     "关键类型在链路上的职责",
     "Key types and their roles",
 }
 _IMPL_HEADINGS = {
+    "实现",
+    "Implementation",
     "实现要点",
     "Implementation details",
 }
 _BOUNDARY_HEADINGS = {
+    "边界",
+    "Boundaries",
     "边界条件",
     "Boundary conditions",
 }
@@ -352,6 +364,8 @@ _WATERY_HANDBOOK_RE = re.compile(
     re.I,
 )
 _TIPS_HEADINGS = {
+    "术语",
+    "Terms",
     "术语小贴士",
     "Term tips",
 }
@@ -633,10 +647,9 @@ def first_principles(concept: ConceptDraft, project_name: str) -> str:
             "边界存在是为了拦住职责泄漏。说出什么绝不能穿过去。",
         )
     return t(
-        f"If `{concept.title}` disappeared, which user-visible behaviour would break? "
-        "Answer from the evidence, not from the directory name.",
-        f"如果「{concept.title}」这一层消失，用户能察觉的哪段行为会坏？"
-        "从证据回答，不要从目录名回答。",
+        f"`{concept.title}` is a role on the call path. State what it owns from the "
+        "evidence, not from the directory name.",
+        f"「{concept.title}」是调用链上的角色。职责以源码证据为准，不以目录名为准。",
     )
 
 
@@ -2574,33 +2587,47 @@ def format_evidence_line(loc: str) -> str:
     )
 
 
+def handbook_section_title(key: str) -> str:
+    """Handbook section heading. Old workbook names stay in the upgrade maps."""
+    titles = {
+        "what": ("Overview", "概述"),
+        "position": ("Architecture", "架构"),
+        "flow": ("Call path", "调用链"),
+        "impl": ("Implementation", "实现"),
+        "types": ("Key types", "关键类型"),
+        "boundary": ("Boundaries", "边界"),
+        "not": ("What this is not", "不是什么"),
+        "tips": ("Terms", "术语"),
+        "prereq": ("Read first", "先读"),
+        "next": ("Next", "接下来"),
+    }
+    en, zh = titles[key]
+    return t(en, zh)
+
+
 def handbook_lede(slug: str, title: str = "") -> str:
     """Opening line for a concept *wiki* page — not the learning-path task."""
     shown = title or slug
     if slug == "project-goal":
         return t(
-            "This page explains what problem the repo solves and who it is for. "
-            "After reading you should be able to state the goal and what it "
-            "explicitly does not do, without leaning on the folder tree.",
-            "这篇说明这个仓库解决什么问题、给谁用。读完应能不靠目录讲清目标与明确不做什么。",
+            "What problem this repo solves, who it is for, and what it explicitly "
+            "does not do. The goal lives in the README, not the folder names.",
+            "这个仓库解决什么问题、给谁用，以及明确不做什么。目标写在 README，不在目录名里。",
         )
     if slug == "application-entry":
         return t(
-            "This page explains where the process starts and what it wires first. "
-            "After reading you should be able to name the entrypoint and the first calls.",
-            "这篇说明进程从哪启动、启动后先装配什么。读完应能指出入口文件和最先的几步调用。",
+            "Where the process starts and what it wires first. The entrypoint is "
+            "the first hop on the call path.",
+            "进程从哪启动、启动后先装配什么。入口文件是调用链的第一跳。",
         )
     if slug in _FLOW_SLUGS:
         return t(
-            f"This page explains how `{shown}` sits on a real call path. "
-            "After reading you should be able to say who calls it, what it calls, "
-            "and what breaks if it disappears.",
-            f"这篇说明「{shown}」在一次真实调用里的位置。读完应能讲清谁调用它、它调用谁、消失会坏哪。",
+            f"Where `{shown}` sits on a real call path: who calls it, and what it calls.",
+            f"「{shown}」在一次真实调用里的位置：谁调用它、它调用谁。",
         )
     return t(
-        f"This page explains `{shown}`. After reading you should be able to say "
-        "what it owns and where that responsibility stops.",
-        f"这篇说明「{shown}」。读完应能讲清它负责什么、边界停在哪里。",
+        f"What `{shown}` owns, and where that responsibility stops.",
+        f"「{shown}」负责什么，以及边界停在哪里。",
     )
 
 
@@ -2621,10 +2648,9 @@ def handbook_position(slug: str, title: str = "") -> str:
             "进程由运行时调进入口；入口再去装配其余模块。如果它消失，图上别的节点都不会跑。",
         )
     return t(
-        f"If `{shown}` disappeared, a user-visible behaviour would break. "
-        "Name the callers and callees from the evidence, not from the folder name.",
-        f"如果「{shown}」这一层消失，用户能察觉的行为会坏。"
-        "从证据说出调用它的和它调用的，不要从目录名说。",
+        f"`{shown}` sits on the call path: who calls it, and what it calls. "
+        "Read that from the evidence, not from the folder name.",
+        f"「{shown}」接在调用链上：谁调用它、它调用谁，以源码证据为准，不以目录名为准。",
     )
 
 
@@ -2986,22 +3012,16 @@ def upgrade_legacy_concept_markdown(
         out.append(chip_line)
         out.append("")
 
-    _append_section(out, t("What it is", "它是什么"), what)
-    _append_section(out, t("Where it sits", "它在系统里的位置"), position)
-    _append_section(out, t("How a call runs", "一次调用怎么走"), _join_bodies(grouped["flow"]))
+    _append_section(out, handbook_section_title("what"), what)
+    _append_section(out, handbook_section_title("position"), position)
+    _append_section(out, handbook_section_title("flow"), _join_bodies(grouped["flow"]))
+    _append_section(out, handbook_section_title("impl"), _join_bodies(grouped["impl"]))
+    _append_section(out, handbook_section_title("types"), _join_bodies(grouped["types"]))
     _append_section(
-        out, t("Implementation details", "实现要点"), _join_bodies(grouped["impl"])
+        out, handbook_section_title("boundary"), _join_bodies(grouped["boundary"])
     )
-    _append_section(
-        out,
-        t("Key types and their roles", "关键类型在链路上的职责"),
-        _join_bodies(grouped["types"]),
-    )
-    _append_section(
-        out, t("Boundary conditions", "边界条件"), _join_bodies(grouped["boundary"])
-    )
-    _append_section(out, t("What this is not", "不是什么"), _join_bodies(grouped["not"]))
-    _append_section(out, t("Term tips", "术语小贴士"), _join_bodies(grouped["tips"]))
+    _append_section(out, handbook_section_title("not"), _join_bodies(grouped["not"]))
+    _append_section(out, handbook_section_title("tips"), _join_bodies(grouped["tips"]))
     _append_section(out, t("Read first", "先读"), _join_bodies(grouped["prereq"]))
     _append_section(out, t("Next", "接下来"), _join_bodies(grouped["next"]))
     for block in grouped["other"]:
@@ -3267,8 +3287,8 @@ def _boundary_section_body(
             items.append(f"- {cleaned.lstrip('- ').strip()}")
     items.append(
         t(
-            f"- If `{chip}` disappeared, the failure this step signs is: {pass_gate(concept)}",
-            f"- 若 `{chip}` 消失，这一步要签字的失败是：{pass_gate(concept)}",
+            f"- The claim is pinned at `{chip}`; `{symbol}` is the type, not a folder name.",
+            f"- 主张钉在 `{chip}`：`{symbol}` 是类型，不是目录名。",
         )
     )
     items.append(
@@ -3288,13 +3308,24 @@ def _boundary_section_body(
     return "\n".join(out[:6])
 
 
+_HANDBOOK_SECTION_ALIASES = {
+    "实现": ("实现要点", "Implementation details", "这条链路怎么转", "How it actually runs"),
+    "Implementation": ("Implementation details", "How it actually runs", "实现要点"),
+    "关键类型": ("关键类型在链路上的职责", "Key types and their roles"),
+    "Key types": ("Key types and their roles", "关键类型在链路上的职责"),
+    "边界": ("边界条件", "Boundary conditions", "失败与边界"),
+    "Boundaries": ("Boundary conditions", "Failures and edges"),
+}
+
+
 def _upsert_handbook_section(content: str, heading: str, body: str) -> str:
     body = (body or "").strip()
     if not body:
         return content
     block = f"## {heading}\n\n{body}\n\n"
+    names = (heading, *(_HANDBOOK_SECTION_ALIASES.get(heading) or ()))
     pattern = re.compile(
-        rf"(?ms)^## {re.escape(heading)}\n.*?(?=^## |\Z)"
+        rf"(?ms)^## (?:{'|'.join(re.escape(n) for n in names)})\n.*?(?=^## |\Z)"
     )
     match = pattern.search(content or "")
     if match:
@@ -3303,7 +3334,7 @@ def _upsert_handbook_section(content: str, heading: str, body: str) -> str:
             return content
         return pattern.sub(block, content, count=1)
     insert_at = re.search(
-        r"(?m)^## (不是什么|What this is not|术语小贴士|Term tips|先读|Read first|接下来|Next)\s*$",
+        r"(?m)^## (不是什么|What this is not|术语|Terms|术语小贴士|Term tips|先读|Read first|接下来|Next)\s*$",
         content or "",
     )
     if insert_at:
@@ -3329,17 +3360,17 @@ def deepen_concept_markdown(
         return content
     content = _upsert_handbook_section(
         content,
-        t("Implementation details", "实现要点"),
+        handbook_section_title("impl"),
         _impl_section_body(concept, hits, store),
     )
     content = _upsert_handbook_section(
         content,
-        t("Key types and their roles", "关键类型在链路上的职责"),
+        handbook_section_title("types"),
         _types_section_body(concept, hits, store),
     )
     content = _upsert_handbook_section(
         content,
-        t("Boundary conditions", "边界条件"),
+        handbook_section_title("boundary"),
         _boundary_section_body(concept, hits, store),
     )
     return re.sub(r"\n{3,}", "\n\n", content).rstrip() + "\n"
