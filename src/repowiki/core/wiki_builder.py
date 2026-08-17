@@ -10,9 +10,11 @@ from repowiki.core.graph import DependencyGraph
 from repowiki.core.models import ProjectContext, WikiData
 from repowiki.core.modules import ROOT_NAME
 from repowiki.core.topics import (
+    GETTING_STARTED_ID,
     is_generic_web_slug,
     keep_generic_web_topic_nav,
     repo_has_web_system,
+    wiki_page_id_for_topic,
 )
 
 # Sidebar / page chrome labels. Path segments (crates, bin, .cargo) stay as
@@ -151,11 +153,15 @@ class WikiBuilder:
         )
         if gs_topic and (overview.setup_instructions or gs_topic.files or overview.description):
             gs_title = gs_topic.title or structural_title("quick-start", lang)
-            gs_md = self._build_getting_started_page(overview, gs_topic, lang)
+            gs_md = self._build_getting_started_page(
+                overview, gs_topic, lang, topics=wiki_data.topics
+            )
             pages.append(WikiPage(id="getting-started", title=gs_title, content=gs_md, order=1))
         elif overview.setup_instructions:
             gs_title = structural_title("quick-start", lang)
-            gs_md = self._build_getting_started_page(overview, None, lang)
+            gs_md = self._build_getting_started_page(
+                overview, None, lang, topics=wiki_data.topics
+            )
             pages.append(WikiPage(id="getting-started", title=gs_title, content=gs_md, order=1))
 
         arch = wiki_data.architecture
@@ -325,17 +331,24 @@ class WikiBuilder:
 
         return "\n".join(lines)
 
-    def _build_getting_started_page(self, overview, topic, language: str = "en") -> str:
+    def _build_getting_started_page(
+        self, overview, topic, language: str = "en", topics=None
+    ) -> str:
         title = structural_title("quick-start", language)
         lines = [f"# {title}\n"]
+        next_name = _first_deep_topic_title(topics)
         if language == "zh":
-            lines.append(
-                "> 按 README 和仓库根上的启动说明把项目跑起来，再进架构和 Agent Loop。\n"
-            )
+            follow = f"再进架构和{next_name}。" if next_name else "再进架构。"
+            lines.append(f"> 按 README 和仓库根上的启动说明把项目跑起来，{follow}\n")
         else:
+            follow = (
+                f"then read architecture and {next_name}."
+                if next_name
+                else "then read architecture."
+            )
             lines.append(
                 "> Follow the README and root setup notes to run the project, "
-                "then read architecture and the Agent Loop.\n"
+                f"{follow}\n"
             )
         one = (getattr(overview, "one_liner", "") or "").strip()
         if one:
@@ -354,7 +367,7 @@ class WikiBuilder:
                 lines.append(f"{desc[:1200]}\n")
             else:
                 lines.append(
-                    "Follow the README until one of TUI / headless / ACP actually enters the main loop.\n"
+                    "Follow the README until the process actually starts, then read architecture.\n"
                 )
         flow = (getattr(overview, "runtime_flow", "") or "").strip()
         if flow:
@@ -367,14 +380,13 @@ class WikiBuilder:
             lines.append("")
         if language == "zh":
             lines.append("## 跑起来之后\n")
-            lines.append(f"- [{structural_title('architecture', language)}](architecture)")
-            lines.append("- [Agent Loop](topics/agent-loop)")
-            lines.append("")
         else:
             lines.append("## After it runs\n")
-            lines.append(f"- [{structural_title('architecture', language)}](architecture)")
-            lines.append("- [Agent Loop](topics/agent-loop)")
-            lines.append("")
+        lines.append(f"- [{structural_title('architecture', language)}](architecture)")
+        next_topic = _first_deep_topic_link(topics)
+        if next_topic:
+            lines.append(next_topic)
+        lines.append("")
         paths: list[str] = []
         if topic is not None:
             for item in getattr(topic, "files", None) or []:
@@ -1437,7 +1449,9 @@ def flowchart_lr_from_types(names: list[str]) -> str:
     ids = [chr(ord("A") + i) for i in range(len(labels))]
     for nid, lab in zip(ids, labels, strict=True):
         lines.append(f'  {nid}["{lab}"]')
-    for src, dst in zip(ids, ids[1:], strict=False):
+    for src, dst, a, b in zip(ids, ids[1:], labels, labels[1:], strict=False):
+        if a == b:
+            continue
         lines.append(f"  {src} --> {dst}")
     return "\n".join(lines)
 
@@ -1685,10 +1699,74 @@ def upgrade_architecture_loop_wording(content: str) -> str:
         return content
     content = content.replace("Agent Loop 与上下文装配", "Agent Loop")
     content = content.replace("Agent Loop & Context Assembly", "Agent Loop")
-    content = re.sub(r"\bAgentLoop\b", "start_turn", content)
+    content = _rewrite_agentloop_token(content)
     content = re.sub(r"（cli-tool）", "", content)
     content = re.sub(r"\(cli-tool\)", "", content)
     return content
+
+
+def _rewrite_agentloop_token(content: str) -> str:
+    """Map invented AgentLoop to start_turn, but never draw start_turn → start_turn."""
+
+    def mermaid_repl(match: re.Match[str]) -> str:
+        body = match.group(1)
+        if re.search(r"\bstart_turn\b", body):
+            body = re.sub(r"\bAgentLoop\b", "Agent Loop", body)
+        else:
+            body = re.sub(r"\bAgentLoop\b", "start_turn", body)
+        return f"```mermaid\n{collapse_repeated_mermaid_labels(body)}\n```"
+
+    content = re.sub(r"```mermaid\n(.*?)```", mermaid_repl, content, flags=re.S)
+    return re.sub(r"\bAgentLoop\b", "start_turn", content)
+
+
+def collapse_repeated_mermaid_labels(source: str) -> str:
+    """Drop edges whose two ends share a label (Pager → start_turn → start_turn)."""
+    text = (source or "").strip()
+    if not text:
+        return text
+    node_labels: dict[str, str] = {}
+    for match in re.finditer(
+        r'([A-Za-z][\w-]*)\s*\[\s*"?([^"\]]+)"?\s*\]', text
+    ):
+        node_labels[match.group(1)] = re.sub(r"\s+", " ", match.group(2)).strip()
+    if not node_labels:
+        return text
+    out: list[str] = []
+    for line in text.splitlines():
+        edge = re.match(r"^(\s*)([A-Za-z][\w-]*)\s*-->\s*([A-Za-z][\w-]*)", line)
+        if edge:
+            src, dst = edge.group(2), edge.group(3)
+            if src == dst or node_labels.get(src) == node_labels.get(dst):
+                continue
+        out.append(line)
+    return "\n".join(out)
+
+
+def _first_deep_topic(topics) -> tuple[str, str] | None:
+    for item in topics or []:
+        tid = getattr(item, "id", None) or getattr(item, "name", "") or ""
+        section = getattr(item, "section", "") or ""
+        if not tid or section == "getting-started" or tid == GETTING_STARTED_ID:
+            continue
+        if tid in {"overview", "project-goal", "architecture"}:
+            continue
+        title = (getattr(item, "title", "") or tid).strip()
+        return wiki_page_id_for_topic(tid), title
+    return None
+
+
+def _first_deep_topic_title(topics) -> str:
+    hit = _first_deep_topic(topics)
+    return hit[1] if hit else ""
+
+
+def _first_deep_topic_link(topics) -> str:
+    hit = _first_deep_topic(topics)
+    if not hit:
+        return ""
+    page_id, title = hit
+    return f"- [{title}]({page_id})"
 
 
 def thicken_getting_started(
@@ -1703,8 +1781,23 @@ def thicken_getting_started(
     if "architecture" in known_ids:
         title = structural_title("architecture", language)
         links.append(f"- [{title}](architecture)")
-    if "topics/agent-loop" in known_ids:
-        links.append("- [Agent Loop](topics/agent-loop)")
+    for pid in known_ids:
+        if pid.startswith("topics/") and pid != "topics/getting-started":
+            title = pid.split("/", 1)[-1]
+            if title == "agent-loop":
+                links.append("- [Agent Loop](topics/agent-loop)")
+            elif title == "entry-and-boot":
+                links.append("- [入口与启动](topics/entry-and-boot)" if language == "zh" else "- [Entry and boot](topics/entry-and-boot)")
+            elif title in {"capability-seam", "plugin-architecture", "cordis", "core-architecture"}:
+                shown = {
+                    "capability-seam": "Capability Seam",
+                    "plugin-architecture": "Plugin 架构" if language == "zh" else "Plugin architecture",
+                    "cordis": "Cordis",
+                    "core-architecture": "核心架构" if language == "zh" else "Core architecture",
+                }[title]
+                links.append(f"- [{shown}]({pid})")
+            if len(links) >= 2:
+                break
     if not links:
         return content
     heading = "## 跑起来之后" if language == "zh" else "## After it runs"

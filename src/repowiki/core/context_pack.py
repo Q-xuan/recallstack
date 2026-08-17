@@ -32,9 +32,9 @@ _WINDOW = 14
 
 _SYMBOL_LINE = re.compile(
     r"^\s*(?:"
-    r"(?:async\s+)?def\s+\w+"
-    r"|class\s+\w+"
-    r"|(?:export\s+)?(?:async\s+)?function\s+\w+"
+        r"(?:async\s+)?def\s+\w+"
+        r"|(?:export\s+)?class\s+\w+"
+        r"|(?:export\s+)?(?:async\s+)?function\s+\w+"
     r"|(?:pub\s+)?(?:async\s+)?fn\s+\w+"
     r"|func\s+\w+"
     r"|(?:public|private|protected)\s+(?:static\s+)?(?:class|interface|void|fun)\s+\w+"

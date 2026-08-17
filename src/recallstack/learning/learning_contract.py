@@ -71,6 +71,11 @@ _PATH_TRUNK: tuple[str, ...] = (
     "project-goal",
     "entry-and-boot",
     "application-entry",
+    "capability-seam",
+    "plugin-architecture",
+    "core-architecture",
+    "cordis",
+    "core",
     "agent-loop",
     "call-flow",
     "runtime-loop",
@@ -407,11 +412,11 @@ _FLOW_SLUGS = {
 
 def path_mission() -> str:
     return t(
-        "The trunk is how the process starts, how one turn runs, then the hard "
-        "turns — tool write-back, cancel, ACP vs TUI. Follow the evidence on "
-        "the call path, not the folder names.",
-        "主干是进程怎么进、一轮怎么转，以及硬弯：工具写回、取消、ACP 和 TUI 两扇门。"
-        "每一层对照证据看调用，不按目录名走。",
+        "The trunk is how the process starts, how this repo's core systems join, "
+        "and where the seam or hard turn sits. Follow evidence from this tree, "
+        "not a vocabulary copied from another repository.",
+        "主干是进程怎么进、本仓库的核心系统怎么接，以及 seam / 硬弯落在哪。"
+        "每一层对照本仓库证据看调用，不套另一仓库的词表。",
     )
 
 
@@ -480,12 +485,12 @@ def step_task_for_slug(slug: str, title: str = "") -> str:
     """Concrete action for this step. Stored on the path node as ``reason``."""
     tasks = {
         "project-goal": t(
-            "On the evidence line, say whether the user lives in a terminal turn or a crate list. Name which of entry / one turn / start_turn would make Enter produce no answer.",
-            "对着证据那一行，说明用户被放在终端对话里还是 crate 清单里。说出入口、一轮循环、start_turn 里少了哪一层回车没回答。",
+            "On the evidence line, say who this repo is for and what must stay true for a real run. Name the constraint — not a folder list.",
+            "对着证据那一行，说明这个仓库给谁用、一次真实运行必须成立的约束。不要用目录清单回答。",
         ),
         "entry-and-boot": t(
-            "Rule out “both are entry”. Point to who receives control after connect, and who receives it after the TUI door.",
-            "排除「都是入口」。指出 connect 之后谁接手、TUI 那扇门交给谁。",
+            "Open the process entry and name who receives control after the first call — not a package name.",
+            "打开进程入口，指出第一记调用之后谁接手（不要用包名回答）。",
         ),
         "application-entry": t(
             "Open the entrypoint and name the first three calls after the process starts — not a crate name.",
@@ -668,30 +673,30 @@ def path_principles(concept: Any, project_name: str = "") -> str:
     name = project_name or title
     texts = {
         "project-goal": t(
-            f"{name} is a product that must finish one terminal turn, not a crate inventory. "
-            "Invariant: entry, one turn, and a model call all exist, or Enter produces no answer. "
-            "If this were false, the user hits Enter and the screen never shows a model reply — only files that compile. "
+            f"{name} is a product that must complete one real run, not a crate inventory. "
+            "Invariant: the README goal, a process entry, and the systems a real call crosses all exist. "
+            "If this were false, the user would only have a folder list that compiles. "
             "Do not treat this as “read the README and you understand the product”, and do not treat the repo as a crate list you can shuffle. "
-            "The first README line pins the product shape. Directories are a consequence of someone wiring entry to a turn to a model.",
-            f"{name} 首先是一个能在终端里跑完一轮对话的产品，不是 crate 目录。"
-            "不变量：入口、一轮循环、模型调用三层都在，用户回车才有回答。"
-            "若这不成立，用户对着终端按下回车，屏幕上不会出现模型回复，只剩一堆可以编译的文件。"
+            "The first README line pins the product shape. Directories are a consequence of someone wiring entry to the core systems.",
+            f"{name} 首先是一份能跑完一次真实调用的产品，不是 crate 目录。"
+            "不变量：README 里的目标、进程入口、一次调用经过的系统都在。"
+            "若这不成立，用户只剩一堆可以编译的文件夹。"
             "不要把这当成「读完 README 就等于懂了产品」，也不要把仓库当成可以随便拆开的 crate 清单。"
-            "README 第一行钉住的是产品形态。目录是结果：有人从入口把一轮接上模型，产品才存在。",
+            "README 第一行钉住的是产品形态。目录是结果：有人从入口把核心系统接上，产品才存在。",
         ),
         "entry-and-boot": t(
-            "A process enters through one door: the TUI loop or ACP connect. Those doors must not each build a private runtime. "
-            "Invariant: grok binary starts → one door is chosen → runtime is assembled → then the turn loop. "
-            "If this were false, the first sentence from the IDE or the terminal has no receiver, or two states step on each other. "
-            "This is not “find a file named main”. Entry is a hand-off of control, not a crate name. "
+            "A process enters through the product door this repo actually ships — a CLI, binary, or server start. "
+            "Invariant: the process starts → it wires what it owns → then the main loop or plugin host. "
+            "If this were false, the first user action has no receiver. "
+            "This is not “find a file named main”. Entry is a hand-off of control, not a package name. "
             "If boot compiles protobuf or warms an unrelated CLI first, the first keystroke still has no receiver. "
-            "TUI and ACP are two doors, not two names for the same road.",
-            "进程必须从一扇门进来：TUI 主循环或 ACP 的 connect。两扇门不能各造一套运行时。"
-            "不变量：grok 二进制启动 → 选定一扇门 → 装配运行时 → 才进入对话。"
-            "若这不成立，用户在 IDE 里走 ACP、在终端里走 TUI，第一句话没有接收者，或两套状态互相踩。"
-            "不要把这当成「找一个叫 main 的文件就完了」。入口是控制权交接，不是 crate 名。"
+            "Do not assume TUI and ACP doors unless those paths exist in this tree.",
+            "进程必须从本仓库真正交付的那扇门进来：CLI、二进制或服务启动。"
+            "不变量：进程启动 → 装配自己负责的对象 → 再把控制权交给主循环或 plugin host。"
+            "若这不成立，用户的第一记操作没有接收者。"
+            "不要把这当成「找一个叫 main 的文件就完了」。入口是控制权交接，不是包名。"
             "若入口先去编 protobuf 或拉起无关 CLI，用户的第一句仍然没人接。"
-            "TUI 和 ACP 是两扇门，不是同一条路的两个别名。",
+            "除非本仓库真有 TUI / ACP 这两条路，否则不要把它们当成默认的两扇门。",
         ),
         "application-entry": t(
             "Without an entrypoint there is no process: nothing is wired, nothing runs. "
@@ -835,18 +840,29 @@ def path_principles(concept: Any, project_name: str = "") -> str:
     )
 
 
-def pass_gate(concept: Any) -> str:
+def pass_gate(concept: Any, *, chip: str | None = None) -> str:
     """Checkable gate: name a function, state, or failure path. Not a slogan."""
     slug = getattr(concept, "slug", "") or ""
     title = getattr(concept, "title", "") or slug
-    gates = {
-        "project-goal": t(
+    _path, _line, chip_symbol = parse_path_chip(chip or "")
+    if slug == "project-goal" and chip_symbol == "start_turn":
+        return t(
             "Check: if start_turn is missing, can the dialogue the README claims still happen? Name the missing function. Do not summarize the product.",
             "核对：若没有 start_turn 这一层，README 声称的对话还能发生吗？说出缺的函数名，不要概括产品。",
-        ),
-        "entry-and-boot": t(
+        )
+    if slug == "entry-and-boot" and chip_symbol in {"connect", "Connect"}:
+        return t(
             "Check: after connect returns, which type holds session state? If connect fails, does the TUI door open by itself? Name the type or function.",
             "核对：connect 返回之后，会话状态落在哪个类型上？若 connect 失败，TUI 那扇门还会不会自己开？说出类型或函数名。",
+        )
+    gates = {
+        "project-goal": t(
+            "Check: if the entry or the README's main path is missing one layer, can the product still stand? Name the missing function or type. Do not summarize the product.",
+            "核对：若入口或 README 声称的主路径缺一层，产品还能成立吗？说出缺的函数或类型名，不要概括产品。",
+        ),
+        "entry-and-boot": t(
+            "Check: after the process starts, which type receives control? If that object is empty, which failure path does the first call take?",
+            "核对：进程启动之后，控制权落在哪个类型上？若这个对象是空的，第一记调用走哪条失败路径？",
         ),
         "application-entry": t(
             "Check: if the entry file were empty, what would fail to start? Name that object.",
@@ -1188,7 +1204,7 @@ def path_step_contract(
     title = getattr(concept, "title", "") or slug
     evidence = chip if chip is not None else path_evidence_chip(concept, file_texts=file_texts)
     path, line, symbol = parse_path_chip(evidence or "")
-    gate = pass_gate(concept)
+    gate = pass_gate(concept, chip=evidence)
     required = gate_required_symbol(gate, symbol)
     return {
         "chip": evidence or "",
@@ -2318,11 +2334,14 @@ def fill_wiki_key_type_lines(content: str, file_texts: dict[str, str] | None) ->
 
 
 _ASK_QUESTION_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
-    (("entry-and-boot", "application-entry", "入口", "boot", "connect"), "这个项目的入口在哪，connect 之后谁接手？"),
-    (("agent-loop", "start_turn", "agent loop", "一轮"), "一轮里 start_turn 之后谁调模型？"),
-    (("acp", "protocol", "协议"), "ACP 会话是在哪建立的，connect 做了什么？"),
-    (("pager", "terminal-ui", "tui-pager", "终端"), "Pager 把模型流式输出写进哪块缓冲区？"),
-    (("tool-system", "tool_bridge", "toolbridge", "工具"), "模型返回 tool call 之后谁按名字执行？"),
+    (("connect",), "这个项目的入口在哪，connect 之后谁接手？"),
+    (("start_turn",), "一轮里 start_turn 之后谁调模型？"),
+    (("acp",), "ACP 会话是在哪建立的？"),
+    (("pager",), "Pager 把模型流式输出写进哪块缓冲区？"),
+    (("toolbridge", "tool_bridge"), "模型返回 tool call 之后谁按名字执行？"),
+    (("capability seam", "ctx.llm", "ctx.fs"), "Capability Seam 上 Service Definition / Provider / Consumer 怎么接？"),
+    (("cordis",), "vendored Cordis 如何装上 plugin？"),
+    (("plugin", "defineplugin"), "everything-is-a-plugin 里谁声明、谁装上、谁可被替换？"),
 )
 _ASK_HOST_LEFTOVERS = ("复习调度", "复训调度", "FSRS", "依赖图是怎么构建")
 
@@ -2371,20 +2390,18 @@ def evidence_reading(concept: Any, chip: str | None = None) -> str:
     slug = getattr(concept, "slug", "") or ""
     texts = {
         "project-goal": t(
-            "This line is not a crate inventory. It pins the product to a runnable dialogue. "
-            "If it only listed packages, entry and start_turn would have no constraint. "
-            "Read it as the claim that Enter must produce an answer.",
-            "这一行不是 crate 清单，它把产品钉在「能跑的对话」上。"
-            "若它只是介绍包名，后面的入口和 start_turn 就没有约束。"
-            "把它读成：回车必须换来回答。",
+            "This line is not a crate inventory. It pins the product to a runnable path. "
+            "If it only listed packages, entry and the core systems would have no constraint. "
+            "Read it as the claim that a real run must complete.",
+            "这一行不是 crate 清单，它把产品钉在「能跑的路径」上。"
+            "若它只是介绍包名，后面的入口和核心系统就没有约束。"
+            "把它读成：一次真实运行必须能走完。",
         ),
         "entry-and-boot": t(
-            "connect is one door, not a comment on main. "
-            "This line is where ACP hands control to a session; the TUI door is the other hand-off. "
-            "If this line never ran, an IDE client would have no receiver.",
-            "connect 是一扇门，不是写在 main 旁边的注释。"
-            "这一行是 ACP 把控制权交给会话的地方；TUI 是另一扇门。"
-            "若这一行从不执行，IDE 客户端没有接收者。",
+            "This line is the first call the process actually makes, not a comment on main. "
+            "If this line never ran, later packages would sit on disk and the user would have no receiver.",
+            "这一行是进程真正发出的第一记调用，不是写在 main 旁边的注释。"
+            "若这一行从不执行，后面的包只在磁盘上，用户没有接收者。",
         ),
         "application-entry": t(
             "This line is the first call the process actually makes. "
@@ -2502,7 +2519,7 @@ def path_worksheet(
         if evidence_chip is not None
         else path_evidence_chip(concept, file_texts=file_texts)
     )
-    gate = pass_gate(concept)
+    gate = pass_gate(concept, chip=chip)
     reading = evidence_reading(concept, chip)
     judge = t(
         "Open this line and decide whether it is enough. Annotations help you read; they do not answer for you.",

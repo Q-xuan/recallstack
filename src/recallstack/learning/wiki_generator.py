@@ -227,9 +227,9 @@ def build_deterministic_wiki_data(
         architecture_type="system-topics",
         description=t(
             "The repo is split by the systems that actually run a call. Data enters at "
-            "the entrypoints, then moves through runtime, tools, and UI. Use the diagram "
-            "to see coupling; the left nav is conceptual, not a crate tree.",
-            "仓库按一次调用真正经过的系统切页。请求从入口进来，经过运行时、工具层和界面。"
+            "the entrypoints, then through this repo's own packages and seams. Use the "
+            "diagram to see coupling; the left nav is conceptual, not a crate tree.",
+            "仓库按一次调用真正经过的系统切页。请求从入口进来，经过本仓库自己的核心包和 seam。"
             "结构图用来看耦合；左侧是概念导航，不是 crate 树。",
         ),
         components=components,
