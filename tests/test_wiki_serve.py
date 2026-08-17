@@ -351,6 +351,14 @@ def test_persist_path_from_loaded_store_skips_when_chips_ready():
     path = _agent_loop_path(
         {"serve_revision": 1, "chips": {"c-loop": "crates/tui/src/app.rs:791 start_turn"}}
     )
+    path.nodes[0].concept.source_references = [
+        {
+            "path": "crates/tui/src/app.rs",
+            "start_line": 791,
+            "end_line": 791,
+            "symbol": "start_turn",
+        }
+    ]
     persist_path_from_loaded_store(_Session(), path, {"app.rs": "fn start_turn() {}"})
     persist_path_from_loaded_store(_Session(), None, {})
 
@@ -550,3 +558,206 @@ def test_persist_path_from_loaded_store_restamps_leftovers(monkeypatch):
     assert chips["c-runtime"] == (
         "crates/codegen/xai-agent-lifecycle/src/runtime.rs:22 AgentRuntime"
     )
+
+
+def test_stale_wiki_revision_is_not_materialized():
+    assert WIKI_SERVE_REVISION >= 2
+    assert not wiki_is_materialized({"serve_revision": 1, "pages": []})
+    assert wiki_is_materialized({"serve_revision": WIKI_SERVE_REVISION, "pages": []})
+
+
+def test_fill_wiki_architecture_line_one_cites_bind_or_drop():
+    store = {
+        "crates/codegen/xai-grok-pager/src/app/agent.rs": ("\n" * 790)
+        + "    pub fn start_turn(&mut self) {\n",
+        "crates/codegen/xai-agent-lifecycle/src/lib.rs": (
+            "pub mod runtime;\npub use runtime::AgentRuntime;\n"
+        ),
+        "crates/codegen/xai-agent-lifecycle/src/runtime.rs": (
+            "// pad\n" * 21 + "pub struct AgentRuntime {\n"
+        ),
+        "Cargo.toml": "[workspace]\n",
+        "package.json": "{}\n",
+    }
+    md = (
+        "# 架构\n\n"
+        "**相关源码:** "
+        "`crates/codegen/xai-grok-pager/src/app/agent.rs:1 start_turn` "
+        "`crates/codegen/xai-agent-lifecycle/src/lib.rs:1` "
+        "`Cargo.toml:1` "
+        "`package.json:1`\n\n"
+        "- **Runtime** — `crates/codegen/xai-agent-lifecycle/src/lib.rs:1`\n"
+    )
+    filled = fill_wiki_key_type_lines(md, store)
+    assert "`crates/codegen/xai-grok-pager/src/app/agent.rs:791 start_turn`" in filled
+    assert "`crates/codegen/xai-agent-lifecycle/src/runtime.rs:22 AgentRuntime`" in filled
+    assert "Cargo.toml:1" not in filled
+    assert "package.json:1" not in filled
+    assert "lib.rs:1`" not in filled
+
+
+def test_chip_needs_restamp_is_junk_not_slug_allowlist():
+    from recallstack.learning.learning_contract import chip_needs_restamp
+
+    assert chip_needs_restamp("tool-system", "Cargo.toml:1")
+    assert chip_needs_restamp("agent-loop", "README.md:1")
+    assert chip_needs_restamp("acp-protocol", "crates/acp/src/lib.rs")
+    assert not chip_needs_restamp(
+        "agent-loop", "crates/tui/src/app.rs:791 start_turn"
+    )
+    leftover = _leftover_path(
+        {
+            "serve_revision": PATH_SERVE_REVISION,
+            "chips": {
+                "c-goal": "README.md:1",
+                "c-runtime": "crates/codegen/xai-agent-lifecycle/src/lib.rs",
+            },
+        }
+    )
+    leftover.nodes.append(
+        SimpleNamespace(
+            id="n3",
+            concept_id="c-tools",
+            position=3,
+            reason="",
+            concept=SimpleNamespace(id="c-tools", slug="tool-system", title="Tools"),
+        )
+    )
+    leftover.resolved["chips"]["c-tools"] = "package.json:1"
+    leftover.resolved.pop("chip_restamp", None)
+    assert path_needs_chip_restamp(leftover, leftover.resolved)
+
+
+def test_persist_restamps_junk_chip_on_any_slug(monkeypatch):
+    wrote: dict = {}
+
+    def fake_persist(_session, path, resolved):
+        wrote["resolved"] = resolved
+        path.resolved = resolved
+
+    monkeypatch.setattr(
+        "recallstack.learning.wiki_serve.persist_path_resolved", fake_persist
+    )
+    monkeypatch.setattr(
+        "recallstack.learning.wiki_serve.sync_path_contract_items",
+        lambda *_a, **_k: None,
+    )
+    concept = SimpleNamespace(
+        id="c-tools",
+        repository_id="r",
+        repository_version_id="v",
+        slug="tool-system",
+        title="Tools",
+        description="",
+        difficulty=2,
+        importance=0.8,
+        source_references=[{"path": "package.json", "start_line": 1, "end_line": 40}],
+        content_hash="",
+        stale=False,
+        why_learn="",
+        estimated_minutes=15,
+        wiki_page_id="topics/tool-system",
+    )
+    path = SimpleNamespace(
+        id="p1",
+        repository_version_id="v",
+        title="路径",
+        description="",
+        estimated_minutes=40,
+        resolved={
+            "serve_revision": PATH_SERVE_REVISION,
+            "chips": {"c-tools": "package.json:1"},
+        },
+        nodes=[
+            SimpleNamespace(
+                id="n1", concept_id="c-tools", position=1, reason="", concept=concept
+            )
+        ],
+    )
+    store = {
+        "package.json": "{}\n",
+        "crates/codegen/xai-grok-agent/src/tool_bridge.rs": (
+            "\n" * 2 + "pub struct ToolBridge {\n"
+        ),
+    }
+    persist_path_from_loaded_store(
+        SimpleNamespace(commit=lambda: wrote.setdefault("commit", True), rollback=lambda: None),
+        path,
+        store,
+    )
+    assert wrote.get("commit")
+    assert wrote["resolved"]["chips"]["c-tools"] == (
+        "crates/codegen/xai-grok-agent/src/tool_bridge.rs:3 ToolBridge"
+    )
+    assert concept.source_references[0]["path"].endswith("tool_bridge.rs")
+    assert concept.source_references[0]["start_line"] == 3
+    assert concept.source_references[0]["symbol"] == "ToolBridge"
+
+
+def test_sync_concept_refs_from_good_chip_without_store():
+    from recallstack.learning.wiki_serve import sync_concept_refs_from_chips
+
+    concept = SimpleNamespace(
+        id="c-goal",
+        slug="project-goal",
+        source_references=[{"path": "README.md", "start_line": 1, "end_line": 40}],
+    )
+    path = SimpleNamespace(
+        nodes=[SimpleNamespace(concept_id="c-goal", concept=concept)],
+        resolved={
+            "chips": {
+                "c-goal": "crates/codegen/xai-grok-pager/src/app/agent.rs:791 start_turn"
+            }
+        },
+    )
+    assert sync_concept_refs_from_chips(None, path, path.resolved)
+    assert concept.source_references[0]["path"].endswith("app/agent.rs")
+    assert concept.source_references[0]["start_line"] == 791
+    assert concept.source_references[0]["symbol"] == "start_turn"
+    assert not sync_concept_refs_from_chips(None, path, path.resolved)
+
+
+def test_path_out_does_not_walk_store_for_junk_other_slug(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+
+    def boom_load(_vid):
+        raise AssertionError("GET /learning-path must not walk the store after chips persist")
+
+    monkeypatch.setattr(
+        "recallstack.learning.code_loader.load_version_file_texts", boom_load
+    )
+    concept = SimpleNamespace(
+        id="c-tools",
+        repository_id="r",
+        repository_version_id="v",
+        slug="tool-system",
+        title="Tools",
+        description="",
+        difficulty=2,
+        importance=0.8,
+        source_references=[{"path": "package.json", "start_line": 1}],
+        content_hash="",
+        stale=False,
+        why_learn="",
+        estimated_minutes=15,
+        wiki_page_id="topics/tool-system",
+    )
+    path = SimpleNamespace(
+        id="p1",
+        repository_version_id="v",
+        title="路径",
+        description="",
+        estimated_minutes=40,
+        resolved={
+            "serve_revision": PATH_SERVE_REVISION,
+            "chip_restamp": PATH_CHIP_RESTAMP,
+            "chips": {"c-tools": "package.json:1"},
+        },
+        nodes=[
+            SimpleNamespace(
+                id="n1", concept_id="c-tools", position=1, reason="", concept=concept
+            )
+        ],
+    )
+    out = path_out(path)
+    assert out.nodes[0].evidence_chip == "package.json:1"

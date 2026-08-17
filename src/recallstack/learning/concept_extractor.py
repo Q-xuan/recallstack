@@ -12,6 +12,10 @@ from typing import Any
 
 from recallstack.domain.schemas import ConceptDraft, ConceptGenerationResult, SourceReference
 from recallstack.learning.i18n import content_lang, t
+from recallstack.learning.learning_contract import (
+    bind_concept_source_references,
+    definition_index_scope,
+)
 from recallstack.security import filter_source_references
 from repowiki.core.graph import DependencyGraph
 from repowiki.core.models import ProjectContext
@@ -170,13 +174,19 @@ class ConceptExtractor:
 
         from recallstack.learning.topic_plan import topics_to_concepts
 
-        drafts = topics_to_concepts(
-            topics,
-            project,
-            commit_sha=commit_sha,
-            files_by_path=files_by_path,
-            make_refs=self._refs,
-        )
+        store = {
+            (f.path or "").replace("\\", "/"): (f.content or f.preview or "")
+            for f in project.files
+            if (f.content or f.preview)
+        }
+        with definition_index_scope(store):
+            drafts = topics_to_concepts(
+                topics,
+                project,
+                commit_sha=commit_sha,
+                files_by_path=files_by_path,
+                make_refs=self._refs,
+            )
         goal = next((d for d in drafts if d.slug == "project-goal"), None)
         if goal:
             readme = self._find_readme(project)
@@ -315,29 +325,13 @@ class ConceptExtractor:
         paths: list[str],
         files_by_path: dict[str, Any],
         commit_sha: str,
+        slug: str = "",
     ) -> list[SourceReference]:
-        refs: list[SourceReference] = []
-        for path in paths:
-            if not path:
-                continue
-            f = files_by_path.get(path)
-            symbol = None
-            start = 1
-            end = min(getattr(f, "lines", 20) or 20, 40) if f else 20
-            if f and (f.content or f.preview):
-                text = f.content or f.preview
-                for line in text.splitlines()[:80]:
-                    s = line.strip()
-                    if s.startswith("def ") or s.startswith("class ") or s.startswith("async def "):
-                        symbol = s.split("(")[0].replace("async def ", "").replace("def ", "").replace("class ", "").strip(":")
-                        break
-            refs.append(
-                SourceReference(
-                    path=path.replace("\\", "/"),
-                    start_line=start,
-                    end_line=end,
-                    symbol=symbol,
-                    commit_sha=commit_sha or None,
-                )
-            )
-        return refs
+        store = {
+            (p or "").replace("\\", "/"): (getattr(f, "content", None) or getattr(f, "preview", None) or "")
+            for p, f in (files_by_path or {}).items()
+            if f and (getattr(f, "content", None) or getattr(f, "preview", None))
+        }
+        return bind_concept_source_references(
+            paths, store, slug=slug, commit_sha=commit_sha
+        )

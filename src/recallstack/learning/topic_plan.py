@@ -30,7 +30,9 @@ def topics_to_concepts(
         (f.path for f in project.files if f.path.lower() in {"readme.md", "readme"}),
         "",
     )
-    overview_refs = _refs(make_refs, [readme] if readme else [], files_by_path, commit_sha)
+    overview_refs = _refs(
+        make_refs, [readme] if readme else [], files_by_path, commit_sha, "project-goal"
+    )
     drafts.append(
         ConceptDraft(
             slug="project-goal",
@@ -57,7 +59,7 @@ def topics_to_concepts(
     for topic in topics:
         if topic.section == "getting-started" or topic.id == "getting-started":
             continue
-        refs = _refs(make_refs, list(topic.key_files), files_by_path, commit_sha)
+        refs = _refs(make_refs, list(topic.key_files), files_by_path, commit_sha, topic.id)
         drafts.append(
             ConceptDraft(
                 slug=topic.id,
@@ -81,21 +83,20 @@ def topics_to_concepts(
     return drafts
 
 
-def _refs(make_refs, paths: list[str], files_by_path: dict[str, Any], commit_sha: str):
+def _refs(
+    make_refs,
+    paths: list[str],
+    files_by_path: dict[str, Any],
+    commit_sha: str,
+    slug: str = "",
+):
     if make_refs is not None:
-        return make_refs(paths, files_by_path, commit_sha)
-    out: list[SourceReference] = []
-    for path in paths:
-        if not path:
-            continue
-        f = files_by_path.get(path)
-        end = min(getattr(f, "lines", 20) or 20, 40) if f else 20
-        out.append(
-            SourceReference(
-                path=path.replace("\\", "/"),
-                start_line=1,
-                end_line=end,
-                commit_sha=commit_sha or None,
-            )
-        )
-    return out
+        return make_refs(paths, files_by_path, commit_sha, slug)
+    from recallstack.learning.learning_contract import bind_concept_source_references
+
+    store = {
+        (p or "").replace("\\", "/"): (getattr(f, "content", None) or getattr(f, "preview", None) or "")
+        for p, f in (files_by_path or {}).items()
+        if f and (getattr(f, "content", None) or getattr(f, "preview", None))
+    }
+    return bind_concept_source_references(paths, store, slug=slug, commit_sha=commit_sha)

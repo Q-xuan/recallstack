@@ -194,11 +194,42 @@ _LIFECYCLE_BASENAMES = (
 )
 _ENTRY_SYMBOLS = ("main", "connect", "boot")
 _PTY_SLUGS = frozenset({"pty-control", "pty"})
-_SRC_EXT = (".rs", ".py", ".go")
+_SRC_EXT = (".rs", ".py", ".go", ".ts", ".tsx")
 _DEFN_KW = (
     r"(?:pub(?:\([^)]*\))?\s+)?"
+    r"(?:export\s+)?"
+    r"(?:default\s+)?"
     r"(?:async\s+)?"
-    r"(?:fn|struct|enum|trait|type|class|def|impl(?:\s*<[^>]*>)?)\s+"
+    r"(?:abstract\s+)?"
+    r"(?:fn|struct|enum|trait|type|class|def|function|interface|impl(?:\s*<[^>]*>)?)\s+"
+)
+_CRATE_ROOT_NAMES = frozenset(
+    {
+        "lib.rs",
+        "mod.rs",
+        "lib.py",
+        "mod.py",
+        "__init__.py",
+        "index.ts",
+        "index.tsx",
+        "index.js",
+        "cargo.toml",
+        "package.json",
+        "readme.md",
+        "readme",
+    }
+)
+_FIRST_DEFN_RE = re.compile(
+    r"(?:pub(?:\([^)]*\))?\s+)?"
+    r"(?:export\s+)?"
+    r"(?:default\s+)?"
+    r"(?:async\s+)?"
+    r"(?:abstract\s+)?"
+    r"(?:fn|struct|enum|trait|type|class|def|function|interface)\s+"
+    r"([A-Za-z_][A-Za-z0-9_]*)"
+)
+_REEXPORT_RE = re.compile(
+    r"pub\s+use\s+(?:[\w:]+::)+([A-Za-z_][A-Za-z0-9_]*)"
 )
 
 # entry-and-boot is grok/pager boot — never ptyctl-cli or protoc.
@@ -988,20 +1019,98 @@ def parse_path_chip(chip: str) -> tuple[str, int, str]:
     )
 
 
-_RESTAMP_SLUGS = frozenset({"project-goal", "agent-runtime"})
+def is_crate_root_path(path: str) -> bool:
+    name = (path or "").replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name in _CRATE_ROOT_NAMES
+
+
+def is_readme_path(path: str) -> bool:
+    name = (path or "").replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name in {"readme.md", "readme"} or "readme.md" in (path or "").lower()
+
+
+def chip_is_definition_line(chip: str) -> bool:
+    """True when ``chip`` is already a real ``path:line Symbol`` definition."""
+    path, line, symbol = parse_path_chip(chip or "")
+    if not path or line < 1:
+        return False
+    if not symbol or _is_dummy_symbol(symbol):
+        return False
+    if is_junk_evidence_path(path) or is_readme_path(path):
+        return False
+    return True
 
 
 def chip_needs_restamp(slug: str, chip: str) -> bool:
-    """True when a persisted leftover chip is not a real definition ``path:line Symbol``."""
-    if slug not in _RESTAMP_SLUGS:
-        return False
+    """True when a persisted chip is not a real definition ``path:line Symbol``.
+
+    Driven by the chip itself (junk path, file-start, missing symbol) — not a
+    slug allowlist. ``slug`` only changes junk-path rules such as README.
+    """
     path, line, symbol = parse_path_chip(chip or "")
-    if slug == "project-goal":
-        name = path.rsplit("/", 1)[-1].lower()
-        if name in {"readme.md", "readme"} or "readme.md" in path.lower():
+    if not path:
+        return True
+    if is_readme_path(path):
+        return True
+    if is_junk_evidence_path(path, slug=slug):
+        return True
+    if line < 1:
+        return True
+    if not symbol or _is_dummy_symbol(symbol):
+        return True
+    return False
+
+
+def source_refs_from_chip(
+    chip: str, commit_sha: str | None = None
+) -> list[SourceReference]:
+    path, line, symbol = parse_path_chip(chip or "")
+    if not path:
+        return []
+    return [
+        SourceReference(
+            path=path,
+            start_line=line or None,
+            end_line=line or None,
+            symbol=symbol or None,
+            commit_sha=commit_sha or None,
+        )
+    ]
+
+
+def concept_refs_need_rebind(
+    refs: list[Any] | None,
+    slug: str = "",
+    chip: str = "",
+) -> bool:
+    """True when persisted concept refs are file-start / junk vs a real chip."""
+    items = _source_refs_of(type("C", (), {"source_references": refs or []})())
+    if chip and chip_is_definition_line(chip):
+        cpath, cline, csym = parse_path_chip(chip)
+        for ref in items:
+            if (
+                (ref.path or "").replace("\\", "/") == cpath
+                and int(ref.start_line or 0) == cline
+                and (ref.symbol or "").strip() == csym
+            ):
+                return False
+        return True
+    if not items:
+        return True
+    for ref in items:
+        path = (ref.path or "").replace("\\", "/")
+        start = int(ref.start_line or 0)
+        end = int(ref.end_line or 0)
+        symbol = (ref.symbol or "").strip()
+        if is_readme_path(path) or is_junk_evidence_path(path, slug=slug):
             return True
-        return symbol != "start_turn" or line < 1
-    return line < 1 or not symbol or _is_dummy_symbol(symbol)
+        if start <= 1 and end > start:
+            return True
+        if start < 1:
+            return True
+        if start <= 1 and (not symbol or _is_dummy_symbol(symbol)):
+            return True
+    return False
 
 
 def gate_failure_tokens(gate: str) -> list[str]:
@@ -1231,11 +1340,10 @@ def _file_text_for(file_texts: dict[str, str] | None, path: str) -> str:
 
 def _first_definition_line(text: str) -> tuple[int, str]:
     for i, line in enumerate((text or "").splitlines(), 1):
-        match = re.search(
-            r"(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|struct|enum|trait)\s+"
-            r"([A-Za-z_][A-Za-z0-9_]*)",
-            line,
-        )
+        stripped = line.strip()
+        if stripped.startswith(("//", "/*", "*", "#", "//!", "///")):
+            continue
+        match = _FIRST_DEFN_RE.search(line)
         if match and not _is_dummy_symbol(match.group(1)):
             return i, match.group(1)
     return 0, ""
@@ -1789,11 +1897,177 @@ def path_evidence_chip(
     return _format_path_chip(path, line, use_sym)
 
 
+def _bind_crate_root_definition(
+    path: str,
+    file_texts: dict[str, str],
+    *,
+    slug: str = "",
+) -> tuple[str, int, str] | None:
+    """Follow ``pub use`` / sibling files so crate-root ``lib.rs:1`` is not the claim."""
+    store = file_texts or {}
+    key = _resolve_store_key(store, path)
+    if not key:
+        return None
+    text = store.get(key) or ""
+    for match in _REEXPORT_RE.finditer(text):
+        name = match.group(1)
+        if not name or _is_dummy_symbol(name):
+            continue
+        hit = resolve_symbol_definition(store, name, prefer_path=key)
+        if hit and _resolve_store_key(store, hit[0]):
+            return hit[0], hit[1], name
+    parent = key.rsplit("/", 1)[0]
+    scored: list[tuple[int, str, int, str]] = []
+    for other, other_text in store.items():
+        norm = other.replace("\\", "/")
+        if norm == key or not parent or not norm.startswith(parent + "/"):
+            continue
+        if is_junk_evidence_path(norm, slug=slug) or not _is_production_src(norm, slug=slug):
+            continue
+        line, symbol = _first_definition_line(other_text or "")
+        if not line or not symbol or _is_dummy_symbol(symbol):
+            continue
+        score = 50 if norm.lower().endswith(".rs") else 20
+        if not is_crate_root_path(norm):
+            score += 15
+        scored.append((score, norm, line, symbol))
+    if not scored:
+        return None
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    _score, norm, line, symbol = scored[0]
+    return norm, line, symbol
+
+
+def _bind_one_source_path(
+    path: str,
+    file_texts: dict[str, str] | None,
+    *,
+    slug: str = "",
+    commit_sha: str = "",
+) -> SourceReference | None:
+    raw = (path or "").replace("\\", "/")
+    if not raw:
+        return None
+    store = file_texts or {}
+    key = _resolve_store_key(store, raw) if store else raw
+    if store and not key:
+        return None
+    path = key or raw
+    if is_junk_evidence_path(path, slug=slug) and not (
+        slug == "project-goal" and is_readme_path(path)
+    ):
+        return None
+    text = (store.get(path) or "") if store else ""
+    line, symbol = _first_definition_line(text)
+    if line and symbol and not _is_dummy_symbol(symbol):
+        return SourceReference(
+            path=path,
+            start_line=line,
+            end_line=line,
+            symbol=symbol,
+            commit_sha=commit_sha or None,
+        )
+    if store and is_crate_root_path(path):
+        hit = _bind_crate_root_definition(path, store, slug=slug)
+        if hit:
+            return SourceReference(
+                path=hit[0],
+                start_line=hit[1],
+                end_line=hit[1],
+                symbol=hit[2],
+                commit_sha=commit_sha or None,
+            )
+    return None
+
+
+def bind_concept_source_references(
+    paths: list[str],
+    file_texts: dict[str, str] | None,
+    *,
+    slug: str = "",
+    commit_sha: str = "",
+) -> list[SourceReference]:
+    """Bind key-file paths to real definition lines. Never invent missing keys.
+
+    File-start ``:1-40`` / README / Cargo.toml / package.json are dropped when a
+    Rust / TS / Python definition can be resolved in ``file_texts``.
+    """
+    store = file_texts or {}
+    bound: list[SourceReference] = []
+    seen: set[str] = set()
+
+    def add(ref: SourceReference) -> None:
+        key = f"{ref.path}:{int(ref.start_line or 0)}:{ref.symbol or ''}"
+        if key in seen:
+            return
+        if store and not _resolve_store_key(store, ref.path):
+            return
+        seen.add(key)
+        bound.append(ref)
+
+    for path in paths:
+        ref = _bind_one_source_path(path, store, slug=slug, commit_sha=commit_sha)
+        if ref:
+            add(ref)
+
+    chip_refs: list[SourceReference] = []
+    if store and slug:
+        draft = ConceptDraft(
+            slug=slug,
+            title=slug,
+            source_references=list(bound),
+        )
+        chip = path_evidence_chip(draft, file_texts=store)
+        if chip and chip_is_definition_line(chip):
+            chip_refs = source_refs_from_chip(chip, commit_sha)
+
+    if chip_refs:
+        chip_path = chip_refs[0].path
+        extras = [
+            ref
+            for ref in bound
+            if ref.path != chip_path and not is_junk_evidence_path(ref.path, slug=slug)
+        ]
+        return chip_refs + extras[:3]
+
+    if bound:
+        return bound
+
+    if slug == "project-goal":
+        for key in store:
+            if is_readme_path(key):
+                return [
+                    SourceReference(
+                        path=key.replace("\\", "/"),
+                        start_line=1,
+                        end_line=1,
+                        commit_sha=commit_sha or None,
+                    )
+                ]
+        for path in paths:
+            if is_readme_path(path):
+                if store and not _resolve_store_key(store, path):
+                    continue
+                return [
+                    SourceReference(
+                        path=path.replace("\\", "/"),
+                        start_line=1,
+                        end_line=1,
+                        commit_sha=commit_sha or None,
+                    )
+                ]
+    return []
+
+
 _WIKI_PILL_RE = re.compile(
-    r"^([A-Za-z0-9_./\-]+?\.[A-Za-z0-9]+)(?::(\d+)(?:-\d+)?)?(?:[ \t]+(.+))?$"
+    r"^([A-Za-z0-9_./\-]+?\.[A-Za-z0-9]+)(?::(\d+)(?:-(\d+))?)?(?:[ \t]+(.+))?$"
 )
 _INDEX_DEFN_RE = re.compile(
-    r"(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|struct|enum|trait|type|class)\s+"
+    r"(?:pub(?:\([^)]*\))?\s+)?"
+    r"(?:export\s+)?(?:default\s+)?"
+    r"(?:async\s+)?"
+    r"(?:abstract\s+)?"
+    r"(?:fn|struct|enum|trait|type|class|def|function|interface)\s+"
     r"([A-Za-z_][A-Za-z0-9_]*)"
     r"|impl(?:\s*<[^>]*>)?\s+([A-Za-z_][A-Za-z0-9_]*)"
     r"|impl\b.+\bfor\s+([A-Za-z_][A-Za-z0-9_]*)"
@@ -1931,13 +2205,38 @@ def resolve_symbol_definition(
 
 
 def fill_wiki_key_type_lines(content: str, file_texts: dict[str, str] | None) -> str:
-    """Stamp `` `path Symbol` `` / `` `path:1 Symbol` `` from the scan store.
+    """Stamp wiki pills from the scan store.
 
-    Path-only pills (no symbol) stay as-is. Runs on the whole page so overview
-    核心子系统 and architecture cites get definition lines, not just 关键类型.
+    `` `path Symbol` `` / `` `path:1 Symbol` `` become the definition line.
+    Path-only ``:1`` / crate-root pills resolve to a definition or are dropped
+    so architecture/index do not keep crate-root ``:1`` when it is not the claim.
+    Non-root path-only pills without a line stay as-is.
     """
     if not content or not file_texts or "`" not in content:
         return content
+
+    def drop_crate_root_chip(path: str) -> str:
+        return path.replace("\\", "/").rsplit("/", 1)[-1]
+
+    def stamp_or_drop_path_only(path: str, line: str, end: str) -> str:
+        is_line_one = line == "1"
+        is_span = bool(end and end != line)
+        is_root = is_crate_root_path(path)
+        if not is_line_one and not is_root:
+            return ""
+        if is_span and is_readme_path(path):
+            return ""
+        store_path = _resolve_store_key(file_texts, path)
+        if store_path:
+            first, emit = _first_definition_line(file_texts.get(store_path) or "")
+            if first and emit and not _is_dummy_symbol(emit):
+                return f"`{store_path}:{first} {emit}`"
+            hit = _bind_crate_root_definition(store_path, file_texts)
+            if hit:
+                return f"`{hit[0]}:{hit[1]} {hit[2]}`"
+        if is_line_one and (is_root or is_junk_evidence_path(path) or is_readme_path(path)):
+            return drop_crate_root_chip(path)
+        return ""
 
     def pill_repl(match: re.Match[str]) -> str:
         inner = (match.group(1) or "").strip()
@@ -1946,9 +2245,13 @@ def fill_wiki_key_type_lines(content: str, file_texts: dict[str, str] | None) ->
             return match.group(0)
         path = (parsed.group(1) or "").strip()
         line = (parsed.group(2) or "").strip()
-        symbol = (parsed.group(3) or "").strip()
-        if not path or not symbol or _is_dummy_symbol(symbol):
+        end = (parsed.group(3) or "").strip()
+        symbol = (parsed.group(4) or "").strip()
+        if not path:
             return match.group(0)
+        if not symbol or _is_dummy_symbol(symbol):
+            rewritten = stamp_or_drop_path_only(path, line, end)
+            return rewritten if rewritten else match.group(0)
         if line and line != "1":
             store_existing = _resolve_store_key(file_texts, path)
             if store_existing or not file_texts:
@@ -1966,6 +2269,9 @@ def fill_wiki_key_type_lines(content: str, file_texts: dict[str, str] | None) ->
             if found:
                 return f"`{store_path}:{found} {symbol}`"
             if line == "1":
+                sibling = _bind_crate_root_definition(store_path, file_texts)
+                if sibling:
+                    return f"`{sibling[0]}:{sibling[1]} {symbol}`"
                 return f"`{store_path} {symbol}`"
         return match.group(0)
 
