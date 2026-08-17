@@ -6,6 +6,10 @@ import re
 
 from recallstack.domain.schemas import ConceptDraft, SourceReference
 from recallstack.learning.concept_extractor import ConceptExtractor, readme_prose_excerpt
+from recallstack.learning.learning_contract import (
+    deepen_concept_markdown,
+    should_deepen_concept_page,
+)
 from recallstack.learning.wiki_generator import append_concept_pages, build_deterministic_wiki_data
 from repowiki.core.graph import DependencyGraph
 from repowiki.core.models import FileInfo, ProjectContext
@@ -266,6 +270,121 @@ grok-study 是本地研究工作台。
     assert "## 过关" not in upgraded
     assert "## 自测" not in upgraded
     assert "相关源码" in upgraded
+
+
+def _loop_store() -> dict[str, str]:
+    return {
+        "README.md": "# grok\n",
+        "crates/codegen/xai-grok-pager/src/app/agent.rs": ("\n" * 790)
+        + "    pub fn start_turn(&mut self) {\n",
+        "crates/codegen/xai-grok-agent/src/tool_bridge.rs": "pub struct ToolBridge {\n    name: String,\n}\n",
+    }
+
+
+def test_high_importance_concept_page_is_not_watery_stub(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    wiki = Wiki(project_name="grok-study", pages=[], sidebar=[])
+    draft = ConceptDraft(
+        slug="agent-loop",
+        title="Agent Loop",
+        description="「Agent Loop」在一次真实调用里做什么、缺了它哪条能力会断。",
+        importance=0.9,
+        wiki_page_id="topics/agent-loop",
+        source_references=[
+            SourceReference(
+                path="crates/codegen/xai-grok-pager/src/app/agent.rs",
+                start_line=1,
+            )
+        ],
+    )
+    page = append_concept_pages(wiki, [draft], file_texts=_loop_store()).get_page(
+        "concepts/agent-loop"
+    )
+    assert page is not None
+    content = page.content
+    assert "## 实现要点" in content
+    assert "## 关键类型在链路上的职责" in content
+    assert "## 边界条件" in content
+    assert "`crates/codegen/xai-grok-pager/src/app/agent.rs:791 start_turn`" in content
+    assert "README.md:1" not in content
+    assert content.count("缺了它哪条能力会断") <= 1
+    assert "start_turn" in content
+    assert "pub fn start_turn" in content
+
+
+def test_shallow_leaf_concept_stays_short(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    wiki = Wiki(project_name="grok-study", pages=[], sidebar=[])
+    draft = ConceptDraft(
+        slug="headless-modes",
+        title="Headless",
+        description="「Headless」在一次真实调用里做什么、缺了它哪条能力会断。",
+        importance=0.75,
+        wiki_page_id="topics/headless-modes",
+        source_references=[
+            SourceReference(path="crates/codegen/xai-grok-pager/src/app/agent.rs", start_line=1)
+        ],
+    )
+    assert not should_deepen_concept_page(draft)
+    page = append_concept_pages(wiki, [draft], file_texts=_loop_store()).get_page(
+        "concepts/headless-modes"
+    )
+    assert page is not None
+    assert "## 实现要点" not in page.content
+    assert "## 边界条件" not in page.content
+
+
+def test_concept_enrich_prompt_asks_for_three_handbook_sections():
+    from recallstack.learning.wiki_generator import _concept_enrich_messages
+
+    draft = ConceptDraft(
+        slug="agent-loop",
+        title="Agent Loop",
+        source_references=[
+            SourceReference(
+                path="crates/codegen/xai-grok-pager/src/app/agent.rs",
+                start_line=791,
+                symbol="start_turn",
+            )
+        ],
+    )
+    messages = _concept_enrich_messages(draft, "readme", "agent.rs", "zh", "grok")
+    blob = "\n".join(m["content"] for m in messages)
+    assert "implementation_details" in blob
+    assert "key_types" in blob
+    assert "boundaries" in blob
+    assert "agent.rs:791 start_turn" in blob
+    assert "Do not invent file paths" in blob
+
+
+def test_deepen_drops_invented_llm_paths(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    draft = ConceptDraft(
+        slug="agent-loop",
+        title="Agent Loop",
+        importance=0.9,
+        implementation_notes=(
+            "Ghost lives in `ghost/nope.rs:9 Ghost` but the real gate is "
+            "`crates/codegen/xai-grok-pager/src/app/agent.rs:1 start_turn`."
+        ),
+        source_references=[
+            SourceReference(
+                path="crates/codegen/xai-grok-pager/src/app/agent.rs",
+                start_line=791,
+                symbol="start_turn",
+            )
+        ],
+    )
+    shallow = (
+        "# Agent Loop\n\n"
+        "> lede\n\n"
+        "## 它是什么\n\n"
+        "「Agent Loop」在一次真实调用里做什么、缺了它哪条能力会断。\n"
+    )
+    filled = deepen_concept_markdown(shallow, draft, _loop_store())
+    assert "ghost/nope.rs" not in filled
+    assert "`crates/codegen/xai-grok-pager/src/app/agent.rs:791 start_turn`" in filled
+    assert "## 实现要点" in filled
 
 
 def test_source_ref_re_matches_readme_span():

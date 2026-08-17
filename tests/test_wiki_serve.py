@@ -5,10 +5,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from recallstack.api.serializers import path_out, wiki_out
-from recallstack.learning.learning_contract import fill_wiki_key_type_lines
-from recallstack.learning.wiki_generator import link_reading_guide_markdown
 from recallstack.domain.schemas import ConceptDraft, SourceReference
+from recallstack.learning.learning_contract import fill_wiki_key_type_lines
 from recallstack.learning.question_generator import QuestionGenerator
+from recallstack.learning.wiki_generator import link_reading_guide_markdown
 from recallstack.learning.wiki_serve import (
     PATH_CHIP_RESTAMP,
     PATH_SERVE_REVISION,
@@ -561,9 +561,60 @@ def test_persist_path_from_loaded_store_restamps_leftovers(monkeypatch):
 
 
 def test_stale_wiki_revision_is_not_materialized():
-    assert WIKI_SERVE_REVISION >= 2
-    assert not wiki_is_materialized({"serve_revision": 1, "pages": []})
+    assert WIKI_SERVE_REVISION >= 3
+    assert not wiki_is_materialized({"serve_revision": 2, "pages": []})
     assert wiki_is_materialized({"serve_revision": WIKI_SERVE_REVISION, "pages": []})
+
+
+def test_materialize_deepens_watery_high_importance_concept(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    store = {
+        "crates/codegen/xai-grok-pager/src/app/agent.rs": ("\n" * 790)
+        + "    pub fn start_turn(&mut self) {\n",
+    }
+    concept = SimpleNamespace(
+        slug="agent-loop",
+        title="Agent Loop",
+        importance=0.9,
+        source_references=[
+            {
+                "path": "crates/codegen/xai-grok-pager/src/app/agent.rs",
+                "start_line": 1,
+            }
+        ],
+        not_this=[],
+        implementation_notes="",
+        key_type_roles=[],
+        boundary_notes=[],
+    )
+    payload = {
+        "serve_revision": 2,
+        "pages": [
+            {
+                "id": "concepts/agent-loop",
+                "title": "Agent Loop",
+                "content": (
+                    "# Agent Loop\n\n"
+                    "> 这篇说明「Agent Loop」。\n\n"
+                    "## 它是什么\n\n"
+                    "「Agent Loop」在一次真实调用里做什么、缺了它哪条能力会断。\n\n"
+                    "## 它在系统里的位置\n\n"
+                    "如果「Agent Loop」这一层消失，用户能察觉的行为会坏。\n"
+                ),
+                "parent_id": "",
+                "order": 1,
+            }
+        ],
+        "sidebar": [],
+    }
+    out = materialize_wiki_payload(payload, [concept], store)
+    page = next(p for p in out["pages"] if p["id"] == "concepts/agent-loop")
+    assert out["serve_revision"] == WIKI_SERVE_REVISION
+    assert "## 实现要点" in page["content"]
+    assert "## 关键类型在链路上的职责" in page["content"]
+    assert "## 边界条件" in page["content"]
+    assert "`crates/codegen/xai-grok-pager/src/app/agent.rs:791 start_turn`" in page["content"]
+    assert "README.md:1" not in page["content"]
 
 
 def test_fill_wiki_architecture_line_one_cites_bind_or_drop():

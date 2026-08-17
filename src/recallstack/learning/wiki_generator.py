@@ -15,6 +15,7 @@ from recallstack.domain.schemas import ConceptDraft, ConceptTermTip
 from recallstack.learning.concept_extractor import readme_prose_excerpt
 from recallstack.learning.i18n import content_lang, t
 from recallstack.learning.learning_contract import (
+    deepen_concept_markdown,
     first_principles,
     flow_narrative,
     handbook_lede,
@@ -286,6 +287,17 @@ def build_deterministic_wiki_data(
     )
 
 
+def _concept_evidence_prompt(concept: ConceptDraft) -> str:
+    rows: list[str] = []
+    for ref in concept.source_references[:8]:
+        loc = _format_ref(ref)
+        symbol = (ref.symbol or "").strip()
+        pill = f"{loc} {symbol}".strip() if symbol else loc
+        if pill:
+            rows.append(f"- `{pill}`")
+    return "\n".join(rows) or "(none — do not invent paths)"
+
+
 def _format_ref(ref: Any) -> str:
     """Render a source reference as ``path:start-end``.
 
@@ -484,7 +496,11 @@ def _append_term_tips_md(lines: list[str], tips: list[TermTip]) -> None:
     lines.append("")
 
 
-def append_concept_pages(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
+def append_concept_pages(
+    wiki: Wiki,
+    concepts: list[ConceptDraft],
+    file_texts: dict[str, str] | None = None,
+) -> Wiki:
     """Attach concept wiki pages as DeepWiki handbook entries.
 
     Learning-path homework (step_task / 本步要你干什么 / 过关) stays on the
@@ -563,11 +579,14 @@ def append_concept_pages(wiki: Wiki, concepts: list[ConceptDraft]) -> Wiki:
                 lines.append(f"- {link(d)}")
             lines.append("")
 
+        content = "\n".join(lines)
+        if file_texts:
+            content = deepen_concept_markdown(content, c, file_texts)
         wiki.pages.append(
             WikiPage(
                 id=page_id,
                 title=c.title,
-                content="\n".join(lines),
+                content=content,
                 parent_id="concepts",
                 order=100 + i,
             )
@@ -716,6 +735,37 @@ async def _enrich_top_concepts(llm: Any, concepts: list[ConceptDraft], project: 
                         )
             if tips:
                 concept.term_tips = tips[:8]
+            impl = str(data.get("implementation_details") or "").strip()
+            if impl and not _is_html_dump(impl):
+                concept.implementation_notes = impl
+            key_types = data.get("key_types") or []
+            if isinstance(key_types, list):
+                cleaned_types: list[dict[str, Any]] = []
+                for item in key_types:
+                    if not isinstance(item, dict) or not item.get("name"):
+                        continue
+                    path = str(item.get("path") or "").strip().replace("\\", "/")
+                    if path and path not in {f.path.replace("\\", "/") for f in project.files}:
+                        continue
+                    try:
+                        line = int(item.get("line") or 0)
+                    except (TypeError, ValueError):
+                        line = 0
+                    cleaned_types.append(
+                        {
+                            "name": str(item["name"]).strip(),
+                            "role": str(item.get("role") or "").strip(),
+                            "path": path,
+                            "line": line,
+                        }
+                    )
+                if cleaned_types:
+                    concept.key_type_roles = cleaned_types[:8]
+            bounds = data.get("boundaries") or []
+            if isinstance(bounds, list):
+                concept.boundary_notes = [
+                    str(item).strip() for item in bounds if str(item).strip()
+                ][:5]
         except Exception as exc:  # noqa: BLE001
             logger.warning("concept enrich failed for %s: %s", concept.slug, exc)
 
@@ -748,16 +798,23 @@ def _concept_enrich_messages(
                 f"Current why_learn: {concept.why_learn or '(none)'}\n\n"
                 f"## Cleaned README excerpt\n{cleaned_readme or '(none)'}\n\n"
                 f"## Files (sample)\n{file_list or '(none)'}\n\n"
+                "Grounded evidence already bound for this concept "
+                f"(cite only these paths, or omit the cite):\n"
+                f"{_concept_evidence_prompt(concept)}\n\n"
                 "Return JSON:\n"
                 "{\n"
                 '  "description": "2-4 handbook sentences: what it is, who uses it, where it sits — not a quiz prompt",\n'
                 '  "why_learn": "one sentence the wiki can fold into the opening",\n'
                 '  "not_this": ["common confusion 1"],\n'
-                '  "term_tips": [{"term": "PageRank", "tip": "how THIS repo uses it"}]\n'
+                '  "term_tips": [{"term": "PageRank", "tip": "how THIS repo uses it"}],\n'
+                '  "implementation_details": "2-4 sentences with `path:line Symbol` cites from the evidence list",\n'
+                '  "key_types": [{"name": "Type", "role": "role on the call path", "path": "real/file.rs", "line": 12}],\n'
+                '  "boundaries": ["what this is NOT, with a cite if possible"]\n'
                 "}\n"
                 "not_this: 1-3 bullets of what this concept is NOT. "
                 "term_tips: 2-5 repo-specific jargon tips; keep `term` in English. "
-                "Do not invent file paths.\n\n"
+                "implementation_details / key_types / boundaries deepen the handbook. "
+                "Do not invent file paths or line numbers missing from the evidence list.\n\n"
                 f"{_json_instruction(language)}"
             ),
         },
@@ -843,7 +900,12 @@ def build_wiki_payload(
         wiki_data = build_deterministic_wiki_data(project, graph, concepts)
     wiki_data = verify_wiki_data(wiki_data, project)
     wiki = WikiBuilder().build(project, wiki_data, graph, language=content_lang())
-    wiki = append_concept_pages(wiki, concepts)
+    store = {
+        (f.path or "").replace("\\", "/"): (f.content or f.preview or "")
+        for f in project.files
+        if (f.content or f.preview)
+    }
+    wiki = append_concept_pages(wiki, concepts, file_texts=store or None)
     wiki = link_reading_guide(wiki, concepts)
     topic_plan = []
     if wiki_data.outline and wiki_data.outline.topics:

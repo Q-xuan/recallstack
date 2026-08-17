@@ -328,10 +328,29 @@ _TYPE_ROLE_HEADINGS = {
     "关键类型在链路上的职责",
     "Key types and their roles",
 }
+_IMPL_HEADINGS = {
+    "实现要点",
+    "Implementation details",
+}
+_BOUNDARY_HEADINGS = {
+    "边界条件",
+    "Boundary conditions",
+}
 _NOT_THIS_HEADINGS = {
     "不是什么",
     "What this is not",
 }
+_WATERY_HANDBOOK_RE = re.compile(
+    r"缺了它哪条能力会断|"
+    r"what breaks if it disappears|"
+    r"用户能察觉的行为会坏|"
+    r"a user-visible behaviour would break|"
+    r"出现在上文链路中的角色|"
+    r"a role on the path described above|"
+    r"从证据说出调用它的和它调用的|"
+    r"Name the callers and callees from the evidence",
+    re.I,
+)
 _TIPS_HEADINGS = {
     "术语小贴士",
     "Term tips",
@@ -2786,8 +2805,12 @@ def _heading_bucket(title: str) -> str | None:
         return "position"
     if stripped in _FLOW_HEADINGS:
         return "flow"
+    if stripped in _IMPL_HEADINGS:
+        return "impl"
     if stripped in _TYPE_ROLE_HEADINGS:
         return "types"
+    if stripped in _BOUNDARY_HEADINGS:
+        return "boundary"
     if stripped in _NOT_THIS_HEADINGS:
         return "not"
     if stripped in _TIPS_HEADINGS:
@@ -2900,7 +2923,9 @@ def upgrade_legacy_concept_markdown(
             "what",
             "position",
             "flow",
+            "impl",
             "types",
+            "boundary",
             "not",
             "tips",
             "prereq",
@@ -2965,9 +2990,15 @@ def upgrade_legacy_concept_markdown(
     _append_section(out, t("Where it sits", "它在系统里的位置"), position)
     _append_section(out, t("How a call runs", "一次调用怎么走"), _join_bodies(grouped["flow"]))
     _append_section(
+        out, t("Implementation details", "实现要点"), _join_bodies(grouped["impl"])
+    )
+    _append_section(
         out,
         t("Key types and their roles", "关键类型在链路上的职责"),
         _join_bodies(grouped["types"]),
+    )
+    _append_section(
+        out, t("Boundary conditions", "边界条件"), _join_bodies(grouped["boundary"])
     )
     _append_section(out, t("What this is not", "不是什么"), _join_bodies(grouped["not"]))
     _append_section(out, t("Term tips", "术语小贴士"), _join_bodies(grouped["tips"]))
@@ -2991,3 +3022,324 @@ def upgrade_legacy_concept_markdown(
     if "过关" in text or re.search(r"(?m)^## Pass\s*$", text):
         text = re.sub(r"(?ms)^## (过关|Pass)\n.*?(?=^## |\Z)", "", text)
     return text.rstrip() + "\n"
+
+
+def is_watery_handbook_text(text: str) -> bool:
+    """True when a concept-page body is only the generic topic stub."""
+    blob = (text or "").strip()
+    if not blob:
+        return True
+    if re.search(r"`[^`]+\:\d+", blob):
+        return False
+    return bool(_WATERY_HANDBOOK_RE.search(blob))
+
+
+def should_deepen_concept_page(concept: Any) -> bool:
+    """High-importance / trunk concepts get the three handbook sections."""
+    slug = getattr(concept, "slug", "") or ""
+    title = getattr(concept, "title", "") or ""
+    if not slug or slug == "getting-started":
+        return False
+    if is_shallow_path_leaf(slug) or is_filler_slug_title(slug, title):
+        return False
+    if slug in _PATH_RANK:
+        return True
+    try:
+        importance = float(getattr(concept, "importance", 0) or 0)
+    except (TypeError, ValueError):
+        importance = 0.0
+    return importance >= 0.85
+
+
+def _signature_at(text: str, line: int) -> str:
+    lines = (text or "").splitlines()
+    if line < 1 or line > len(lines):
+        return ""
+    return (lines[line - 1] or "").strip()[:160]
+
+
+def _defs_in_store_file(
+    file_texts: dict[str, str], path: str, *, limit: int = 4
+) -> list[tuple[int, str]]:
+    text = file_texts.get(path) or ""
+    out: list[tuple[int, str]] = []
+    seen: set[str] = set()
+    for i, line in enumerate(text.splitlines(), 1):
+        stripped = line.strip()
+        if stripped.startswith(("//", "/*", "*", "#", "//!", "///")):
+            continue
+        if re.match(r"(?:pub\s+)?use\b", stripped):
+            continue
+        for match in _INDEX_DEFN_RE.finditer(line):
+            name = next((g for g in match.groups() if g), "")
+            if not name or name in seen or _is_dummy_symbol(name):
+                continue
+            if not _line_defines_symbol(line, name):
+                continue
+            seen.add(name)
+            out.append((i, name))
+            if len(out) >= limit:
+                return out
+    return out
+
+
+def concept_definition_hits(
+    concept: Any,
+    file_texts: dict[str, str] | None,
+) -> list[tuple[str, int, str]]:
+    """Real ``path:line Symbol`` hits from chips / refs / hints. Never invents keys."""
+    store = file_texts or {}
+    if not store:
+        return []
+    hits: list[tuple[str, int, str]] = []
+    seen: set[str] = set()
+
+    def add(path: str, line: int, symbol: str) -> None:
+        path = (path or "").replace("\\", "/")
+        symbol = (symbol or "").strip()
+        if not path or int(line or 0) < 1 or not symbol or _is_dummy_symbol(symbol):
+            return
+        key = _resolve_store_key(store, path)
+        if not key:
+            return
+        token = f"{key}:{int(line)}:{symbol}"
+        if token in seen:
+            return
+        seen.add(token)
+        hits.append((key, int(line), symbol))
+
+    chip = path_evidence_chip(concept, file_texts=store)
+    if chip and chip_is_definition_line(chip):
+        path, line, symbol = parse_path_chip(chip)
+        add(path, line, symbol)
+
+    for ref in _source_refs_of(concept):
+        path = (ref.path or "").replace("\\", "/")
+        symbol = (ref.symbol or "").strip()
+        line = int(ref.start_line or 0)
+        if symbol:
+            resolved = resolve_symbol_definition(store, symbol, prefer_path=path)
+            if resolved:
+                path, line = resolved
+        add(path, line, symbol)
+
+    slug = getattr(concept, "slug", "") or ""
+    suffixes, hint_sym = _EVIDENCE_HINTS.get(slug, ((), ""))
+    if hint_sym and hint_sym.lower() not in _WEAK_SYMBOLS:
+        picked = _pick_symbol_in_store(store, hint_sym, slug, suffixes)
+        if picked:
+            add(picked[0], picked[1], hint_sym)
+
+    if len(hits) < 3 and hits:
+        for line, symbol in _defs_in_store_file(store, hits[0][0], limit=4):
+            add(hits[0][0], line, symbol)
+            if len(hits) >= 4:
+                break
+    return hits[:6]
+
+
+def _sanitize_handbook_cites(text: str, file_texts: dict[str, str]) -> str:
+    """Keep only pills whose path is a version_files key; stamp definition lines."""
+    if not text or not file_texts:
+        return (text or "").strip()
+    stamped = fill_wiki_key_type_lines(text, file_texts)
+
+    def keep_pill(match: re.Match[str]) -> str:
+        inner = (match.group(1) or "").strip()
+        parsed = _WIKI_PILL_RE.match(inner)
+        if not parsed:
+            return match.group(0)
+        path = (parsed.group(1) or "").strip()
+        if not path:
+            return match.group(0)
+        if not _resolve_store_key(file_texts, path):
+            return path.rsplit("/", 1)[-1]
+        return match.group(0)
+
+    return re.sub(r"`([^`]+)`", keep_pill, stamped).strip()
+
+
+def _llm_or_deterministic(llm_text: str, det_text: str, store: dict[str, str]) -> str:
+    cleaned = _sanitize_handbook_cites(llm_text, store)
+    if cleaned and not is_watery_handbook_text(cleaned):
+        return cleaned
+    return det_text
+
+
+def _impl_section_body(
+    concept: Any, hits: list[tuple[str, int, str]], store: dict[str, str]
+) -> str:
+    notes = str(getattr(concept, "implementation_notes", "") or "").strip()
+    path, line, symbol = hits[0]
+    chip = f"{path}:{line} {symbol}"
+    shown = getattr(concept, "title", "") or getattr(concept, "slug", "") or symbol
+    parts = [
+        t(
+            f"`{shown}` is implemented at `{chip}`.",
+            f"「{shown}」的实现钉在 `{chip}`。",
+        )
+    ]
+    sig = _signature_at(store.get(path) or "", line)
+    if sig:
+        parts.append(
+            t(
+                f"The definition line is `{sig}`.",
+                f"定义行是 `{sig}`。",
+            )
+        )
+    reading = evidence_reading(concept, chip)
+    if reading:
+        parts.append(reading)
+    for extra_path, extra_line, extra_sym in hits[1:3]:
+        parts.append(
+            t(
+                f"Related definition: `{extra_path}:{extra_line} {extra_sym}`.",
+                f"相关定义：`{extra_path}:{extra_line} {extra_sym}`。",
+            )
+        )
+    return _llm_or_deterministic(notes, "\n\n".join(parts), store)
+
+
+def _type_role_for(symbol: str, slug: str) -> str:
+    roles = {
+        "start_turn": t("starts one turn and must call the model next", "开一轮，下一记必须调模型"),
+        "ToolBridge": t("runs a tool call by name after the model returns", "模型返回后按名执行 tool call"),
+        "Pager": t("writes streaming output into the terminal buffer", "把流式输出写入终端缓冲"),
+        "AgentRuntime": t("owns cancel / in-flight abort for the session", "持有取消与 in-flight 中断"),
+        "main": t("process entry — the first call that actually runs", "进程入口，真正跑起来的第一记调用"),
+        "connect": t("ACP door: hands the channel to a session", "ACP 那扇门：把通道交给会话"),
+    }
+    return roles.get(symbol) or t("a role on this call path", "这条调用链上的角色")
+
+
+def _types_section_body(
+    concept: Any, hits: list[tuple[str, int, str]], store: dict[str, str]
+) -> str:
+    slug = getattr(concept, "slug", "") or ""
+    lead: list[str] = []
+    flow = flow_narrative(slug, getattr(concept, "title", "") or "")
+    if flow:
+        path, line, symbol = hits[0]
+        lead.append(f"{flow} `{path}:{line} {symbol}`")
+    bullets: list[str] = []
+    extra_roles = getattr(concept, "key_type_roles", None) or []
+    if isinstance(extra_roles, list):
+        for item in extra_roles:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or item.get("symbol") or "").strip()
+            path = str(item.get("path") or "").strip()
+            try:
+                line = int(item.get("line") or 0)
+            except (TypeError, ValueError):
+                line = 0
+            role = str(item.get("role") or "").strip()
+            if name and path:
+                resolved = resolve_symbol_definition(store, name, prefer_path=path)
+                if resolved:
+                    path, line = resolved
+            if name and path and line and _resolve_store_key(store, path):
+                bullets.append(
+                    f"- {name} — {role or _type_role_for(name, slug)} — `{path}:{line} {name}`"
+                )
+    if not bullets:
+        for path, line, symbol in hits:
+            bullets.append(
+                f"- {symbol} — {_type_role_for(symbol, slug)} — `{path}:{line} {symbol}`"
+            )
+    return "\n\n".join([*lead, *bullets]).strip()
+
+
+def _boundary_section_body(
+    concept: Any, hits: list[tuple[str, int, str]], store: dict[str, str]
+) -> str:
+    path, line, symbol = hits[0]
+    chip = f"{path}:{line} {symbol}"
+    items: list[str] = []
+    for note in list(getattr(concept, "boundary_notes", None) or []) + list(
+        getattr(concept, "not_this", None) or []
+    ):
+        text = str(note or "").strip()
+        if not text:
+            continue
+        cleaned = _sanitize_handbook_cites(text, store)
+        if cleaned:
+            items.append(f"- {cleaned.lstrip('- ').strip()}")
+    items.append(
+        t(
+            f"- If `{chip}` disappeared, the failure this step signs is: {pass_gate(concept)}",
+            f"- 若 `{chip}` 消失，这一步要签字的失败是：{pass_gate(concept)}",
+        )
+    )
+    items.append(
+        t(
+            f"- This is not a directory or crate name. The claim is `{symbol}` at `{path}:{line}`.",
+            f"- 这不是目录名或 crate 名。主张是 `{path}:{line}` 上的 `{symbol}`。",
+        )
+    )
+    # unique, keep order
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return "\n".join(out[:6])
+
+
+def _upsert_handbook_section(content: str, heading: str, body: str) -> str:
+    body = (body or "").strip()
+    if not body:
+        return content
+    block = f"## {heading}\n\n{body}\n\n"
+    pattern = re.compile(
+        rf"(?ms)^## {re.escape(heading)}\n.*?(?=^## |\Z)"
+    )
+    match = pattern.search(content or "")
+    if match:
+        existing = match.group(0)
+        if not is_watery_handbook_text(existing):
+            return content
+        return pattern.sub(block, content, count=1)
+    insert_at = re.search(
+        r"(?m)^## (不是什么|What this is not|术语小贴士|Term tips|先读|Read first|接下来|Next)\s*$",
+        content or "",
+    )
+    if insert_at:
+        return content[: insert_at.start()] + block + content[insert_at.start() :]
+    return (content or "").rstrip() + "\n\n" + block
+
+
+def deepen_concept_markdown(
+    content: str,
+    concept: Any,
+    file_texts: dict[str, str] | None,
+) -> str:
+    """Fill implementation / key types / boundaries from the definition index.
+
+    No-op without a store or when the concept is a low-rank stub. Existing
+    non-watery sections are kept. Never invents paths missing from version_files.
+    """
+    store = file_texts or {}
+    if not content or not store or not should_deepen_concept_page(concept):
+        return content
+    hits = concept_definition_hits(concept, store)
+    if not hits:
+        return content
+    content = _upsert_handbook_section(
+        content,
+        t("Implementation details", "实现要点"),
+        _impl_section_body(concept, hits, store),
+    )
+    content = _upsert_handbook_section(
+        content,
+        t("Key types and their roles", "关键类型在链路上的职责"),
+        _types_section_body(concept, hits, store),
+    )
+    content = _upsert_handbook_section(
+        content,
+        t("Boundary conditions", "边界条件"),
+        _boundary_section_body(concept, hits, store),
+    )
+    return re.sub(r"\n{3,}", "\n\n", content).rstrip() + "\n"
