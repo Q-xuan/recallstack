@@ -58,7 +58,7 @@ def test_path_worksheet_has_four_headings_and_one_chip(monkeypatch):
     assert "您" not in text
     assert "点击展开" not in text
     assert "了解模块" not in text
-    assert "start_turn 之后调模型" in text
+    assert "start_turn 之后谁调模型" in text
     assert "不变量" in text
     chips = _PATH_CHIP_RE.findall(text)
     assert len(chips) == 1
@@ -1271,7 +1271,9 @@ def test_suggested_ask_questions_are_wiki_grounded_not_fsrs():
     assert len(qs) == 3
     blob = " ".join(qs)
     assert "start_turn" in blob or "connect" in blob or "Pager" in blob or "ACP" in blob
-    assert all("你要能指出" in q for q in qs)
+    assert all("你要能指出" not in q for q in qs)
+    assert all("你负责" not in q for q in qs)
+    assert any("connect" in q or "start_turn" in q or "Pager" in q or "ACP" in q for q in qs)
     assert "复习调度" not in blob
     assert "复训调度" not in blob
     assert "FSRS" not in blob
