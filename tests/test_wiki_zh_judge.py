@@ -51,7 +51,7 @@ def test_heuristic_passes_handbook_sample():
 
 
 def test_heuristic_flags_agent_as_dailiren():
-    page = "# Agent\n\n这个代理人调度 plugin。\n"
+    page = "# Agent\n\n这个代理人调度 plugin，把循环跑完。\n"
     verdict = heuristic_judge(page)
     assert "bad_translation" in verdict["flags"]
     assert verdict["scores"]["terminology"] <= 2

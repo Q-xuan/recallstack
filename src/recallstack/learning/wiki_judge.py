@@ -83,7 +83,11 @@ def heuristic_judge(candidate: str, references: dict[str, str] | None = None) ->
         natural -= 1.5
 
     terms = 5.0
-    bad_terms = [w for w in BAD_TERM_TRANSLATIONS if w in text]
+    bad_terms = [
+        w
+        for w in BAD_TERM_TRANSLATIONS
+        if w in text and not re.search(rf"(不是|不要|禁止|勿).{{0,16}}{re.escape(w)}", text)
+    ]
     if bad_terms:
         terms -= 3.0
         flags.append("bad_translation")
