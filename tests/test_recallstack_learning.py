@@ -9,6 +9,7 @@ import pytest
 
 from recallstack.domain.schemas import ConceptDraft, Rubric, RubricPoint
 from recallstack.learning.concept_extractor import ConceptExtractor
+from recallstack.learning.learning_contract import bind_concept_source_references
 from recallstack.learning.hint_engine import HintEngine
 from recallstack.learning.path_builder import PathBuilder
 from recallstack.learning.question_generator import QuestionGenerator
@@ -80,6 +81,54 @@ def test_concept_graph_build(tmp_path: Path):
     assert "caching" not in slugs
     assert "authentication" not in slugs
     assert "request-routing" not in slugs
+    for concept in result.concepts:
+        for ref in concept.source_references:
+            end = int(ref.end_line or 0)
+            start = int(ref.start_line or 0)
+            name = ref.path.rsplit("/", 1)[-1].lower()
+            if name in {"readme.md", "readme"}:
+                continue
+            assert name not in {"cargo.toml", "package.json"}
+            assert not (start <= 1 and end > start), (
+                f"{concept.slug} kept file-start range {ref.path}:{start}-{end}"
+            )
+
+
+def test_bind_concept_refs_rust_ts_not_readme_or_manifest():
+    store = {
+        "README.md": "# grok\nA pager.\n",
+        "Cargo.toml": "[workspace]\n",
+        "package.json": '{"name": "grok"}\n',
+        "crates/codegen/xai-grok-pager/src/app/agent.rs": ("\n" * 790)
+        + "    pub fn start_turn(&mut self) {\n",
+        "packages/cli/src/command.ts": (
+            "\n" * 9 + "export class LocalCommandContributor {\n"
+        ),
+    }
+    goal = bind_concept_source_references(
+        ["README.md", "Cargo.toml"], store, slug="project-goal"
+    )
+    assert goal
+    assert goal[0].path.endswith("app/agent.rs")
+    assert goal[0].start_line == 791
+    assert goal[0].symbol == "start_turn"
+    assert not any(is_readme_or_manifest(ref.path) for ref in goal)
+
+    commands = bind_concept_source_references(
+        ["packages/cli/src/command.ts", "package.json", "Cargo.toml"],
+        store,
+        slug="local-commands",
+    )
+    assert commands
+    assert commands[0].path.endswith("command.ts")
+    assert commands[0].start_line == 10
+    assert commands[0].symbol == "LocalCommandContributor"
+    assert not any(is_readme_or_manifest(ref.path) for ref in commands)
+
+
+def is_readme_or_manifest(path: str) -> bool:
+    name = path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name in {"readme.md", "readme", "cargo.toml", "package.json"}
 
 
 def test_concept_prerequisite_cycle_removal():

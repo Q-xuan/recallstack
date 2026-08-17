@@ -59,6 +59,9 @@ class ConceptDraft(BaseModel):
     prerequisites: list[str] = Field(default_factory=list)  # slugs
     not_this: list[str] = Field(default_factory=list)
     term_tips: list[ConceptTermTip] = Field(default_factory=list)
+    implementation_notes: str = ""
+    key_type_roles: list[dict[str, Any]] = Field(default_factory=list)
+    boundary_notes: list[str] = Field(default_factory=list)
     wiki_page_id: str | None = None
     task: str = ""
 

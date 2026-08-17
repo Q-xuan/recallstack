@@ -194,11 +194,42 @@ _LIFECYCLE_BASENAMES = (
 )
 _ENTRY_SYMBOLS = ("main", "connect", "boot")
 _PTY_SLUGS = frozenset({"pty-control", "pty"})
-_SRC_EXT = (".rs", ".py", ".go")
+_SRC_EXT = (".rs", ".py", ".go", ".ts", ".tsx")
 _DEFN_KW = (
     r"(?:pub(?:\([^)]*\))?\s+)?"
+    r"(?:export\s+)?"
+    r"(?:default\s+)?"
     r"(?:async\s+)?"
-    r"(?:fn|struct|enum|trait|type|class|def|impl(?:\s*<[^>]*>)?)\s+"
+    r"(?:abstract\s+)?"
+    r"(?:fn|struct|enum|trait|type|class|def|function|interface|impl(?:\s*<[^>]*>)?)\s+"
+)
+_CRATE_ROOT_NAMES = frozenset(
+    {
+        "lib.rs",
+        "mod.rs",
+        "lib.py",
+        "mod.py",
+        "__init__.py",
+        "index.ts",
+        "index.tsx",
+        "index.js",
+        "cargo.toml",
+        "package.json",
+        "readme.md",
+        "readme",
+    }
+)
+_FIRST_DEFN_RE = re.compile(
+    r"(?:pub(?:\([^)]*\))?\s+)?"
+    r"(?:export\s+)?"
+    r"(?:default\s+)?"
+    r"(?:async\s+)?"
+    r"(?:abstract\s+)?"
+    r"(?:fn|struct|enum|trait|type|class|def|function|interface)\s+"
+    r"([A-Za-z_][A-Za-z0-9_]*)"
+)
+_REEXPORT_RE = re.compile(
+    r"pub\s+use\s+(?:[\w:]+::)+([A-Za-z_][A-Za-z0-9_]*)"
 )
 
 # entry-and-boot is grok/pager boot — never ptyctl-cli or protoc.
@@ -245,7 +276,7 @@ _SLUG_PREFER_NEEDLES: dict[str, tuple[str, ...]] = {
 }
 
 _SOURCE_CHIP_RE = re.compile(
-    r"(?i)^[\w./\-]+(?:\.[A-Za-z0-9]+)+(?::\d+(?:-\d+)?)?$"
+    r"(?i)^[\w./\-]+(?:\.[A-Za-z0-9]+)+(?::\d+(?:-\d+)?)?(?:[ \t]+[A-Za-z_][A-Za-z0-9_]*)?$"
 )
 _CHROME_LINE_RE = re.compile(
     r"(?i)(\*\*(难度|Difficulty)\*\*.*(阅读时长|Reading time)|"
@@ -297,10 +328,29 @@ _TYPE_ROLE_HEADINGS = {
     "关键类型在链路上的职责",
     "Key types and their roles",
 }
+_IMPL_HEADINGS = {
+    "实现要点",
+    "Implementation details",
+}
+_BOUNDARY_HEADINGS = {
+    "边界条件",
+    "Boundary conditions",
+}
 _NOT_THIS_HEADINGS = {
     "不是什么",
     "What this is not",
 }
+_WATERY_HANDBOOK_RE = re.compile(
+    r"缺了它哪条能力会断|"
+    r"what breaks if it disappears|"
+    r"用户能察觉的行为会坏|"
+    r"a user-visible behaviour would break|"
+    r"出现在上文链路中的角色|"
+    r"a role on the path described above|"
+    r"从证据说出调用它的和它调用的|"
+    r"Name the callers and callees from the evidence",
+    re.I,
+)
 _TIPS_HEADINGS = {
     "术语小贴士",
     "Term tips",
@@ -988,20 +1038,98 @@ def parse_path_chip(chip: str) -> tuple[str, int, str]:
     )
 
 
-_RESTAMP_SLUGS = frozenset({"project-goal", "agent-runtime"})
+def is_crate_root_path(path: str) -> bool:
+    name = (path or "").replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name in _CRATE_ROOT_NAMES
+
+
+def is_readme_path(path: str) -> bool:
+    name = (path or "").replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name in {"readme.md", "readme"} or "readme.md" in (path or "").lower()
+
+
+def chip_is_definition_line(chip: str) -> bool:
+    """True when ``chip`` is already a real ``path:line Symbol`` definition."""
+    path, line, symbol = parse_path_chip(chip or "")
+    if not path or line < 1:
+        return False
+    if not symbol or _is_dummy_symbol(symbol):
+        return False
+    if is_junk_evidence_path(path) or is_readme_path(path):
+        return False
+    return True
 
 
 def chip_needs_restamp(slug: str, chip: str) -> bool:
-    """True when a persisted leftover chip is not a real definition ``path:line Symbol``."""
-    if slug not in _RESTAMP_SLUGS:
-        return False
+    """True when a persisted chip is not a real definition ``path:line Symbol``.
+
+    Driven by the chip itself (junk path, file-start, missing symbol) — not a
+    slug allowlist. ``slug`` only changes junk-path rules such as README.
+    """
     path, line, symbol = parse_path_chip(chip or "")
-    if slug == "project-goal":
-        name = path.rsplit("/", 1)[-1].lower()
-        if name in {"readme.md", "readme"} or "readme.md" in path.lower():
+    if not path:
+        return True
+    if is_readme_path(path):
+        return True
+    if is_junk_evidence_path(path, slug=slug):
+        return True
+    if line < 1:
+        return True
+    if not symbol or _is_dummy_symbol(symbol):
+        return True
+    return False
+
+
+def source_refs_from_chip(
+    chip: str, commit_sha: str | None = None
+) -> list[SourceReference]:
+    path, line, symbol = parse_path_chip(chip or "")
+    if not path:
+        return []
+    return [
+        SourceReference(
+            path=path,
+            start_line=line or None,
+            end_line=line or None,
+            symbol=symbol or None,
+            commit_sha=commit_sha or None,
+        )
+    ]
+
+
+def concept_refs_need_rebind(
+    refs: list[Any] | None,
+    slug: str = "",
+    chip: str = "",
+) -> bool:
+    """True when persisted concept refs are file-start / junk vs a real chip."""
+    items = _source_refs_of(type("C", (), {"source_references": refs or []})())
+    if chip and chip_is_definition_line(chip):
+        cpath, cline, csym = parse_path_chip(chip)
+        for ref in items:
+            if (
+                (ref.path or "").replace("\\", "/") == cpath
+                and int(ref.start_line or 0) == cline
+                and (ref.symbol or "").strip() == csym
+            ):
+                return False
+        return True
+    if not items:
+        return True
+    for ref in items:
+        path = (ref.path or "").replace("\\", "/")
+        start = int(ref.start_line or 0)
+        end = int(ref.end_line or 0)
+        symbol = (ref.symbol or "").strip()
+        if is_readme_path(path) or is_junk_evidence_path(path, slug=slug):
             return True
-        return symbol != "start_turn" or line < 1
-    return line < 1 or not symbol or _is_dummy_symbol(symbol)
+        if start <= 1 and end > start:
+            return True
+        if start < 1:
+            return True
+        if start <= 1 and (not symbol or _is_dummy_symbol(symbol)):
+            return True
+    return False
 
 
 def gate_failure_tokens(gate: str) -> list[str]:
@@ -1231,11 +1359,10 @@ def _file_text_for(file_texts: dict[str, str] | None, path: str) -> str:
 
 def _first_definition_line(text: str) -> tuple[int, str]:
     for i, line in enumerate((text or "").splitlines(), 1):
-        match = re.search(
-            r"(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|struct|enum|trait)\s+"
-            r"([A-Za-z_][A-Za-z0-9_]*)",
-            line,
-        )
+        stripped = line.strip()
+        if stripped.startswith(("//", "/*", "*", "#", "//!", "///")):
+            continue
+        match = _FIRST_DEFN_RE.search(line)
         if match and not _is_dummy_symbol(match.group(1)):
             return i, match.group(1)
     return 0, ""
@@ -1789,11 +1916,177 @@ def path_evidence_chip(
     return _format_path_chip(path, line, use_sym)
 
 
+def _bind_crate_root_definition(
+    path: str,
+    file_texts: dict[str, str],
+    *,
+    slug: str = "",
+) -> tuple[str, int, str] | None:
+    """Follow ``pub use`` / sibling files so crate-root ``lib.rs:1`` is not the claim."""
+    store = file_texts or {}
+    key = _resolve_store_key(store, path)
+    if not key:
+        return None
+    text = store.get(key) or ""
+    for match in _REEXPORT_RE.finditer(text):
+        name = match.group(1)
+        if not name or _is_dummy_symbol(name):
+            continue
+        hit = resolve_symbol_definition(store, name, prefer_path=key)
+        if hit and _resolve_store_key(store, hit[0]):
+            return hit[0], hit[1], name
+    parent = key.rsplit("/", 1)[0]
+    scored: list[tuple[int, str, int, str]] = []
+    for other, other_text in store.items():
+        norm = other.replace("\\", "/")
+        if norm == key or not parent or not norm.startswith(parent + "/"):
+            continue
+        if is_junk_evidence_path(norm, slug=slug) or not _is_production_src(norm, slug=slug):
+            continue
+        line, symbol = _first_definition_line(other_text or "")
+        if not line or not symbol or _is_dummy_symbol(symbol):
+            continue
+        score = 50 if norm.lower().endswith(".rs") else 20
+        if not is_crate_root_path(norm):
+            score += 15
+        scored.append((score, norm, line, symbol))
+    if not scored:
+        return None
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    _score, norm, line, symbol = scored[0]
+    return norm, line, symbol
+
+
+def _bind_one_source_path(
+    path: str,
+    file_texts: dict[str, str] | None,
+    *,
+    slug: str = "",
+    commit_sha: str = "",
+) -> SourceReference | None:
+    raw = (path or "").replace("\\", "/")
+    if not raw:
+        return None
+    store = file_texts or {}
+    key = _resolve_store_key(store, raw) if store else raw
+    if store and not key:
+        return None
+    path = key or raw
+    if is_junk_evidence_path(path, slug=slug) and not (
+        slug == "project-goal" and is_readme_path(path)
+    ):
+        return None
+    text = (store.get(path) or "") if store else ""
+    line, symbol = _first_definition_line(text)
+    if line and symbol and not _is_dummy_symbol(symbol):
+        return SourceReference(
+            path=path,
+            start_line=line,
+            end_line=line,
+            symbol=symbol,
+            commit_sha=commit_sha or None,
+        )
+    if store and is_crate_root_path(path):
+        hit = _bind_crate_root_definition(path, store, slug=slug)
+        if hit:
+            return SourceReference(
+                path=hit[0],
+                start_line=hit[1],
+                end_line=hit[1],
+                symbol=hit[2],
+                commit_sha=commit_sha or None,
+            )
+    return None
+
+
+def bind_concept_source_references(
+    paths: list[str],
+    file_texts: dict[str, str] | None,
+    *,
+    slug: str = "",
+    commit_sha: str = "",
+) -> list[SourceReference]:
+    """Bind key-file paths to real definition lines. Never invent missing keys.
+
+    File-start ``:1-40`` / README / Cargo.toml / package.json are dropped when a
+    Rust / TS / Python definition can be resolved in ``file_texts``.
+    """
+    store = file_texts or {}
+    bound: list[SourceReference] = []
+    seen: set[str] = set()
+
+    def add(ref: SourceReference) -> None:
+        key = f"{ref.path}:{int(ref.start_line or 0)}:{ref.symbol or ''}"
+        if key in seen:
+            return
+        if store and not _resolve_store_key(store, ref.path):
+            return
+        seen.add(key)
+        bound.append(ref)
+
+    for path in paths:
+        ref = _bind_one_source_path(path, store, slug=slug, commit_sha=commit_sha)
+        if ref:
+            add(ref)
+
+    chip_refs: list[SourceReference] = []
+    if store and slug:
+        draft = ConceptDraft(
+            slug=slug,
+            title=slug,
+            source_references=list(bound),
+        )
+        chip = path_evidence_chip(draft, file_texts=store)
+        if chip and chip_is_definition_line(chip):
+            chip_refs = source_refs_from_chip(chip, commit_sha)
+
+    if chip_refs:
+        chip_path = chip_refs[0].path
+        extras = [
+            ref
+            for ref in bound
+            if ref.path != chip_path and not is_junk_evidence_path(ref.path, slug=slug)
+        ]
+        return chip_refs + extras[:3]
+
+    if bound:
+        return bound
+
+    if slug == "project-goal":
+        for key in store:
+            if is_readme_path(key):
+                return [
+                    SourceReference(
+                        path=key.replace("\\", "/"),
+                        start_line=1,
+                        end_line=1,
+                        commit_sha=commit_sha or None,
+                    )
+                ]
+        for path in paths:
+            if is_readme_path(path):
+                if store and not _resolve_store_key(store, path):
+                    continue
+                return [
+                    SourceReference(
+                        path=path.replace("\\", "/"),
+                        start_line=1,
+                        end_line=1,
+                        commit_sha=commit_sha or None,
+                    )
+                ]
+    return []
+
+
 _WIKI_PILL_RE = re.compile(
-    r"^([A-Za-z0-9_./\-]+?\.[A-Za-z0-9]+)(?::(\d+)(?:-\d+)?)?(?:[ \t]+(.+))?$"
+    r"^([A-Za-z0-9_./\-]+?\.[A-Za-z0-9]+)(?::(\d+)(?:-(\d+))?)?(?:[ \t]+(.+))?$"
 )
 _INDEX_DEFN_RE = re.compile(
-    r"(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|struct|enum|trait|type|class)\s+"
+    r"(?:pub(?:\([^)]*\))?\s+)?"
+    r"(?:export\s+)?(?:default\s+)?"
+    r"(?:async\s+)?"
+    r"(?:abstract\s+)?"
+    r"(?:fn|struct|enum|trait|type|class|def|function|interface)\s+"
     r"([A-Za-z_][A-Za-z0-9_]*)"
     r"|impl(?:\s*<[^>]*>)?\s+([A-Za-z_][A-Za-z0-9_]*)"
     r"|impl\b.+\bfor\s+([A-Za-z_][A-Za-z0-9_]*)"
@@ -1931,13 +2224,38 @@ def resolve_symbol_definition(
 
 
 def fill_wiki_key_type_lines(content: str, file_texts: dict[str, str] | None) -> str:
-    """Stamp `` `path Symbol` `` / `` `path:1 Symbol` `` from the scan store.
+    """Stamp wiki pills from the scan store.
 
-    Path-only pills (no symbol) stay as-is. Runs on the whole page so overview
-    核心子系统 and architecture cites get definition lines, not just 关键类型.
+    `` `path Symbol` `` / `` `path:1 Symbol` `` become the definition line.
+    Path-only ``:1`` / crate-root pills resolve to a definition or are dropped
+    so architecture/index do not keep crate-root ``:1`` when it is not the claim.
+    Non-root path-only pills without a line stay as-is.
     """
     if not content or not file_texts or "`" not in content:
         return content
+
+    def drop_crate_root_chip(path: str) -> str:
+        return path.replace("\\", "/").rsplit("/", 1)[-1]
+
+    def stamp_or_drop_path_only(path: str, line: str, end: str) -> str:
+        is_line_one = line == "1"
+        is_span = bool(end and end != line)
+        is_root = is_crate_root_path(path)
+        if not is_line_one and not is_root:
+            return ""
+        if is_span and is_readme_path(path):
+            return ""
+        store_path = _resolve_store_key(file_texts, path)
+        if store_path:
+            first, emit = _first_definition_line(file_texts.get(store_path) or "")
+            if first and emit and not _is_dummy_symbol(emit):
+                return f"`{store_path}:{first} {emit}`"
+            hit = _bind_crate_root_definition(store_path, file_texts)
+            if hit:
+                return f"`{hit[0]}:{hit[1]} {hit[2]}`"
+        if is_line_one and (is_root or is_junk_evidence_path(path) or is_readme_path(path)):
+            return drop_crate_root_chip(path)
+        return ""
 
     def pill_repl(match: re.Match[str]) -> str:
         inner = (match.group(1) or "").strip()
@@ -1946,9 +2264,13 @@ def fill_wiki_key_type_lines(content: str, file_texts: dict[str, str] | None) ->
             return match.group(0)
         path = (parsed.group(1) or "").strip()
         line = (parsed.group(2) or "").strip()
-        symbol = (parsed.group(3) or "").strip()
-        if not path or not symbol or _is_dummy_symbol(symbol):
+        end = (parsed.group(3) or "").strip()
+        symbol = (parsed.group(4) or "").strip()
+        if not path:
             return match.group(0)
+        if not symbol or _is_dummy_symbol(symbol):
+            rewritten = stamp_or_drop_path_only(path, line, end)
+            return rewritten if rewritten else match.group(0)
         if line and line != "1":
             store_existing = _resolve_store_key(file_texts, path)
             if store_existing or not file_texts:
@@ -1966,6 +2288,9 @@ def fill_wiki_key_type_lines(content: str, file_texts: dict[str, str] | None) ->
             if found:
                 return f"`{store_path}:{found} {symbol}`"
             if line == "1":
+                sibling = _bind_crate_root_definition(store_path, file_texts)
+                if sibling:
+                    return f"`{sibling[0]}:{sibling[1]} {symbol}`"
                 return f"`{store_path} {symbol}`"
         return match.group(0)
 
@@ -2480,8 +2805,12 @@ def _heading_bucket(title: str) -> str | None:
         return "position"
     if stripped in _FLOW_HEADINGS:
         return "flow"
+    if stripped in _IMPL_HEADINGS:
+        return "impl"
     if stripped in _TYPE_ROLE_HEADINGS:
         return "types"
+    if stripped in _BOUNDARY_HEADINGS:
+        return "boundary"
     if stripped in _NOT_THIS_HEADINGS:
         return "not"
     if stripped in _TIPS_HEADINGS:
@@ -2594,7 +2923,9 @@ def upgrade_legacy_concept_markdown(
             "what",
             "position",
             "flow",
+            "impl",
             "types",
+            "boundary",
             "not",
             "tips",
             "prereq",
@@ -2659,9 +2990,15 @@ def upgrade_legacy_concept_markdown(
     _append_section(out, t("Where it sits", "它在系统里的位置"), position)
     _append_section(out, t("How a call runs", "一次调用怎么走"), _join_bodies(grouped["flow"]))
     _append_section(
+        out, t("Implementation details", "实现要点"), _join_bodies(grouped["impl"])
+    )
+    _append_section(
         out,
         t("Key types and their roles", "关键类型在链路上的职责"),
         _join_bodies(grouped["types"]),
+    )
+    _append_section(
+        out, t("Boundary conditions", "边界条件"), _join_bodies(grouped["boundary"])
     )
     _append_section(out, t("What this is not", "不是什么"), _join_bodies(grouped["not"]))
     _append_section(out, t("Term tips", "术语小贴士"), _join_bodies(grouped["tips"]))
@@ -2685,3 +3022,324 @@ def upgrade_legacy_concept_markdown(
     if "过关" in text or re.search(r"(?m)^## Pass\s*$", text):
         text = re.sub(r"(?ms)^## (过关|Pass)\n.*?(?=^## |\Z)", "", text)
     return text.rstrip() + "\n"
+
+
+def is_watery_handbook_text(text: str) -> bool:
+    """True when a concept-page body is only the generic topic stub."""
+    blob = (text or "").strip()
+    if not blob:
+        return True
+    if re.search(r"`[^`]+\:\d+", blob):
+        return False
+    return bool(_WATERY_HANDBOOK_RE.search(blob))
+
+
+def should_deepen_concept_page(concept: Any) -> bool:
+    """High-importance / trunk concepts get the three handbook sections."""
+    slug = getattr(concept, "slug", "") or ""
+    title = getattr(concept, "title", "") or ""
+    if not slug or slug == "getting-started":
+        return False
+    if is_shallow_path_leaf(slug) or is_filler_slug_title(slug, title):
+        return False
+    if slug in _PATH_RANK:
+        return True
+    try:
+        importance = float(getattr(concept, "importance", 0) or 0)
+    except (TypeError, ValueError):
+        importance = 0.0
+    return importance >= 0.85
+
+
+def _signature_at(text: str, line: int) -> str:
+    lines = (text or "").splitlines()
+    if line < 1 or line > len(lines):
+        return ""
+    return (lines[line - 1] or "").strip()[:160]
+
+
+def _defs_in_store_file(
+    file_texts: dict[str, str], path: str, *, limit: int = 4
+) -> list[tuple[int, str]]:
+    text = file_texts.get(path) or ""
+    out: list[tuple[int, str]] = []
+    seen: set[str] = set()
+    for i, line in enumerate(text.splitlines(), 1):
+        stripped = line.strip()
+        if stripped.startswith(("//", "/*", "*", "#", "//!", "///")):
+            continue
+        if re.match(r"(?:pub\s+)?use\b", stripped):
+            continue
+        for match in _INDEX_DEFN_RE.finditer(line):
+            name = next((g for g in match.groups() if g), "")
+            if not name or name in seen or _is_dummy_symbol(name):
+                continue
+            if not _line_defines_symbol(line, name):
+                continue
+            seen.add(name)
+            out.append((i, name))
+            if len(out) >= limit:
+                return out
+    return out
+
+
+def concept_definition_hits(
+    concept: Any,
+    file_texts: dict[str, str] | None,
+) -> list[tuple[str, int, str]]:
+    """Real ``path:line Symbol`` hits from chips / refs / hints. Never invents keys."""
+    store = file_texts or {}
+    if not store:
+        return []
+    hits: list[tuple[str, int, str]] = []
+    seen: set[str] = set()
+
+    def add(path: str, line: int, symbol: str) -> None:
+        path = (path or "").replace("\\", "/")
+        symbol = (symbol or "").strip()
+        if not path or int(line or 0) < 1 or not symbol or _is_dummy_symbol(symbol):
+            return
+        key = _resolve_store_key(store, path)
+        if not key:
+            return
+        token = f"{key}:{int(line)}:{symbol}"
+        if token in seen:
+            return
+        seen.add(token)
+        hits.append((key, int(line), symbol))
+
+    chip = path_evidence_chip(concept, file_texts=store)
+    if chip and chip_is_definition_line(chip):
+        path, line, symbol = parse_path_chip(chip)
+        add(path, line, symbol)
+
+    for ref in _source_refs_of(concept):
+        path = (ref.path or "").replace("\\", "/")
+        symbol = (ref.symbol or "").strip()
+        line = int(ref.start_line or 0)
+        if symbol:
+            resolved = resolve_symbol_definition(store, symbol, prefer_path=path)
+            if resolved:
+                path, line = resolved
+        add(path, line, symbol)
+
+    slug = getattr(concept, "slug", "") or ""
+    suffixes, hint_sym = _EVIDENCE_HINTS.get(slug, ((), ""))
+    if hint_sym and hint_sym.lower() not in _WEAK_SYMBOLS:
+        picked = _pick_symbol_in_store(store, hint_sym, slug, suffixes)
+        if picked:
+            add(picked[0], picked[1], hint_sym)
+
+    if len(hits) < 3 and hits:
+        for line, symbol in _defs_in_store_file(store, hits[0][0], limit=4):
+            add(hits[0][0], line, symbol)
+            if len(hits) >= 4:
+                break
+    return hits[:6]
+
+
+def _sanitize_handbook_cites(text: str, file_texts: dict[str, str]) -> str:
+    """Keep only pills whose path is a version_files key; stamp definition lines."""
+    if not text or not file_texts:
+        return (text or "").strip()
+    stamped = fill_wiki_key_type_lines(text, file_texts)
+
+    def keep_pill(match: re.Match[str]) -> str:
+        inner = (match.group(1) or "").strip()
+        parsed = _WIKI_PILL_RE.match(inner)
+        if not parsed:
+            return match.group(0)
+        path = (parsed.group(1) or "").strip()
+        if not path:
+            return match.group(0)
+        if not _resolve_store_key(file_texts, path):
+            return path.rsplit("/", 1)[-1]
+        return match.group(0)
+
+    return re.sub(r"`([^`]+)`", keep_pill, stamped).strip()
+
+
+def _llm_or_deterministic(llm_text: str, det_text: str, store: dict[str, str]) -> str:
+    cleaned = _sanitize_handbook_cites(llm_text, store)
+    if cleaned and not is_watery_handbook_text(cleaned):
+        return cleaned
+    return det_text
+
+
+def _impl_section_body(
+    concept: Any, hits: list[tuple[str, int, str]], store: dict[str, str]
+) -> str:
+    notes = str(getattr(concept, "implementation_notes", "") or "").strip()
+    path, line, symbol = hits[0]
+    chip = f"{path}:{line} {symbol}"
+    shown = getattr(concept, "title", "") or getattr(concept, "slug", "") or symbol
+    parts = [
+        t(
+            f"`{shown}` is implemented at `{chip}`.",
+            f"「{shown}」的实现钉在 `{chip}`。",
+        )
+    ]
+    sig = _signature_at(store.get(path) or "", line)
+    if sig:
+        parts.append(
+            t(
+                f"The definition line is `{sig}`.",
+                f"定义行是 `{sig}`。",
+            )
+        )
+    reading = evidence_reading(concept, chip)
+    if reading:
+        parts.append(reading)
+    for extra_path, extra_line, extra_sym in hits[1:3]:
+        parts.append(
+            t(
+                f"Related definition: `{extra_path}:{extra_line} {extra_sym}`.",
+                f"相关定义：`{extra_path}:{extra_line} {extra_sym}`。",
+            )
+        )
+    return _llm_or_deterministic(notes, "\n\n".join(parts), store)
+
+
+def _type_role_for(symbol: str, slug: str) -> str:
+    roles = {
+        "start_turn": t("starts one turn and must call the model next", "开一轮，下一记必须调模型"),
+        "ToolBridge": t("runs a tool call by name after the model returns", "模型返回后按名执行 tool call"),
+        "Pager": t("writes streaming output into the terminal buffer", "把流式输出写入终端缓冲"),
+        "AgentRuntime": t("owns cancel / in-flight abort for the session", "持有取消与 in-flight 中断"),
+        "main": t("process entry — the first call that actually runs", "进程入口，真正跑起来的第一记调用"),
+        "connect": t("ACP door: hands the channel to a session", "ACP 那扇门：把通道交给会话"),
+    }
+    return roles.get(symbol) or t("a role on this call path", "这条调用链上的角色")
+
+
+def _types_section_body(
+    concept: Any, hits: list[tuple[str, int, str]], store: dict[str, str]
+) -> str:
+    slug = getattr(concept, "slug", "") or ""
+    lead: list[str] = []
+    flow = flow_narrative(slug, getattr(concept, "title", "") or "")
+    if flow:
+        path, line, symbol = hits[0]
+        lead.append(f"{flow} `{path}:{line} {symbol}`")
+    bullets: list[str] = []
+    extra_roles = getattr(concept, "key_type_roles", None) or []
+    if isinstance(extra_roles, list):
+        for item in extra_roles:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or item.get("symbol") or "").strip()
+            path = str(item.get("path") or "").strip()
+            try:
+                line = int(item.get("line") or 0)
+            except (TypeError, ValueError):
+                line = 0
+            role = str(item.get("role") or "").strip()
+            if name and path:
+                resolved = resolve_symbol_definition(store, name, prefer_path=path)
+                if resolved:
+                    path, line = resolved
+            if name and path and line and _resolve_store_key(store, path):
+                bullets.append(
+                    f"- {name} — {role or _type_role_for(name, slug)} — `{path}:{line} {name}`"
+                )
+    if not bullets:
+        for path, line, symbol in hits:
+            bullets.append(
+                f"- {symbol} — {_type_role_for(symbol, slug)} — `{path}:{line} {symbol}`"
+            )
+    return "\n\n".join([*lead, *bullets]).strip()
+
+
+def _boundary_section_body(
+    concept: Any, hits: list[tuple[str, int, str]], store: dict[str, str]
+) -> str:
+    path, line, symbol = hits[0]
+    chip = f"{path}:{line} {symbol}"
+    items: list[str] = []
+    for note in list(getattr(concept, "boundary_notes", None) or []) + list(
+        getattr(concept, "not_this", None) or []
+    ):
+        text = str(note or "").strip()
+        if not text:
+            continue
+        cleaned = _sanitize_handbook_cites(text, store)
+        if cleaned:
+            items.append(f"- {cleaned.lstrip('- ').strip()}")
+    items.append(
+        t(
+            f"- If `{chip}` disappeared, the failure this step signs is: {pass_gate(concept)}",
+            f"- 若 `{chip}` 消失，这一步要签字的失败是：{pass_gate(concept)}",
+        )
+    )
+    items.append(
+        t(
+            f"- This is not a directory or crate name. The claim is `{symbol}` at `{path}:{line}`.",
+            f"- 这不是目录名或 crate 名。主张是 `{path}:{line}` 上的 `{symbol}`。",
+        )
+    )
+    # unique, keep order
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return "\n".join(out[:6])
+
+
+def _upsert_handbook_section(content: str, heading: str, body: str) -> str:
+    body = (body or "").strip()
+    if not body:
+        return content
+    block = f"## {heading}\n\n{body}\n\n"
+    pattern = re.compile(
+        rf"(?ms)^## {re.escape(heading)}\n.*?(?=^## |\Z)"
+    )
+    match = pattern.search(content or "")
+    if match:
+        existing = match.group(0)
+        if not is_watery_handbook_text(existing):
+            return content
+        return pattern.sub(block, content, count=1)
+    insert_at = re.search(
+        r"(?m)^## (不是什么|What this is not|术语小贴士|Term tips|先读|Read first|接下来|Next)\s*$",
+        content or "",
+    )
+    if insert_at:
+        return content[: insert_at.start()] + block + content[insert_at.start() :]
+    return (content or "").rstrip() + "\n\n" + block
+
+
+def deepen_concept_markdown(
+    content: str,
+    concept: Any,
+    file_texts: dict[str, str] | None,
+) -> str:
+    """Fill implementation / key types / boundaries from the definition index.
+
+    No-op without a store or when the concept is a low-rank stub. Existing
+    non-watery sections are kept. Never invents paths missing from version_files.
+    """
+    store = file_texts or {}
+    if not content or not store or not should_deepen_concept_page(concept):
+        return content
+    hits = concept_definition_hits(concept, store)
+    if not hits:
+        return content
+    content = _upsert_handbook_section(
+        content,
+        t("Implementation details", "实现要点"),
+        _impl_section_body(concept, hits, store),
+    )
+    content = _upsert_handbook_section(
+        content,
+        t("Key types and their roles", "关键类型在链路上的职责"),
+        _types_section_body(concept, hits, store),
+    )
+    content = _upsert_handbook_section(
+        content,
+        t("Boundary conditions", "边界条件"),
+        _boundary_section_body(concept, hits, store),
+    )
+    return re.sub(r"\n{3,}", "\n\n", content).rstrip() + "\n"

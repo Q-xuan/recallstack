@@ -187,7 +187,7 @@ export default function ConceptPage() {
                     >
                       {ref.path}
                       {ref.start_line ? `:${ref.start_line}` : ""}
-                      {ref.symbol ? `  (${ref.symbol})` : ""}
+                      {ref.symbol ? ` ${ref.symbol}` : ""}
                     </button>
                   </li>
                 ))}

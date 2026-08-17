@@ -16,6 +16,8 @@ from recallstack.learning.i18n import content_lang
 from recallstack.learning.learning_contract import (
     CORE_PATH_CAP,
     chip_needs_restamp,
+    concept_refs_need_rebind,
+    deepen_concept_markdown,
     definition_index_scope,
     drop_duplicate_entry_slug,
     fill_wiki_key_type_lines,
@@ -25,6 +27,7 @@ from recallstack.learning.learning_contract import (
     path_evidence_chip,
     path_rank,
     path_step_contract,
+    source_refs_from_chip,
     upgrade_legacy_concept_markdown,
     wiki_prose_excerpt,
 )
@@ -49,10 +52,10 @@ from repowiki.core.wiki_builder import (
 logger = logging.getLogger(__name__)
 
 # Bump when materialize logic changes so stale persisted pages re-upgrade once.
-WIKI_SERVE_REVISION = 1
+WIKI_SERVE_REVISION = 3
 PATH_SERVE_REVISION = 2
-# Bump when leftover chip rules change so GET restamps those two slugs once.
-PATH_CHIP_RESTAMP = 1
+# Bump when leftover chip rules change so store-backed persist restamps once.
+PATH_CHIP_RESTAMP = 2
 
 
 def wiki_is_materialized(payload: dict[str, Any] | None) -> bool:
@@ -73,7 +76,7 @@ def path_is_materialized(resolved: dict[str, Any] | None) -> bool:
 
 
 def path_needs_chip_restamp(path: Any, resolved: dict[str, Any] | None) -> bool:
-    """True when project-goal / agent-runtime leftovers are still on disk."""
+    """True when any persisted chip is still junk / not a definition line."""
     if not isinstance(resolved, dict) or not path_chips_ready(resolved):
         return False
     if int(resolved.get("chip_restamp") or 0) >= PATH_CHIP_RESTAMP:
@@ -176,6 +179,8 @@ def materialize_wiki_payload(
                     has_architecture="architecture" in page_ids,
                     overview_excerpt=overview_excerpt if slug == "project-goal" else "",
                 )
+                if store and concept is not None:
+                    content = deepen_concept_markdown(content, concept, store)
             elif page_id.startswith("modules/"):
                 content = upgrade_legacy_module_markdown(content, language=lang)
             content = upgrade_wiki_page_content(
@@ -297,6 +302,44 @@ def cheap_upgrade_path_resolved(path: Any, persisted: dict[str, Any]) -> dict[st
     return out
 
 
+def sync_concept_refs_from_chips(
+    session: Any,
+    path: Any,
+    resolved: dict[str, Any] | None = None,
+) -> bool:
+    """Rewrite junk concept ``source_references`` from persisted chips. No store walk."""
+    payload = resolved if isinstance(resolved, dict) else getattr(path, "resolved", None)
+    chips = payload.get("chips") if isinstance(payload, dict) else None
+    if not isinstance(chips, dict) or not chips:
+        return False
+    changed = False
+    for n in getattr(path, "nodes", None) or []:
+        concept = getattr(n, "concept", None)
+        cid = str(getattr(n, "concept_id", "") or getattr(concept, "id", "") or "")
+        if not concept or not cid:
+            continue
+        slug = getattr(concept, "slug", "") or ""
+        chip = str(chips.get(cid) or "")
+        if not chip or chip_needs_restamp(slug, chip):
+            continue
+        refs = getattr(concept, "source_references", None) or []
+        if not concept_refs_need_rebind(refs, slug, chip):
+            continue
+        new_refs = [ref.model_dump() for ref in source_refs_from_chip(chip)]
+        if not new_refs:
+            continue
+        concept.source_references = new_refs
+        try:
+            flag_modified(concept, "source_references")
+        except Exception:  # noqa: BLE001
+            pass
+        add = getattr(session, "add", None) if session is not None else None
+        if callable(add):
+            add(concept)
+        changed = True
+    return changed
+
+
 def persist_path_from_loaded_store(
     session: Any,
     path: Any,
@@ -312,16 +355,25 @@ def persist_path_from_loaded_store(
             persist_path_resolved(session, path, upgraded)
             path.resolved = upgraded
             sync_path_contract_items(session, path, file_texts)
+            sync_concept_refs_from_chips(session, path, upgraded)
             try:
                 session.commit()
             except Exception:  # noqa: BLE001
                 session.rollback()
                 logger.exception("path leftover chip restamp after store-backed persist failed")
+            return
+        if sync_concept_refs_from_chips(session, path, resolved):
+            try:
+                session.commit()
+            except Exception:  # noqa: BLE001
+                session.rollback()
+                logger.exception("concept ref chip sync after store-backed persist failed")
         return
     resolved = materialize_path_resolved(path, file_texts)
     persist_path_resolved(session, path, resolved)
     path.resolved = resolved
     sync_path_contract_items(session, path, file_texts)
+    sync_concept_refs_from_chips(session, path, resolved)
     try:
         session.commit()
     except Exception:  # noqa: BLE001
@@ -476,3 +528,4 @@ def materialize_analyzed_version(
         path.resolved = materialize_path_resolved(path, file_texts)
         flag_modified(path, "resolved")
         sync_path_contract_items(session, path, file_texts)
+        sync_concept_refs_from_chips(session, path, path.resolved)
