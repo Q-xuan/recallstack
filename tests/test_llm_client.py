@@ -111,8 +111,16 @@ def test_zh_prompts_ask_for_handbook_prose_and_term_tips():
     assert "model BEFORE tools" in arch[-1]["content"]
     assert "never cli-tool" in arch[-1]["content"]
     assert "AgentLoop" in arch[-1]["content"]
-    assert "TurnRunning" in arch[-1]["content"]
-    assert "ToolBridge" in arch[-1]["content"]
+    assert "xai-grok-pager" in arch[-1]["content"]
+    assert "version_files" in arch[-1]["content"]
+    assert "TurnRunning" not in arch[-1]["content"]
+    grok_arch = build_architecture_prompt(
+        "crates/xai-grok-pager/src/lib.rs\ncrates/xai-grok-agent/src/turn.rs",
+        "pub fn start_turn",
+        "zh",
+    )
+    assert "TurnRunning" in grok_arch[-1]["content"]
+    assert "ToolBridge" in grok_arch[-1]["content"]
     overview_user = overview[-1]["content"]
     assert "`path:line Symbol`" in overview_user or "path:line Symbol" in overview_user
     assert "Agent Loop 与上下文装配" in overview_user

@@ -24,6 +24,7 @@ from recallstack.learning.learning_contract import (
     wiki_prose_excerpt,
 )
 from repowiki.core.graph import DependencyGraph
+from repowiki.core.grounding import WIKI_GROUND_REVISION
 from repowiki.core.models import (
     ArchitectureDiagram,
     Citation,
@@ -902,7 +903,25 @@ def build_wiki_payload(
     if wiki_data is None:
         wiki_data = build_deterministic_wiki_data(project, graph, concepts)
     wiki_data = verify_wiki_data(wiki_data, project)
-    wiki = WikiBuilder().build(project, wiki_data, graph, language=content_lang())
+    lang = content_lang()
+    entry_files = [
+        f.path for f in project.files if getattr(f, "is_entrypoint", False)
+    ]
+    topics = wiki_data.outline.topics if wiki_data.outline else None
+    if not (wiki_data.overview.mermaid_component or "").strip():
+        wiki_data.overview.mermaid_component = graph.to_mermaid() or runtime_mermaid_for(
+            entry_files=entry_files, topics=topics
+        )
+    if not wiki_data.overview.codebase_structure:
+        wiki_data.overview.codebase_structure = codebase_structure_for(
+            project, language=lang
+        )
+    if not (wiki_data.architecture.mermaid_component or "").strip():
+        wiki_data.architecture.mermaid_component = (
+            graph.to_mermaid()
+            or runtime_mermaid_for(entry_files=entry_files, topics=topics)
+        )
+    wiki = WikiBuilder().build(project, wiki_data, graph, language=lang)
     store = {
         (f.path or "").replace("\\", "/"): (f.content or f.preview or "")
         for f in project.files
@@ -937,6 +956,7 @@ def build_wiki_payload(
         ],
         "sidebar": [_sidebar_to_dict(s) for s in wiki.sidebar],
         "topic_plan": topic_plan,
+        "ground_revision": WIKI_GROUND_REVISION,
     }
 
 

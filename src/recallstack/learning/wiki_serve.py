@@ -190,6 +190,15 @@ def materialize_wiki_payload(
                 content = link_reading_guide_markdown(content, concept_list)
             if store:
                 content = fill_wiki_key_type_lines(content, store)
+                if page_id in {"index", "architecture"}:
+                    from repowiki.core.grounding import (
+                        cite_index_from_texts,
+                        scrub_wiki_page_content,
+                    )
+
+                    content = scrub_wiki_page_content(
+                        content, cite_index_from_texts(store)
+                    )
             upgraded.append(
                 {
                     "id": page_id,

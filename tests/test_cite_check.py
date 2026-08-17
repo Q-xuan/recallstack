@@ -12,6 +12,7 @@ from repowiki.core.models import (
     ArchitectureDiagram,
     CallChain,
     Citation,
+    CodebasePart,
     Component,
     FileDoc,
     FileInfo,
@@ -213,3 +214,48 @@ def test_cite_check_prefers_symbol_line_over_line_one():
     )
     cleaned = verify_wiki_data(data, project)
     assert cleaned.overview.citations[0].start_line == 3
+
+
+def test_overview_drops_grok_symbols_missing_from_tree():
+    project = _project()
+    data = WikiData(
+        overview=ProjectOverview(
+            name="demo",
+            description="`xai-grok-pager` 负责进程启动，`xai-grok-agent` 驱动 agent 循环。",
+            runtime_flow="Pager 把一轮交给 start_turn。",
+            mermaid_component=(
+                "flowchart LR\n"
+                '  A["Pager"] --> B["start_turn"] --> C["Agent Loop"]\n'
+            ),
+            codebase_structure=[
+                CodebasePart(
+                    name="xai-grok-pager",
+                    location="packages/xai-grok-pager",
+                    purpose="boot",
+                ),
+                CodebasePart(name="app", location="app", purpose="entry"),
+            ],
+        ),
+        architecture=ArchitectureDiagram(
+            description="xai-grok-pager 负责进程启动。",
+            mermaid_component='flowchart LR\n  A["Pager"] --> B["start_turn"]\n',
+        ),
+    )
+    cleaned = verify_wiki_data(data, project)
+    blob = " ".join(
+        [
+            cleaned.overview.description,
+            cleaned.overview.runtime_flow,
+            cleaned.overview.mermaid_component,
+            " ".join(
+                f"{p.name} {p.location}" for p in cleaned.overview.codebase_structure
+            ),
+            cleaned.architecture.description,
+            cleaned.architecture.mermaid_component,
+        ]
+    )
+    assert "xai-grok-pager" not in blob
+    assert "xai-grok-agent" not in blob
+    assert "start_turn" not in blob
+    assert "packages/xai-grok-pager" not in blob
+    assert any(p.location == "app" for p in cleaned.overview.codebase_structure)

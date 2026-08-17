@@ -64,6 +64,32 @@ def _term_tips_rules(*, required: bool) -> str:
     )
 
 
+def _tree_has_grok_product(file_tree: str, key_files: str) -> bool:
+    from repowiki.core.grounding import tree_has_grok_product
+
+    return tree_has_grok_product(file_tree or "", key_files or "")
+
+
+def _tree_grounding_rules(file_tree: str, key_files: str) -> str:
+    """Hard constraint: only cite paths/symbols that appear in this tree."""
+    if _tree_has_grok_product(file_tree, key_files):
+        return (
+            "Cite ONLY paths and symbols that appear in the File Tree / Key Files. "
+            "This tree has a grok/pager runtime: name start_turn / Pager only where "
+            "those identifiers exist in the source. "
+        )
+    return (
+        "HARD CONSTRAINT: cite ONLY paths, crates, and symbols that appear in the "
+        "File Tree / Key Files (the version_files / scan tree). "
+        "FORBIDDEN unless they appear in the tree: `xai-grok-pager`, `xai-grok-agent`, "
+        "`packages/xai-grok-pager`, `start_turn`, Pager → start_turn → Agent Loop, "
+        "and any other grok-study entry myth. "
+        "Name systems this repo actually has (Cordis, plugin, Capability Seam, "
+        "`packages/core`, `vendor/cordis`, apps/*/main.ts). "
+        "If a crate or function is not in the tree, do not mention it. "
+    )
+
+
 def _json_instruction(language: str = "en") -> str:
     """Closing contract for a prompt: JSON shape, then output language.
 
@@ -283,7 +309,8 @@ def build_overview_prompt(
                 "Never list Python/JavaScript with version 未指定 unless those languages "
                 "actually appear in the tree. Leave tech_stack empty when unsure. "
                 f"{_term_tips_rules(required=True)} "
-                "citations.path MUST be a real path from the tree. Omit citations rather than invent paths.\n\n"
+                "citations.path MUST be a real path from the tree. Omit citations rather than invent paths. "
+                f"{_tree_grounding_rules(file_tree, key_files)}\n\n"
                 f"{_json_instruction(language)}"
             ),
         },
@@ -513,14 +540,14 @@ def build_architecture_prompt(
                 '      "name": "Subsystem",\n'
                 '      "role": "job on the flow",\n'
                 '      "purpose": "same as role if you only fill one",\n'
-                '      "key_types": [{"name": "start_turn", "role": "pager dispatch", "path": "src/file.rs:12"}],\n'
+                '      "key_types": [{"name": "TypeName", "role": "role on the call", "path": "src/file.ts:12"}],\n'
                 '      "files": ["real/path.py"]\n'
                 "    }\n"
                 "  ],\n"
-                '  "mermaid_component": "graph TD\\n  A[Component] --> B[Component]\\n  ...",\n'
-                '  "mermaid_sequence": "sequenceDiagram\\n  participant Pager\\n  participant Turn as start_turn\\n  participant Model\\n  participant Bridge as ToolBridge\\n  Pager->>Turn: dispatch\\n  Turn->>Model: complete\\n  Model-->>Turn: tool calls\\n  Turn->>Bridge: execute\\n  Bridge-->>Turn: write-back\\n  Turn->>Turn: on_turn_done",\n'
+                '  "mermaid_component": "flowchart TD\\n  A[Entry] --> B[Core] --> C[Seam]",\n'
+                '  "mermaid_sequence": "sequenceDiagram\\n  participant Entry\\n  participant Core\\n  participant Seam\\n  Entry->>Core: boot\\n  Core->>Seam: resolve",\n'
                 '  "data_flow": "walk one request through the mermaid boxes in 2-4 sentences",\n'
-                '  "citations": [{"path": "real/path.py", "start_line": 1, "symbol": "start_turn", "note": "why this file is architectural"}],\n'
+                '  "citations": [{"path": "real/path.py", "start_line": 1, "symbol": "TypeName", "note": "why this file is architectural"}],\n'
                 f"{_term_tips_field()}"
                 "}\n\n"
                 "IMPORTANT: Mermaid code must be a single string with \\n for newlines. "
@@ -530,16 +557,24 @@ def build_architecture_prompt(
                 "Each component MUST include 2-4 key_types (Type — job — `path:line Symbol`), not just "
                 "name — purpose — files. Omit a key_type if `path` is missing; never invent Type names "
                 "(no AgentLoop, no lib.rs as a type). "
-                "Live agent loop is pager dispatch → start_turn → TurnRunning → model → ToolBridge → "
-                "write-back → on_turn_done. mermaid_sequence MUST call the model BEFORE tools "
-                "(never tools then model). "
+                "mermaid_sequence MUST follow THIS repo's call order "
+                "(never invent a pager / start_turn loop). "
                 "Do not set architecture_type to cli-tool; omit it or use pipeline. "
                 "citations MUST include symbol when the cited type/function is known. "
                 "Keep files to 1-3 load-bearing paths per component. "
                 "components.files and citations.path MUST be real paths from the tree. "
                 "description must explain the system as a call path, not list heaviest files. "
                 "Never write a method dump or homework worksheet. "
-                f"{_term_tips_rules(required=True)}\n\n"
+                "Never invent AgentLoop. "
+                f"{_tree_grounding_rules(file_tree, key_files)}"
+                + (
+                    " WHEN start_turn exists: live agent loop is pager dispatch → start_turn → "
+                    "TurnRunning → model → ToolBridge → write-back → on_turn_done; "
+                    "mermaid_sequence MUST call the model BEFORE tools. "
+                    if _tree_has_grok_product(file_tree, key_files)
+                    else " mermaid_sequence MUST call the model BEFORE tools when both exist. "
+                )
+                + f"{_term_tips_rules(required=True)}\n\n"
                 f"{_json_instruction(language)}"
             ),
         },

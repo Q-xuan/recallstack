@@ -5,9 +5,21 @@ from __future__ import annotations
 from recallstack.learning.concept_extractor import ConceptExtractor
 from recallstack.learning.learning_contract import suggested_ask_questions
 from recallstack.learning.path_builder import PathBuilder
-from recallstack.learning.wiki_generator import build_wiki_payload
+from recallstack.learning.wiki_generator import WIKI_GROUND_REVISION, build_wiki_payload
+from repowiki.core.cite_check import verify_wiki_data
 from repowiki.core.graph import DependencyGraph
-from repowiki.core.models import FileInfo, ProjectContext
+from repowiki.core.grounding import (
+    should_reuse_analyzed_wiki,
+    wiki_payload_cites_foreign_tree,
+)
+from repowiki.core.models import (
+    ArchitectureDiagram,
+    CodebasePart,
+    FileInfo,
+    ProjectContext,
+    ProjectOverview,
+    WikiData,
+)
 from repowiki.core.topics import build_deterministic_topics
 from repowiki.core.wiki_builder import collapse_repeated_mermaid_labels
 
@@ -179,6 +191,71 @@ def test_dsh_like_wiki_and_path_are_repo_grounded(monkeypatch):
     assert "xai-grok-pager" not in reasons
     assert "start_turn 之后谁调模型" not in reasons
     assert "connect 之后谁接手" not in reasons
+
+
+def test_dsh_like_polluted_llm_overview_is_rewritten_to_tree(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    project = _dsh_project()
+    graph = DependencyGraph.build_from_project(project)
+    polluted = WikiData(
+        overview=ProjectOverview(
+            name="deepseek-harness",
+            description="`xai-grok-pager` 负责进程启动，`xai-grok-agent` 驱动 agent 循环。",
+            runtime_flow="一轮从 Pager 进 start_turn。",
+            mermaid_component=(
+                "flowchart LR\n"
+                '  A["Pager"] --> B["start_turn"] --> C["Agent Loop"]\n'
+            ),
+            codebase_structure=[
+                CodebasePart(
+                    name="xai-grok-pager",
+                    location="packages/xai-grok-pager",
+                    purpose="进程启动",
+                )
+            ],
+        ),
+        architecture=ArchitectureDiagram(
+            architecture_type="plugin-system",
+            description="Pager → start_turn → Agent Loop",
+            mermaid_component='flowchart LR\n  A["Pager"] --> B["start_turn"]\n',
+        ),
+    )
+    cleaned = verify_wiki_data(polluted, project)
+    payload = build_wiki_payload(project, graph, [], wiki_data=cleaned)
+    text = _all_text(payload)
+    for marker in GROK_MARKERS:
+        assert marker.lower() not in text.lower(), marker
+    assert "packages/xai-grok-pager" not in text
+    assert "Pager → start_turn" not in text
+    assert payload.get("ground_revision") == WIKI_GROUND_REVISION
+    assert any(
+        token in text
+        for token in ("packages/core", "Cordis", "plugin", "Capability Seam")
+    )
+    questions = suggested_ask_questions(payload.get("pages") or [])
+    qblob = " ".join(questions)
+    assert "一轮里 start_turn 之后谁调模型" not in qblob
+    assert "Pager 把模型流式输出写进哪块缓冲区" not in qblob
+    assert questions
+    assert any(
+        token in qblob.lower()
+        for token in ("plugin", "cordis", "seam", "core", "fs", "llm", "dsh", "调用链")
+    )
+    texts = {f.path: f.content or "" for f in project.files}
+    assert not wiki_payload_cites_foreign_tree(payload, texts)
+    stale = {
+        "ground_revision": 0,
+        "pages": [
+            {
+                "id": "index",
+                "title": "概述",
+                "content": "`xai-grok-pager` 负责进程启动。Pager → start_turn。",
+            }
+        ],
+    }
+    assert wiki_payload_cites_foreign_tree(stale, texts)
+    assert not should_reuse_analyzed_wiki(stale, texts)
+    assert should_reuse_analyzed_wiki(payload, texts)
 
 
 def test_mermaid_does_not_keep_start_turn_self_loop():
