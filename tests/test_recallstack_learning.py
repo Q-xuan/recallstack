@@ -177,7 +177,7 @@ def test_learning_path_ordering():
     assert all(n.reason and "Ordered by prerequisites" not in n.reason for n in path.nodes)
     assert (
         "Walk the trunk" in path.description
-        or "You own the trunk" in path.description
+        or "The trunk is" in path.description
         or "进程怎么进" in path.description
     )
 
@@ -207,8 +207,9 @@ def test_learning_path_excludes_file_inventory_filler():
     assert "request-routing" not in slugs
     assert len(slugs) <= 10
     goal = next(n for n in path.nodes if n.concept_slug == "project-goal")
-    assert "你负责" in goal.reason or "You own" in goal.reason
-    assert "签字" in goal.reason or "sign off" in goal.reason.lower()
+    assert "对着证据" in goal.reason or "On the evidence" in goal.reason
+    assert "你负责" not in goal.reason
+    assert "签字" not in goal.reason
     assert "了解" not in goal.reason
 
 

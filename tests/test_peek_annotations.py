@@ -32,8 +32,10 @@ def test_prompt_refuses_syntax_narration():
     assert "不要语法叙述" in user
     assert '{"notes":[]}' in user
     assert "791|" in user
-    assert "先回到原理" in user
-    assert "过关" in user
+    assert "原理" in user
+    assert "核对" in user
+    assert "过关" not in user
+    assert "你负责" not in user
     assert "你" in ANNOTATE_SYSTEM
 
 

@@ -314,7 +314,8 @@ def test_path_out_uses_rev1_chips_without_store(monkeypatch):
     out = path_out(path)
     assert out.nodes[0].evidence_chip == "crates/tui/src/app.rs:791 start_turn"
     assert "`crates/tui/src/app.rs:791 start_turn`" in out.nodes[0].worksheet
-    assert "你签字" in out.nodes[0].pass_gate
+    assert "核对" in out.nodes[0].pass_gate
+    assert "你签字" not in out.nodes[0].pass_gate
 
 
 def test_cheap_upgrade_path_fills_contract_without_store(monkeypatch):
@@ -610,9 +611,9 @@ def test_materialize_deepens_watery_high_importance_concept(monkeypatch):
     out = materialize_wiki_payload(payload, [concept], store)
     page = next(p for p in out["pages"] if p["id"] == "concepts/agent-loop")
     assert out["serve_revision"] == WIKI_SERVE_REVISION
-    assert "## 实现要点" in page["content"]
-    assert "## 关键类型在链路上的职责" in page["content"]
-    assert "## 边界条件" in page["content"]
+    assert "## 实现" in page["content"]
+    assert "## 关键类型" in page["content"]
+    assert "## 边界" in page["content"]
     assert "`crates/codegen/xai-grok-pager/src/app/agent.rs:791 start_turn`" in page["content"]
     assert "README.md:1" not in page["content"]
 

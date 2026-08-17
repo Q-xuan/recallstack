@@ -8,12 +8,16 @@ from __future__ import annotations
 
 from recallstack.learning.i18n import content_lang, lang_instruction
 
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"
 
 CONCEPT_SYSTEM = """You generate learning concepts for a software codebase.
 Return ONLY valid JSON matching the schema.
 Every concept must cite real source_references from the provided files.
 Do not invent files or symbols.
+Handbook voice: state what a concept owns on the call path.
+Do not write lecture/worksheet stamps
+(You own / sign off / 你负责 / 并签字 / 过关 / 北极星 / 缺了它哪条能力会断).
+Keep identifiers English (ACP, PtyHandle, start_turn).
 {lang_instruction}"""
 
 CONCEPT_USER = """Repository: {repo_name}
@@ -54,6 +58,10 @@ JSON schema:
 ITEM_SYSTEM = """You create active learning questions grounded in real source code.
 Return ONLY valid JSON. Questions must not leak the full answer.
 Each item needs a rubric with 3-6 weighted required_points and source_references.
+Handbook-voiced active recall is fine; worksheet translationese is not.
+Do not write "You own this step", "sign off", "Restating the heading does not pass",
+「你负责」, 「并签字」, 「复述标题不算过关」, 「过关」.
+Keep identifiers English (ACP, PtyHandle, start_turn).
 {lang_instruction}"""
 
 ITEM_USER = """Concept: {title}
@@ -92,6 +100,7 @@ Return ONLY valid JSON. Prefer rubric coverage over wording similarity.
 Distinguish missing points from misconceptions.
 Feedback: first affirm what is correct, then one top improvement.
 Write feedback / suggested_revision / follow_up_question in the learner's content language.
+Do not write 「过关失败」 / 「复述标题不算过关」; say the check did not pass.
 {lang_instruction}"""
 
 EVAL_USER = """Question: {prompt}

@@ -82,14 +82,14 @@ def _usable_notes(notes: str) -> str:
 def _purpose(name: str, zh: bool) -> str:
     if name == ROOT_NAME:
         return (
-            "读完本页，你要能讲清仓库根上的 README/配置如何启动一次运行，而不是把根目录当清单。"
+            "仓库根上的 README/配置如何启动一次运行。根目录是证据，不是清单。"
             if zh
-            else "After this page you should be able to say how README/config at the repo root starts a run — not recite the root listing."
+            else "How README/config at the repo root starts a run. The root listing is evidence, not the page."
         )
     return (
-        f"读完本页，你要能不靠目录讲清 `{name}` 在一次调用里做什么、缺了它哪条能力会断。"
+        f"`{name}` 在一次调用里的职责，以及它和上下游怎么接。不按目录念。"
         if zh
-        else f"After this page you should be able to explain, without a file tree, what `{name}` does on one call and what breaks if it disappears."
+        else f"What `{name}` does on one call, and how it joins upstream and downstream — not a file tree."
     )
 
 
@@ -104,7 +104,7 @@ def _description(name: str, primary: FileInfo | None, zh: bool) -> str:
     if zh:
         return (
             f"`{name}` 被上游调进来，再把工作交给本页证据里的类型。"
-            f"一次真实路径从 {cite} 开始；如果这一层消失，调用方将无法把请求做到底。"
+            f"一次真实路径从 {cite} 开始。"
             "下面只跟这一条快乐路径，不把 crate 当目录念，也不给 struct 列方法。"
         )
     return (

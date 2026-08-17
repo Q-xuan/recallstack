@@ -949,7 +949,7 @@ def _schedule_path_annotation_prefetch(
     out: LearningPathOut,
     file_texts: dict[str, str],
 ) -> None:
-    """Warm the first 过关 chip so the first peek is instant. Never blocks GET."""
+    """Warm the first 核对 chip so the first peek is instant. Never blocks GET."""
     from recallstack.learning.code_loader import slice_lines
     from recallstack.learning.peek_annotations import (
         build_annotate_llm,

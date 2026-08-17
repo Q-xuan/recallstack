@@ -41,7 +41,7 @@ class Rubric(BaseModel):
 
 
 class ConceptTermTip(BaseModel):
-    """Repo-specific jargon on a learning concept page (术语小贴士)."""
+    """Repo-specific jargon on a learning concept page (术语)."""
 
     term: str
     tip: str = ""

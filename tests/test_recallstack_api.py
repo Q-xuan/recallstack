@@ -429,10 +429,9 @@ def test_learning_path_api_omits_filler_and_states_mission(client: TestClient, m
     assert path.status_code == 200, path.text
     body = path.json()
     assert (
-        "你要能指出进程怎么进" in body["description"]
-        or "先看进程怎么进" in body["description"]
+        "进程怎么进" in body["description"]
         or "Walk the trunk" in body["description"]
-        or "You own the trunk" in body["description"]
+        or "The trunk is" in body["description"]
     )
     slugs = [n["concept"]["slug"] for n in body["nodes"] if n.get("concept")]
     titles = [n["concept"]["title"] for n in body["nodes"] if n.get("concept")]
@@ -444,7 +443,9 @@ def test_learning_path_api_omits_filler_and_states_mission(client: TestClient, m
     )
     assert all(n.get("worksheet") for n in body["nodes"])
     worksheet = body["nodes"][0]["worksheet"]
-    assert "## 本步要你干什么" in worksheet or "## What this step asks of you" in worksheet
+    assert "## 这一步" in worksheet or "## This step" in worksheet
+    assert "## 本步要你干什么" not in worksheet
+    assert "你负责" not in worksheet
 
 
 def test_wiki_get_upgrades_legacy_concept_markdown(client: TestClient, monkeypatch):
@@ -496,7 +497,7 @@ def test_wiki_get_upgrades_legacy_concept_markdown(client: TestClient, monkeypat
     assert "`README.md:1-48`" in page["content"]
     assert "点击展开" not in page["content"]
     assert "## 过关" not in page["content"]
-    assert "## 它是什么" in page["content"]
+    assert "## 概述" in page["content"]
     assert "## 先回到原理" not in page["content"]
     assert "goal body" in page["content"]
 

@@ -221,14 +221,14 @@ class ConceptExtractor:
                     slug="project-goal",
                     title=t("Project goal", "项目目标"),
                     description=t(
-                        "Main files and dependency structure of the repository.",
-                        "仓库的主要文件与依赖结构。",
+                        f"{project.name}: who it is for, what it solves, and what it does not do.",
+                        f"{project.name}：给谁用、解决什么、明确不做什么。",
                     ),
                     difficulty=1,
                     importance=1.0,
                     why_learn=t(
-                        "Establish a basic map of how the repository is organized.",
-                        "建立对仓库文件组织的基本认识。",
+                        "State the goal before reading any system page.",
+                        "先讲清目标，再读各个系统页。",
                     ),
                     source_references=self._refs(top, files_by_path, commit_sha),
                     wiki_page_id="index",
@@ -309,8 +309,8 @@ class ConceptExtractor:
 
     def _project_goal_desc(self, project: ProjectContext, readme: str | None) -> str:
         fallback = t(
-            f"{project.name}: goals, capability boundaries, and primary usage.",
-            f"{project.name} 代码仓库的目标、能力边界与主要使用方式。",
+            f"{project.name}: who it is for, what it solves, and what it does not do.",
+            f"{project.name}：给谁用、解决什么、明确不做什么。",
         )
         if not readme:
             return fallback

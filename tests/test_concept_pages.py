@@ -118,15 +118,15 @@ def test_concept_page_handbook_not_template_dump(monkeypatch):
     assert "<picture" not in content
     assert "srcset" not in content
     headings = [line for line in content.splitlines() if line.startswith("## ")]
-    assert headings[0] == "## 它是什么"
+    assert headings[0] == "## 概述"
     assert "## 本步要你干什么" not in content
     assert "## 过关" not in content
     assert "## 先回到原理" not in content
     assert "## 只看这一处证据" not in content
-    assert "## 它是什么" in content
-    assert "## 它在系统里的位置" in content
+    assert "## 概述" in content
+    assert "## 架构" in content
     assert "## 不是什么" in content
-    assert "## 术语小贴士" in content
+    assert "## 术语" in content
     assert "## 这份仓库做什么" not in content
     assert "## 自测" not in content
     assert "## 源码证据" not in content
@@ -157,9 +157,9 @@ def test_non_goal_concept_uses_first_principles_heading(monkeypatch):
     assert "## 本步要你干什么" not in page.content
     assert "## 过关" not in page.content
     assert "## 先回到原理" not in page.content
-    assert "## 它是什么" in page.content
-    assert "## 它在系统里的位置" in page.content
-    assert "## 一次调用怎么走" in page.content
+    assert "## 概述" in page.content
+    assert "## 架构" in page.content
+    assert "## 调用链" in page.content
     assert "## 职责与边界" not in page.content
     assert "## 这份仓库做什么" not in page.content
     assert "为什么重要" not in page.content
@@ -214,22 +214,23 @@ grok-study 是本地研究工作台。
     assert "## 先回到原理" not in upgraded
     assert "## 只看这一处证据" not in upgraded
     assert "为什么重要" not in upgraded
-    assert "## 它是什么" in upgraded
+    assert "## 概述" in upgraded
     assert "grok-study 是本地研究工作台。" in upgraded
-    assert "## 它在系统里的位置" in upgraded
+    assert "## 架构" in upgraded
     assert "`README.md:1-48`" in upgraded
     assert "点击展开" not in upgraded
     assert "先点开证据" not in upgraded
     assert "#practice" not in upgraded
     assert "**难度**" not in upgraded
-    assert "这篇说明这个仓库解决什么问题" in upgraded
+    assert "这个仓库解决什么问题" in upgraded
     # Path UI still has the task; wiki GET must not re-insert it.
-    assert "你负责" in step_task_for_slug("project-goal", "项目目标")
-    assert "签字" in step_task_for_slug("project-goal", "项目目标")
+    assert "对着证据" in step_task_for_slug("project-goal", "项目目标")
+    assert "你负责" not in step_task_for_slug("project-goal", "项目目标")
+    assert "签字" not in step_task_for_slug("project-goal", "项目目标")
     assert "了解" not in step_task_for_slug("project-goal", "项目目标")
     again = upgrade_legacy_concept_markdown(upgraded, slug="project-goal", title="项目目标")
     assert again == upgraded
-    assert again.count("## 它是什么") == 1
+    assert again.count("## 概述") == 1
     assert again.count("相关源码") == 1
 
 
@@ -261,7 +262,7 @@ grok-study 是本地研究工作台。
     assert "## 本步要你干什么" not in upgraded
     assert "用两句话写出这个仓库为谁" not in upgraded
     assert "为什么重要" not in upgraded
-    assert "## 它是什么" in upgraded
+    assert "## 概述" in upgraded
     assert "grok-study 是本地研究工作台。" in upgraded
     assert "## 先回到原理" not in upgraded
     assert "## 只看这一处证据" not in upgraded
@@ -287,7 +288,7 @@ def test_high_importance_concept_page_is_not_watery_stub(monkeypatch):
     draft = ConceptDraft(
         slug="agent-loop",
         title="Agent Loop",
-        description="「Agent Loop」在一次真实调用里做什么、缺了它哪条能力会断。",
+        description="Agent Loop 接住一轮对话，按名执行 tool call。",
         importance=0.9,
         wiki_page_id="topics/agent-loop",
         source_references=[
@@ -302,12 +303,12 @@ def test_high_importance_concept_page_is_not_watery_stub(monkeypatch):
     )
     assert page is not None
     content = page.content
-    assert "## 实现要点" in content
-    assert "## 关键类型在链路上的职责" in content
-    assert "## 边界条件" in content
+    assert "## 实现" in content
+    assert "## 关键类型" in content
+    assert "## 边界" in content
     assert "`crates/codegen/xai-grok-pager/src/app/agent.rs:791 start_turn`" in content
     assert "README.md:1" not in content
-    assert content.count("缺了它哪条能力会断") <= 1
+    assert "缺了它哪条能力会断" not in content
     assert "start_turn" in content
     assert "pub fn start_turn" in content
 
@@ -330,8 +331,8 @@ def test_shallow_leaf_concept_stays_short(monkeypatch):
         "concepts/headless-modes"
     )
     assert page is not None
-    assert "## 实现要点" not in page.content
-    assert "## 边界条件" not in page.content
+    assert "## 实现" not in page.content
+    assert "## 边界" not in page.content
 
 
 def test_concept_enrich_prompt_asks_for_three_handbook_sections():
@@ -384,7 +385,7 @@ def test_deepen_drops_invented_llm_paths(monkeypatch):
     filled = deepen_concept_markdown(shallow, draft, _loop_store())
     assert "ghost/nope.rs" not in filled
     assert "`crates/codegen/xai-grok-pager/src/app/agent.rs:791 start_turn`" in filled
-    assert "## 实现要点" in filled
+    assert "## 实现" in filled
 
 
 def test_source_ref_re_matches_readme_span():

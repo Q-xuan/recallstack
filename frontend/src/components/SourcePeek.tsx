@@ -6,7 +6,7 @@ interface Props {
   repositoryId?: string;
   reference: string;
   onClose: () => void;
-  /** Learning-path slug so 过关 / 先回到原理 can ground the overlay notes. */
+  /** Learning-path slug so 核对 / 原理 can ground the overlay notes. */
   slug?: string;
 }
 

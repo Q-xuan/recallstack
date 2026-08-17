@@ -139,17 +139,17 @@ def test_module_page_renders_deep_sections_when_present():
     )
     wiki = WikiBuilder().build(project, data, graph)
     content = wiki.get_page("modules/app").content
-    assert "## How it actually runs" in content
+    assert "## Implementation" in content
     assert "main() returns 1." in content
-    assert "## How a call runs" in content
+    assert "## Call path" in content
     assert "### boot" in content
-    assert "## Failures and edges" in content
+    assert "## Boundaries" in content
     assert "## Source Evidence" in content
     assert "`app/main.py:1 main`" in content
     assert " — `main`" not in content
-    assert content.index("## How a call runs") < content.index("## Related source")
-    assert content.index("## How a call runs") < content.index("## How it actually runs")
-    assert "## Implementation" not in content
+    assert content.index("## Call path") < content.index("## Related source")
+    assert content.index("## Call path") < content.index("## Implementation")
+    assert "## How it actually runs" not in content
     assert "## Key Call Chains" not in content
     assert "`spawn` (function)" not in content
 
@@ -315,7 +315,7 @@ def test_zh_headings_term_tips_and_unchanged_paths():
     )
     wiki = WikiBuilder().build(project, data, graph, language="zh")
     overview = wiki.get_page("index").content
-    assert "## 术语小贴士" in overview
+    assert "## 术语" in overview
     assert "**PageRank**" in overview
     assert "## Tech Stack" not in overview
 
@@ -324,7 +324,7 @@ def test_zh_headings_term_tips_and_unchanged_paths():
     assert "codebase-modules" in arch
     assert "## 链路里的角色" in arch
     assert "crates/lib.py" in arch
-    assert "## 术语小贴士" in arch
+    assert "## 术语" in arch
     assert "**Type:**" not in arch
     assert "## Components" not in arch
     assert "## 组成" not in arch
@@ -334,19 +334,19 @@ def test_zh_headings_term_tips_and_unchanged_paths():
     assert page.title == "crates"
     content = page.content
     assert content.startswith("# crates")
-    assert "## 一次调用怎么走" in content
-    assert "## 这条链路怎么转" in content
-    assert "## 失败与边界" in content
+    assert "## 调用链" in content
+    assert "## 实现" in content
+    assert "## 边界" in content
     assert "## 相关源码" in content
     assert "## 源码证据" in content
-    assert "## 术语小贴士" in content
+    assert "## 术语" in content
     assert "**ACP**" in content
     assert "## 实现细节" not in content
     assert "## 关键调用链" not in content
     assert "## Implementation" not in content
     assert "## Key Call Chains" not in content
-    assert content.index("## 一次调用怎么走") < content.index("## 相关源码")
-    assert content.index("## 一次调用怎么走") < content.index("## 这条链路怎么转")
+    assert content.index("## 调用链") < content.index("## 相关源码")
+    assert content.index("## 调用链") < content.index("## 实现")
 
     crates = next(
         c
@@ -429,9 +429,9 @@ def test_module_page_skips_javadoc_symbol_dump_and_puts_flow_first():
     assert "`spawn` (function)" not in content
     assert "`resize` (function)" not in content
     assert "`is_alive` (function)" not in content
-    assert "## How a call runs" in content
+    assert "## Call path" in content
     assert "## Related source" in content
-    assert content.index("## How a call runs") < content.index("## Related source")
+    assert content.index("## Call path") < content.index("## Related source")
     assert "flowchart TD" in content
     assert "```mermaid" in content
 
@@ -465,10 +465,10 @@ The entry point is lib.rs. Submodules are keys, pty, server.
     upgraded = upgrade_legacy_module_markdown(old, language="zh")
     assert "`spawn` (function)" not in upgraded
     assert "`resize` (function)" not in upgraded
-    assert "## 一次调用怎么走" in upgraded
+    assert "## 调用链" in upgraded
     assert "## 相关源码" in upgraded
     assert "## 关键调用链" not in upgraded
-    assert upgraded.index("## 一次调用怎么走") < upgraded.index("## 相关源码")
+    assert upgraded.index("## 调用链") < upgraded.index("## 相关源码")
     assert "The entry point is lib.rs" not in upgraded
     assert "Submodules are" not in upgraded
 
@@ -489,9 +489,9 @@ def test_fallback_module_markdown_is_handbook_not_inventory(monkeypatch):
     page = wiki.get_page("modules/app")
     assert page is not None
     content = page.content
-    assert "## 一次调用怎么走" in content
+    assert "## 调用链" in content
     assert "## 相关源码" in content
-    assert content.index("## 一次调用怎么走") < content.index("## 相关源码")
+    assert content.index("## 调用链") < content.index("## 相关源码")
     assert "`spawn` (function)" not in content
     assert "入口文件" not in content
     assert "源码文件" not in content
@@ -526,8 +526,8 @@ def test_overview_is_deepwiki_handbook_not_stack_dump():
     )
     wiki = WikiBuilder().build(project, data, graph, language="zh")
     overview = wiki.get_page("index").content
-    assert "这篇文档讲" in overview
-    assert "## 它是什么" in overview
+    assert "解决什么问题" in overview
+    assert "## 概述" in overview
     assert "## 系统架构" in overview
     assert "架构见图" in overview
     assert "[架构概览](architecture)" in overview
@@ -535,7 +535,7 @@ def test_overview_is_deepwiki_handbook_not_stack_dump():
     assert "Python" in overview
     assert "- **Python**" not in overview
     assert "`app/main.py:1`" in overview
-    assert overview.index("相关源码") < overview.index("## 它是什么")
+    assert overview.index("相关源码") < overview.index("## 概述")
     assert overview.index("```mermaid") < overview.index("架构见图")
 
     arch = wiki.get_page("architecture").content
@@ -612,7 +612,7 @@ def test_structured_overview_renders_deepwiki_sections_without_key_features():
     )
     wiki = WikiBuilder().build(project, data, graph, language="zh")
     overview = wiki.get_page("index").content
-    assert "## 它是什么" in overview
+    assert "## 概述" in overview
     assert "## 系统架构" in overview
     assert "## 代码如何拆分" in overview
     assert "## 核心子系统" in overview
@@ -627,14 +627,14 @@ def test_structured_overview_renders_deepwiki_sections_without_key_features():
     assert "## 主要能力" not in overview
     assert "key_features" not in overview
     assert "本步要你干什么" not in overview
-    assert overview.index("相关源码") < overview.index("## 它是什么")
-    assert overview.index("## 它是什么") < overview.index("## 系统架构")
+    assert overview.index("相关源码") < overview.index("## 概述")
+    assert overview.index("## 概述") < overview.index("## 系统架构")
     assert overview.index("```mermaid") < overview.index("用户输入进")
     assert overview.index("## 系统架构") < overview.index("## 代码如何拆分")
     assert overview.index("## 代码如何拆分") < overview.index("## 核心子系统")
 
     topic = wiki.get_page("topics/agent-loop").content
-    assert "## 它是什么" in topic
+    assert "## 概述" in topic
     assert "`Session`" in topic
     assert "```mermaid" in topic
     assert "本步要你干什么" not in topic
@@ -849,7 +849,8 @@ def test_builder_strips_unknown_topic_links_and_pathless_key_types():
     assert "`Session`" in overview
     assert "crates/agent/src/loop.rs" in overview
     assert "您" not in overview
-    assert "读完你应能" in overview or "读完应能" in overview
+    assert "读完你应能" not in overview
+    assert "读完应能" not in overview
 
 
 def test_filter_unknown_wiki_links_keeps_planned_ids():

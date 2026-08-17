@@ -279,8 +279,8 @@ def _apply_contract_gate(
         score = min(score, 0.32)
         feedback_parts.append(
             t(
-                f"Gate failed: name `{symbol}` from the evidence chip. Restating the heading does not pass.",
-                f"过关失败：必须点名证据上的 `{symbol}`。复述标题不算过关。",
+                f"Check failed: name `{symbol}` from the evidence chip. Restating the heading is not enough.",
+                f"核对未通过：必须点名证据上的 `{symbol}`。只复述标题不够。",
             )
         )
         suggested = t(
@@ -294,8 +294,8 @@ def _apply_contract_gate(
         hint = " / ".join(tokens[:3]) if tokens else t("the failure path", "失败路径")
         feedback_parts.append(
             t(
-                f"Gate failed: name the failure path ({hint}).",
-                f"过关失败：必须写出失败路径（{hint}）。",
+                f"Check failed: name the failure path ({hint}).",
+                f"核对未通过：必须写出失败路径（{hint}）。",
             )
         )
         if not suggested:

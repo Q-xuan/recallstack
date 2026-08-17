@@ -25,7 +25,7 @@ _STRUCTURAL_TITLES: dict[str, dict[str, str]] = {
     "dependencies": {"en": "Dependencies", "zh": "依赖", "ja": "依存関係", "ko": "의존성"},
     "root": {"en": "Root", "zh": "根目录", "ja": "ルート", "ko": "루트"},
     "concepts": {"en": "Concepts", "zh": "词条", "ja": "用語", "ko": "개념"},
-    "what-is": {"en": "What it is", "zh": "它是什么", "ja": "これは何か", "ko": "이것이 무엇인가"},
+    "what-is": {"en": "Overview", "zh": "概述", "ja": "概要", "ko": "개요"},
     "system-architecture": {"en": "System architecture", "zh": "系统架构", "ja": "システム構成", "ko": "시스템 아키텍처"},
     "codebase-split": {"en": "How the code is split", "zh": "代码如何拆分", "ja": "コードの分割", "ko": "코드가 나뉘는 방식"},
     "core-subsystems": {"en": "Core subsystems", "zh": "核心子系统", "ja": "中核サブシステム", "ko": "핵심 서브시스템"},
@@ -44,15 +44,15 @@ _STRUCTURAL_TITLES: dict[str, dict[str, str]] = {
     "files": {"en": "Files", "zh": "文件", "ja": "ファイル", "ko": "파일"},
     "related-source": {"en": "Related source", "zh": "相关源码", "ja": "関連ソース", "ko": "관련 소스"},
     "key-concepts": {"en": "Key Concepts", "zh": "关键概念", "ja": "重要概念", "ko": "핵심 개념"},
-    "implementation": {"en": "Implementation", "zh": "实现细节", "ja": "実装", "ko": "구현"},
-    "how-it-runs": {"en": "How it actually runs", "zh": "这条链路怎么转", "ja": "実際の動き", "ko": "실제 동작"},
-    "call-chains": {"en": "Key Call Chains", "zh": "关键调用链", "ja": "主要な呼び出し", "ko": "주요 호출 체인"},
-    "how-a-call-runs": {"en": "How a call runs", "zh": "一次调用怎么走", "ja": "呼び出しの流れ", "ko": "호출이 흐르는 방식"},
-    "edge-cases": {"en": "Edge Cases", "zh": "边界条件", "ja": "エッジケース", "ko": "예외 상황"},
-    "failures": {"en": "Failures and edges", "zh": "失败与边界", "ja": "失敗と境界", "ko": "실패와 경계"},
+    "implementation": {"en": "Implementation", "zh": "实现", "ja": "実装", "ko": "구현"},
+    "how-it-runs": {"en": "Implementation", "zh": "实现", "ja": "実装", "ko": "구현"},
+    "call-chains": {"en": "Call path", "zh": "调用链", "ja": "呼び出し", "ko": "호출 체인"},
+    "how-a-call-runs": {"en": "Call path", "zh": "调用链", "ja": "呼び出し", "ko": "호출 체인"},
+    "edge-cases": {"en": "Boundaries", "zh": "边界", "ja": "境界", "ko": "경계"},
+    "failures": {"en": "Boundaries", "zh": "边界", "ja": "境界", "ko": "경계"},
     "source-evidence": {"en": "Source Evidence", "zh": "源码证据", "ja": "ソース根拠", "ko": "소스 근거"},
     "relationships": {"en": "Internal Relationships", "zh": "内部关系", "ja": "内部関係", "ko": "내부 관계"},
-    "term-tips": {"en": "Term tips", "zh": "术语小贴士", "ja": "用語メモ", "ko": "용어 팁"},
+    "term-tips": {"en": "Terms", "zh": "术语", "ja": "用語", "ko": "용어"},
     "tips": {"en": "Tips", "zh": "提示", "ja": "ヒント", "ko": "팁"},
     "step": {"en": "Step", "zh": "步骤", "ja": "ステップ", "ko": "단계"},
     "core-files": {"en": "Core Files (by PageRank)", "zh": "核心文件（按 PageRank）", "ja": "中核ファイル（PageRank）", "ko": "핵심 파일 (PageRank)"},
@@ -330,13 +330,12 @@ class WikiBuilder:
         lines = [f"# {title}\n"]
         if language == "zh":
             lines.append(
-                "> 这篇按 README 和仓库根上的启动说明，讲怎么把项目跑起来。"
-                "读完应能本地跑通，再进架构和 Agent Loop。\n"
+                "> 按 README 和仓库根上的启动说明把项目跑起来，再进架构和 Agent Loop。\n"
             )
         else:
             lines.append(
-                "> This page follows the README and root setup notes so you can run the project. "
-                "After that, read architecture and the Agent Loop.\n"
+                "> Follow the README and root setup notes to run the project, "
+                "then read architecture and the Agent Loop.\n"
             )
         one = (getattr(overview, "one_liner", "") or "").strip()
         if one:
@@ -401,7 +400,7 @@ class WikiBuilder:
             }:
                 kind = f"（{arch.architecture_type}）"
             lines.append(
-                f"> 这篇文档讲系统怎么串起来{kind}。读完应能顺着一次调用指出各部分在链路上的职责。\n"
+                f"> 系统按一次真实调用串起来{kind}。各部分按链路上的角色说明，不按目录。\n"
             )
         else:
             kind = ""
@@ -411,8 +410,8 @@ class WikiBuilder:
             }:
                 kind = f" ({arch.architecture_type})"
             lines.append(
-                f"> This document explains how the system is wired{kind}. "
-                "After reading you should be able to name each part as a role on one call path.\n"
+                f"> The system is wired along one real call{kind}. "
+                "Parts are described as roles on that path, not as a folder tree.\n"
             )
 
         lines.extend(
@@ -945,12 +944,63 @@ def filter_unknown_wiki_links(text: str, known_ids: set[str]) -> str:
     return text.replace(_DROP, "")
 
 
+_LECTURE_CLAUSE_RE = re.compile(
+    r"(?:阅读之后?[，,]?\s*[您你]?应?该?能|读完本页[，,]?你要能|读完[，,]?\s*[您你]?应?该?能)[^。\n]*。?"
+)
+_AFTER_READING_RE = re.compile(
+    r"After (?:reading|this page) you should(?: be able to)? [^.?\n]+[.?]?",
+    re.I,
+)
+_DOC_COVERS_PREFIX_RE = re.compile(r"这篇文档讲\s*")
+_HANDBOOK_HEADING_REMAP = {
+    "它是什么": "概述",
+    "What it is": "Overview",
+    "What is this": "Overview",
+    "它在系统里的位置": "架构",
+    "Where it sits": "Architecture",
+    "一次调用怎么走": "调用链",
+    "How a call runs": "Call path",
+    "关键调用链": "调用链",
+    "Key Call Chains": "Call path",
+    "术语小贴士": "术语",
+    "Term tips": "Terms",
+    "关键类型在链路上的职责": "关键类型",
+    "Key types and their roles": "Key types",
+    "边界条件": "边界",
+    "Boundary conditions": "Boundaries",
+    "失败与边界": "边界",
+    "Failures and edges": "Boundaries",
+    "Edge Cases": "Boundaries",
+    "这条链路怎么转": "实现",
+    "How it actually runs": "Implementation",
+    "实现要点": "实现",
+    "Implementation details": "Implementation",
+    "实现细节": "实现",
+}
+
+
+def upgrade_handbook_section_headings(content: str) -> str:
+    """Map leftover workbook headings to handbook names (概述 / 架构 / 关键类型 / 边界)."""
+    if not content or "## " not in content:
+        return content
+
+    def repl(match: re.Match[str]) -> str:
+        title = match.group(1).strip()
+        mapped = _HANDBOOK_HEADING_REMAP.get(title)
+        return f"## {mapped}" if mapped else match.group(0)
+
+    return re.sub(r"(?m)^## (.+?)\s*$", repl, content)
+
+
 def upgrade_zh_handbook_voice(content: str) -> str:
-    """阅读后，您应能… → 读完应能; strip leftover 您."""
+    """Strip lecture clauses; keep 你 not 您. Do not rewrite into 读完应能."""
     if not content:
         return content
-    content = re.sub(r"阅读后[，,]?\s*[您你]应能", "读完应能", content)
-    content = re.sub(r"阅读之后[，,]?\s*[您你]应能", "读完应能", content)
+    content = _LECTURE_CLAUSE_RE.sub("", content)
+    content = _AFTER_READING_RE.sub("", content)
+    content = _DOC_COVERS_PREFIX_RE.sub("", content)
+    content = re.sub(r"[ \t]{2,}", " ", content)
+    content = re.sub(r"。{2,}", "。", content)
     return content.replace("您", "你")
 
 
@@ -1004,8 +1054,9 @@ def upgrade_wiki_page_content(
     content = strip_reading_wiki_homework(content, page_id=page_id)
     content = upgrade_architecture_loop_wording(content)
     content = filter_unknown_wiki_links(content, known_ids)
-    if language == "zh" or "您" in content or "阅读后" in content:
+    if language == "zh" or "您" in content or "阅读后" in content or "读完" in content:
         content = upgrade_zh_handbook_voice(content)
+    content = upgrade_handbook_section_headings(content)
     content = strip_pathless_type_bullets(content)
     content = upgrade_codegraph_heading(content)
     if page_id == "getting-started":
@@ -1664,14 +1715,14 @@ def _overview_lede(name: str, one_liner: str, language: str) -> str:
     if language == "zh":
         extra = f"（{one_liner.rstrip('。')}）" if one_liner else ""
         return (
-            f"这篇文档讲 {name} 是什么、给谁用、主要能力落在哪{extra}。"
-            "读完你应能不靠目录讲清目标与边界。"
+            f"{name} 解决什么问题、给谁用，以及主要能力落在哪{extra}。"
+            "目标与边界以 README 和入口为准，不以目录名为准。"
         )
     extra = f" {one_liner}" if one_liner else ""
     return (
-        f"This document explains what {name} is, who it is for, and where the "
-        f"main capabilities sit.{extra} After reading you should be able to "
-        "state the goal without leaning on the folder tree."
+        f"{name} states what problem it solves, who it is for, and where the "
+        f"main capabilities sit.{extra} The goal lives in the README and "
+        "entrypoints, not the folder tree."
     )
 
 
@@ -1765,10 +1816,32 @@ _SYMBOL_DUMP_RE = re.compile(
 )
 _MERMAID_LABEL_RE = re.compile(r'[\[\]{}"#\n]')
 _MODULE_SECTION_ALIASES: dict[str, tuple[str, ...]] = {
-    "term-tips": ("术语小贴士", "Term tips"),
-    "how-a-call-runs": ("一次调用怎么走", "How a call runs", "关键调用链", "Key Call Chains"),
-    "how-it-runs": ("这条链路怎么转", "How it actually runs", "实现细节", "Implementation"),
-    "failures": ("失败与边界", "Failures and edges", "边界条件", "Edge Cases"),
+    "term-tips": ("术语", "术语小贴士", "Terms", "Term tips"),
+    "how-a-call-runs": (
+        "调用链",
+        "一次调用怎么走",
+        "Call path",
+        "How a call runs",
+        "关键调用链",
+        "Key Call Chains",
+    ),
+    "how-it-runs": (
+        "实现",
+        "这条链路怎么转",
+        "How it actually runs",
+        "实现细节",
+        "实现要点",
+        "Implementation",
+        "Implementation details",
+    ),
+    "failures": (
+        "边界",
+        "失败与边界",
+        "Boundaries",
+        "Failures and edges",
+        "边界条件",
+        "Edge Cases",
+    ),
     "dependencies": ("依赖", "Dependencies"),
     "related-source": ("相关源码", "Related source", "文件", "Files"),
     "key-concepts": ("关键概念", "Key Concepts"),
@@ -1776,9 +1849,9 @@ _MODULE_SECTION_ALIASES: dict[str, tuple[str, ...]] = {
     "source-evidence": ("源码证据", "Source Evidence"),
 }
 _MODULE_SECTION_CANON = {
-    "how-a-call-runs": {"zh": "一次调用怎么走", "en": "How a call runs"},
-    "how-it-runs": {"zh": "这条链路怎么转", "en": "How it actually runs"},
-    "failures": {"zh": "失败与边界", "en": "Failures and edges"},
+    "how-a-call-runs": {"zh": "调用链", "en": "Call path"},
+    "how-it-runs": {"zh": "实现", "en": "Implementation"},
+    "failures": {"zh": "边界", "en": "Boundaries"},
     "related-source": {"zh": "相关源码", "en": "Related source"},
 }
 _MODULE_SECTION_ORDER = (

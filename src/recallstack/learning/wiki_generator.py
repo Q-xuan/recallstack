@@ -148,10 +148,10 @@ def build_deterministic_wiki_data(
             f"{project.name}：一次真实调用里这个仓库怎么串起来",
         ),
         document_scope=t(
-            f"This page covers what {project.name} is, how one real call runs, "
-            "and how the repo is split. After reading you should name the types on that path.",
-            f"这篇文档讲 {project.name} 是什么、一次真实调用怎么走、仓库怎么拆。"
-            "读完应能不靠目录讲清目标与边界，并指出链路上的关键类型。",
+            f"{project.name}: the goal, who a real call passes through, and how the repo is split. "
+            "Key types stay English identifiers; evidence is `path:line Symbol` next to the claim.",
+            f"{project.name} 的目标、一次真实调用经过谁、仓库怎么拆。"
+            "关键类型保持英文 identifier，证据用 `path:line Symbol` 贴在断言旁边。",
         ),
         description=description
         or t(
@@ -458,12 +458,12 @@ def _type_role_lines(prose: str, concept: ConceptDraft) -> list[str]:
             names.append(symbol)
     if not names:
         return []
-    lines = [t("## Key types and their roles\n", "## 关键类型在链路上的职责\n")]
+    lines = [t("## Key types\n", "## 关键类型\n")]
     for name in names[:8]:
         lines.append(
             t(
-                f"- **`{name}`** — a role on the path described above",
-                f"- **`{name}`** — 出现在上文链路中的角色",
+                f"- **`{name}`** — on the call path above",
+                f"- **`{name}`** — 出现在上文调用链中",
             )
         )
     lines.append("")
@@ -487,7 +487,7 @@ def _fold_overview_architecture(wiki: Wiki, concept: ConceptDraft) -> str:
 def _append_term_tips_md(lines: list[str], tips: list[TermTip]) -> None:
     if not tips:
         return
-    lines.append(t("## Term tips\n", "## 术语小贴士\n"))
+    lines.append(t("## Terms\n", "## 术语\n"))
     for tip in tips:
         if tip.tip:
             lines.append(f"> **{tip.term}** — {tip.tip}")
@@ -540,14 +540,14 @@ def append_concept_pages(
         if chip_line:
             lines.append(f"{chip_line}\n")
 
-        lines.append(t("## What it is\n", "## 它是什么\n"))
+        lines.append(t("## Overview\n", "## 概述\n"))
         lines.append(f"{what}\n")
 
-        lines.append(t("## Where it sits\n", "## 它在系统里的位置\n"))
+        lines.append(t("## Architecture\n", "## 架构\n"))
         lines.append(f"{_position_body(c, wiki)}\n")
 
         if flow:
-            lines.append(t("## How a call runs\n", "## 一次调用怎么走\n"))
+            lines.append(t("## Call path\n", "## 调用链\n"))
             if c.source_references:
                 lines.append(f"{flow} `{_format_ref(c.source_references[0])}`\n")
             else:
@@ -786,6 +786,9 @@ def _concept_enrich_messages(
                 "You write a short DeepWiki handbook entry for one concept in a codebase wiki. "
                 "Be specific to THIS repository. No HTML. No file inventory. "
                 "No homework headings (what this step asks, pass check, first principles worksheet). "
+                "Handbook Chinese: state facts; keep identifiers English; "
+                "never write 读完应能 / After reading you should / "
+                "你负责 / 并签字 / 过关 / 北极星 / 缺了它哪条能力会断. "
                 f"{_lang_instruction(language)}"
             ),
         },

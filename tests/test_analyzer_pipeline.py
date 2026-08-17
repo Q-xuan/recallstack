@@ -301,13 +301,13 @@ def test_write_path_with_scripted_llm_and_cite_check(tmp_path):
 
     graph = DependencyGraph.build_from_project(project)
     page = WikiBuilder().build(project, wiki, graph).get_page("modules/app")
-    assert "## How a call runs" in page.content
-    assert "## How it actually runs" in page.content
-    assert "## Failures and edges" in page.content
+    assert "## Call path" in page.content
+    assert "## Implementation" in page.content
+    assert "## Boundaries" in page.content
     assert "## Source Evidence" in page.content
-    assert "## Implementation" not in page.content
+    assert "## How it actually runs" not in page.content
     assert "## Key Call Chains" not in page.content
-    assert page.content.index("## How a call runs") < page.content.index("## Related source")
+    assert page.content.index("## Call path") < page.content.index("## Related source")
     assert "`spawn` (function)" not in page.content
     assert "does/not/exist.py" not in page.content
     assert "totally/fake.py" not in page.content
@@ -334,7 +334,7 @@ def test_zh_no_llm_fallback_is_handbook_not_inventory(tmp_path):
     assert "**类型:**" not in arch
     assert "**Type:**" not in arch
     assert "codebase-modules" in arch
-    assert "## 链路里的角色" in arch or "这篇文档讲" in arch
+    assert "## 链路里的角色" in arch or "系统按一次真实调用串起来" in arch
     assert "PageRank" not in arch or "Heaviest modules by PageRank" not in arch
     assert "Heaviest modules by PageRank" not in arch
     for page in pages.pages:

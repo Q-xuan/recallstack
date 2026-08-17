@@ -126,7 +126,7 @@ def test_grok_default_sidebar_is_conceptual_not_crate_tree():
 
     overview = next(p for p in payload["pages"] if p["id"] == "index")
     content = overview["content"]
-    assert "## 它是什么" in content or "## What it is" in content
+    assert "## 概述" in content or "## Overview" in content
     assert "## 系统架构" in content or "## System architecture" in content
     assert "## 代码如何拆分" in content or "## How the code is split" in content
     assert "## 核心子系统" in content or "## Core subsystems" in content
@@ -579,7 +579,7 @@ def test_wiki_out_drops_thin_generic_web_topics_and_dead_links(monkeypatch):
     assert "[pty-control](topics/tui-pager)" in index.content
     assert "[code-graph](topics/codebase-graph)" in index.content
     assert "您" not in index.content
-    assert "读完应能" in index.content
+    assert "读完应能" not in index.content
     loop = next(p for p in out.pages if p.id == "topics/agent-loop")
     assert "`crates/agent/src/loop.rs:40 Session`" in loop.content
     assert " — `Session`" not in loop.content

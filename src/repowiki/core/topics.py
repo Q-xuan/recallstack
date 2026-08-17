@@ -931,8 +931,8 @@ def _purpose_for(title: str, zh: bool, topic_id: str = "") -> str:
             return "用户怎么把 grok 跑起来：二进制、pager、ACP server start。"
         return "How the user starts grok: binary, pager, ACP server start."
     if zh:
-        return f"「{title}」在一次真实调用里做什么、缺了它哪条能力会断。"
-    return f"What `{title}` does on one real call, and what breaks if it disappears."
+        return f"{title} 在调用链上接住哪一段，以及和上下游怎么接。"
+    return f"What `{title}` owns on the call path, and how it joins upstream and downstream."
 
 
 def codebase_structure_for(
