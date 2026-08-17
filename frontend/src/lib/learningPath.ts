@@ -42,18 +42,23 @@ const PATH_RANK: Record<string, number> = {
   "project-goal": 0,
   "entry-and-boot": 1,
   "application-entry": 2,
-  "agent-loop": 3,
-  "call-flow": 4,
-  "runtime-loop": 5,
-  "tool-system": 6,
-  "session-lifecycle": 7,
-  "agent-runtime": 8,
-  "acp-protocol": 9,
-  "context-assembly": 10,
-  "terminal-ui": 11,
-  "tui-pager": 12,
-  "conversation-store": 13,
-  "system-prompt": 14,
+  "capability-seam": 3,
+  "plugin-architecture": 4,
+  "core-architecture": 5,
+  "cordis": 6,
+  "core": 7,
+  "agent-loop": 8,
+  "call-flow": 9,
+  "runtime-loop": 10,
+  "tool-system": 11,
+  "session-lifecycle": 12,
+  "agent-runtime": 13,
+  "acp-protocol": 14,
+  "context-assembly": 15,
+  "terminal-ui": 16,
+  "tui-pager": 17,
+  "conversation-store": 18,
+  "system-prompt": 19,
 };
 
 const FILLER_TITLE = /^(Module:|模块[:：]|Key file:|关键文件[:：]|Focus:|聚焦[:：])/i;
@@ -61,18 +66,18 @@ const FILLER_SLUG = /^(module-|file-|focus-)/;
 const FILLER_NAME = /(README\.md|Cargo\.toml|__init__\.py|package\.json)/i;
 
 export const PATH_MISSION: [string, string] = [
-  "主干是进程怎么进、一轮怎么转，以及硬弯：工具写回、取消、ACP 和 TUI 两扇门。每一层对照证据看调用，不按目录名走。",
-  "The trunk is how the process starts, how one turn runs, then the hard turns — tool write-back, cancel, ACP vs TUI. Follow the evidence on the call path, not the folder names.",
+  "主干是进程怎么进、本仓库的核心系统怎么接，以及 seam / 硬弯落在哪。每一层对照本仓库证据看调用，不套另一仓库的词表。",
+  "The trunk is how the process starts, how this repo's core systems join, and where the seam or hard turn sits. Follow evidence from this tree, not a vocabulary copied from another repository.",
 ];
 
 const STEP_TASKS: Record<string, [string, string]> = {
   "project-goal": [
-    "对着证据那一行，说明用户被放在终端对话里还是 crate 清单里。说出入口、一轮循环、start_turn 里少了哪一层回车没回答。",
-    "On the evidence line, say whether the user lives in a terminal turn or a crate list. Name which of entry / one turn / start_turn would make Enter produce no answer.",
+    "对着证据那一行，说明这个仓库给谁用、一次真实运行必须成立的约束。不要用目录清单回答。",
+    "On the evidence line, say who this repo is for and what must stay true for a real run. Name the constraint — not a folder list.",
   ],
   "entry-and-boot": [
-    "排除「都是入口」。指出 connect 之后谁接手、TUI 那扇门交给谁。",
-    "Rule out “both are entry”. Point to who receives control after connect, and who receives it after the TUI door.",
+    "打开进程入口，指出第一记调用之后谁接手（不要用包名回答）。",
+    "Open the process entry and name who receives control after the first call — not a package name.",
   ],
   "application-entry": [
     "打开入口文件，指出进程启动后最先调用的三步（不是某个 crate 的名字）。",

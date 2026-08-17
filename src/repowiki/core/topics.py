@@ -116,9 +116,86 @@ _GENERIC_WEB_SLUGS = {item[0] for item in _OPTIONAL_WEB} | {
 
 _PKG_ROOTS = {"crates", "packages", "apps"}
 
+# Grok-study / xai-org/grok-build product markers. Other repos must not
+# inherit these crate names or the start_turn entry myth.
+_GROK_PRODUCT_NEEDLES = (
+    "xai-grok-pager",
+    "xai-grok-agent",
+    "xai-grok-tools",
+    "/npm/grok/",
+    "/bin/grok",
+)
+_GROK_SYSTEM_IDS = frozenset(
+    {
+        "agent-loop",
+        "agent-runtime",
+        "terminal-ui",
+        "tui-pager",
+        "system-prompt",
+        "subagent-scheduling",
+        "acp-protocol",
+        "context-assembly",
+        "pty-control",
+        "headless-modes",
+    }
+)
+
+# README / docs concepts (DeepWiki handbook IA), not a grok slug list.
+_DOC_CONCEPTS: tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...]], ...] = (
+    (
+        "capability-seam",
+        "Capability Seam",
+        "Capability Seam",
+        (
+            "capability seam",
+            "service definition",
+            "service provider",
+            "ctx.llm",
+            "ctx.fs",
+        ),
+        ("architecture.md", "packages/core", "packages/fs", "packages/llm", "packages/"),
+    ),
+    (
+        "plugin-architecture",
+        "Plugin architecture",
+        "Plugin 架构",
+        (
+            "everything-is-a-plugin",
+            "everything is a plugin",
+            "plugin-based",
+            "is a plugin",
+        ),
+        ("plugin", "packages/core", "readme.md"),
+    ),
+    (
+        "cordis",
+        "Cordis",
+        "Cordis",
+        ("cordis",),
+        ("cordis", "vendor/cordis", "packages/core"),
+    ),
+)
+
+# First-class dir match only — a helper file named prompt.rs must not become
+# "System Prompt 模板" on an unrelated repo.
+_FIRST_CLASS_ONLY_IDS = frozenset(
+    {
+        "agent-runtime",
+        "system-prompt",
+        "subagent-scheduling",
+        "acp-protocol",
+        "terminal-ui",
+        "pty-control",
+        "headless-modes",
+        "codebase-graph",
+        "codegen",
+    }
+)
+
 TOPIC_PATH_CAP = 14
 GETTING_STARTED_ID = "getting-started"
 ENTRY_ID = "entry-and-boot"
+CORE_ARCHITECTURE_ID = "core-architecture"
 
 
 def slugify_topic(text: str) -> str:
@@ -134,6 +211,18 @@ def web_system_names(slug: str) -> tuple[str, ...] | None:
     """Path-segment tokens that make a generic-web slug first-class, or None."""
     item = _OPTIONAL_WEB_BY_ID.get(slug or "")
     return item[3] if item else None
+
+
+def repo_has_grok_product(paths) -> bool:
+    """True when this tree actually contains grok-build / pager crates."""
+    for raw in paths or []:
+        low = (raw or "").replace("\\", "/").lower()
+        if any(tok in low for tok in _GROK_PRODUCT_NEEDLES):
+            return True
+        parts = [p for p in low.split("/") if p]
+        if parts and parts[0] == "bin" and "grok" in parts[-1]:
+            return True
+    return False
 
 
 def first_class_system_dir(path: str, names: tuple[str, ...]) -> bool:
@@ -242,6 +331,8 @@ def build_deterministic_topics(
 
     claimed: set[str] = set()
     topics: list[TopicOutline] = []
+    all_paths = [f.path for f in project.files]
+    grok_product = repo_has_grok_product(all_paths)
 
     readme = _find_readme(project)
     if readme:
@@ -263,7 +354,7 @@ def build_deterministic_topics(
 
     boot = _pick_entry_boot_files(
         entry_paths,
-        [f.path for f in project.files],
+        all_paths,
         rank_index,
         claimed,
     )
@@ -273,23 +364,46 @@ def build_deterministic_topics(
                 id=ENTRY_ID,
                 title="入口与启动" if zh else "Entry and boot",
                 section="deep-dive",
-                purpose=(
-                    "用户怎么把 grok 跑起来：二进制、pager、ACP server start。"
-                    if zh
-                    else "How the user starts grok: binary, pager, ACP server start."
+                purpose=_purpose_for(
+                    "入口与启动" if zh else "Entry and boot",
+                    zh,
+                    topic_id=ENTRY_ID,
+                    paths=all_paths,
                 ),
                 key_files=boot,
+                key_symbols=_harvest_topic_symbols(boot, files_by_path),
                 depth="deep",
             )
         )
         claimed.update(boot)
 
+    for topic in _doc_derived_topics(
+        project, files_by_path, rank_index, claimed, zh
+    ):
+        topics.append(topic)
+        claimed.update(topic.key_files)
+        if len([t for t in topics if t.section == "deep-dive"]) >= TOPIC_PATH_CAP:
+            break
+
     for topic_id, title_en, title_zh, names in _SYSTEMS:
-        matched = [
-            f.path
-            for f in project.files
-            if _file_matches_system(f.path, topic_id, names)
-        ]
+        if topic_id in _GROK_SYSTEM_IDS and not grok_product:
+            # Keep special file matchers (loop.rs / ToolBridge) but do not
+            # mint grok sidebar slugs from a loose "agent" / "prompt" token.
+            if topic_id not in {"agent-loop", "tool-system", "context-assembly"}:
+                continue
+            matched = [
+                f.path
+                for f in project.files
+                if _file_matches_system(f.path, topic_id, names)
+            ]
+            if not matched:
+                continue
+        else:
+            matched = [
+                f.path
+                for f in project.files
+                if _file_matches_system(f.path, topic_id, names)
+            ]
         if not matched:
             continue
         key = _pick_keys(matched, rank_index, claimed, limit=6)
@@ -304,8 +418,14 @@ def build_deterministic_topics(
                 id=topic_id,
                 title=title_zh if zh else title_en,
                 section="deep-dive",
-                purpose=_purpose_for(title_zh if zh else title_en, zh, topic_id=topic_id),
+                purpose=_purpose_for(
+                    title_zh if zh else title_en,
+                    zh,
+                    topic_id=topic_id,
+                    paths=all_paths,
+                ),
                 key_files=key,
+                key_symbols=_harvest_topic_symbols(key, files_by_path),
                 depth="deep" if topic_id in {"agent-runtime", "agent-loop", "tool-system"} else "standard",
             )
         )
@@ -336,6 +456,7 @@ def build_deterministic_topics(
                     section="deep-dive",
                     purpose=_purpose_for(title_zh if zh else title_en, zh),
                     key_files=key,
+                    key_symbols=_harvest_topic_symbols(key, files_by_path),
                     depth="standard",
                 )
             )
@@ -367,6 +488,7 @@ def build_deterministic_topics(
                     section="deep-dive",
                     purpose=_purpose_for(title, zh),
                     key_files=key,
+                    key_symbols=_harvest_topic_symbols(key, files_by_path),
                     depth="standard",
                 )
             )
@@ -451,6 +573,8 @@ def merge_topics(
         files = [p for p in item.key_files if p.replace("\\", "/") in known]
         if not files:
             continue
+        if not _keep_system_topic(topic_id, files, known):
+            continue
         section = item.section if item.section in {"getting-started", "deep-dive"} else "deep-dive"
         depth = item.depth if item.depth in {"deep", "standard", "brief"} else "standard"
         title = (item.title or "").strip()
@@ -471,6 +595,8 @@ def merge_topics(
         if item.id in by_id:
             continue
         if is_generic_web_slug(item.id) and not repo_has_web_system(known, item.id):
+            continue
+        if not _keep_system_topic(item.id, list(item.key_files), known):
             continue
         files = [p for p in item.key_files if p not in used]
         if not files and item.section == "getting-started":
@@ -520,6 +646,117 @@ def _find_readme(project: ProjectContext) -> str:
         if f.path.lower() in {"readme.md", "readme"}:
             return f.path
     return ""
+
+
+def _doc_and_readme_text(project: ProjectContext) -> str:
+    chunks: list[str] = []
+    for f in project.files:
+        path = (f.path or "").replace("\\", "/").lower()
+        name = path.rsplit("/", 1)[-1]
+        if name in {"readme.md", "readme"} or path.startswith("docs/"):
+            chunks.append(f.content or f.preview or "")
+    return "\n".join(chunks).lower()
+
+
+def _harvest_topic_symbols(
+    paths: list[str], files_by_path: dict[str, FileInfo], *, limit: int = 4
+) -> list[str]:
+    from repowiki.core.context_pack import harvest_symbols
+
+    names: list[str] = []
+    seen: set[str] = set()
+    for path in paths or []:
+        info = files_by_path.get(path.replace("\\", "/")) or files_by_path.get(path)
+        if not info:
+            continue
+        text = info.content or info.preview or ""
+        for sym in harvest_symbols(text, limit=limit):
+            name = (getattr(sym, "name", "") or "").strip()
+            if not name or name in seen or "/" in name:
+                continue
+            seen.add(name)
+            names.append(name)
+            if len(names) >= limit:
+                return names
+    return names
+
+
+def _topic_file_blob(
+    paths: list[str], files_by_path: dict[str, FileInfo] | None
+) -> str:
+    if not files_by_path:
+        return ""
+    parts: list[str] = []
+    for path in paths or []:
+        info = files_by_path.get(path.replace("\\", "/")) or files_by_path.get(path)
+        if info:
+            parts.append(info.content or info.preview or "")
+    return "\n".join(parts)
+
+
+def _doc_derived_topics(
+    project: ProjectContext,
+    files_by_path: dict[str, FileInfo],
+    rank_index: dict[str, int],
+    claimed: set[str],
+    zh: bool,
+) -> list[TopicOutline]:
+    """Mint plugin / Cordis / Capability Seam pages from README/docs evidence."""
+    hay = _doc_and_readme_text(project)
+    if not hay:
+        return []
+    known = [f.path.replace("\\", "/") for f in project.files]
+    out: list[TopicOutline] = []
+    used_ids: set[str] = set()
+    for topic_id, title_en, title_zh, needles, path_needles in _DOC_CONCEPTS:
+        if not any(n in hay for n in needles):
+            continue
+        matched = [
+            p
+            for p in known
+            if any(tok in p.replace("\\", "/").lower() for tok in path_needles)
+        ]
+        if not matched:
+            continue
+        key = _pick_keys(matched, rank_index, claimed, limit=6)
+        if not key:
+            key = _pick_keys(matched, rank_index, set(), limit=6)
+        if not key:
+            continue
+        title = title_zh if zh else title_en
+        out.append(
+            TopicOutline(
+                id=topic_id,
+                title=title,
+                section="deep-dive",
+                purpose=_purpose_for(title, zh, topic_id=topic_id),
+                key_files=key,
+                key_symbols=_harvest_topic_symbols(key, files_by_path),
+                depth="deep" if topic_id == "capability-seam" else "standard",
+            )
+        )
+        used_ids.add(topic_id)
+    if CORE_ARCHITECTURE_ID not in used_ids and "capability-seam" not in used_ids:
+        arch_docs = [
+            p
+            for p in known
+            if p.replace("\\", "/").lower().endswith("docs/architecture.md")
+            or p.replace("\\", "/").lower() == "docs/architecture.md"
+        ]
+        if arch_docs:
+            title = "核心架构" if zh else "Core architecture"
+            out.append(
+                TopicOutline(
+                    id=CORE_ARCHITECTURE_ID,
+                    title=title,
+                    section="deep-dive",
+                    purpose=_purpose_for(title, zh, topic_id=CORE_ARCHITECTURE_ID),
+                    key_files=arch_docs[:4],
+                    key_symbols=_harvest_topic_symbols(arch_docs, files_by_path),
+                    depth="deep",
+                )
+            )
+    return out
 
 
 def _path_has_system(path: str, names: tuple[str, ...]) -> bool:
@@ -670,7 +907,31 @@ def is_entry_boot_file(path: str) -> bool:
             return True
         if low.startswith("src/main.") or low.startswith("src/bin/"):
             return True
+        if low.startswith("apps/") or "/apps/" in f"/{low}/":
+            return True
+    if stem in {"cli", "index"} and name.endswith((".ts", ".js", ".mjs", ".cjs")):
+        if low.startswith("apps/") or "/apps/" in f"/{low}/":
+            return True
     return False
+
+
+def _system_names(topic_id: str) -> tuple[str, ...]:
+    for tid, _en, _zh, names in _SYSTEMS:
+        if tid == topic_id:
+            return names
+    return ()
+
+
+def _keep_system_topic(topic_id: str, files: list[str], known: set[str] | list[str]) -> bool:
+    """Drop grok sidebar slugs unless this tree actually has that system."""
+    if topic_id not in _GROK_SYSTEM_IDS:
+        return True
+    names = _system_names(topic_id)
+    if repo_has_grok_product(known):
+        return True
+    if topic_id in {"agent-loop", "tool-system", "context-assembly"}:
+        return any(_file_matches_system(p, topic_id, names) for p in files or [])
+    return any(first_class_system_dir(p, names) for p in files or []) if names else False
 
 
 def _file_matches_system(path: str, topic_id: str, names: tuple[str, ...]) -> bool:
@@ -680,6 +941,8 @@ def _file_matches_system(path: str, topic_id: str, names: tuple[str, ...]) -> bo
         return is_context_assembly_file(path)
     if topic_id == "tool-system":
         return is_tool_system_file(path)
+    if topic_id in _FIRST_CLASS_ONLY_IDS:
+        return first_class_system_dir(path, names)
     return _path_has_system(path, names)
 
 
@@ -791,7 +1054,10 @@ def _rebind_entry_and_boot(
     known_list = sorted(p.replace("\\", "/") for p in known)
     boot_pool = _prefer_boot([p for p in known_list if is_entry_boot_file(p)])
     purpose = _purpose_for(
-        "入口与启动" if zh else "Entry and boot", zh, topic_id=ENTRY_ID
+        "入口与启动" if zh else "Entry and boot",
+        zh,
+        topic_id=ENTRY_ID,
+        paths=known_list,
     )
     entry = by_id.get(ENTRY_ID)
     if not entry:
@@ -903,11 +1169,24 @@ def _human_system_title(leaf: str, zh: bool) -> str:
     low = leaf.lower().replace("_", "-")
     if low in {"code-graph", "codebase-graph", "codegraph"}:
         return "代码图谱" if zh else "Codebase graph"
+    named = {
+        "core": ("Core", "核心"),
+        "fs": ("fs", "fs"),
+        "llm": ("LLM", "LLM"),
+        "cordis": ("Cordis", "Cordis"),
+        "plugin": ("Plugin", "Plugin"),
+        "dsh": ("dsh CLI", "dsh CLI"),
+    }
+    if low in named:
+        en, zh_title = named[low]
+        return zh_title if zh else en
     # Keep crate identifiers readable; do not prefix 模块.
     return cleaned
 
 
-def _purpose_for(title: str, zh: bool, topic_id: str = "") -> str:
+def _purpose_for(
+    title: str, zh: bool, topic_id: str = "", *, paths: list[str] | None = None
+) -> str:
     if topic_id == "agent-loop":
         if zh:
             return (
@@ -927,9 +1206,35 @@ def _purpose_for(title: str, zh: bool, topic_id: str = "") -> str:
             "How System head / PromptContext is assembled — not the agent loop."
         )
     if topic_id == ENTRY_ID:
+        if repo_has_grok_product(paths):
+            if zh:
+                return "用户怎么把 grok 跑起来：二进制、pager、ACP server start。"
+            return "How the user starts grok: binary, pager, ACP server start."
         if zh:
-            return "用户怎么把 grok 跑起来：二进制、pager、ACP server start。"
-        return "How the user starts grok: binary, pager, ACP server start."
+            return "用户怎么把进程跑起来：CLI / 二进制入口、装配、再进主循环。"
+        return "How the user starts the process: CLI or binary, wiring, then the main loop."
+    if topic_id == "capability-seam":
+        if zh:
+            return (
+                "Capability Seam：Service Definition / Provider / Consumer 怎么把 "
+                "`ctx.llm` / `ctx.fs` 这类能力接上，以及换 Provider 时谁跟着变。"
+            )
+        return (
+            "Capability Seam: how Service Definition / Provider / Consumer wire "
+            "`ctx.llm` / `ctx.fs`, and what changes when a provider is swapped."
+        )
+    if topic_id == "plugin-architecture":
+        if zh:
+            return "everything-is-a-plugin：组件如何被声明、装上、以及被配置替换。"
+        return "everything-is-a-plugin: how a component is declared, loaded, and swapped."
+    if topic_id == "cordis":
+        if zh:
+            return "vendored Cordis 如何装 plugin、暴露 ctx，以及和核心包怎么接。"
+        return "How vendored Cordis loads plugins, exposes ctx, and joins the core package."
+    if topic_id == CORE_ARCHITECTURE_ID:
+        if zh:
+            return "文档里的核心架构：一次调用经过哪些包，seam 落在哪。"
+        return "Core architecture from the docs: which packages a call crosses, and where the seam sits."
     if zh:
         return f"{title} 在调用链上接住哪一段，以及和上下游怎么接。"
     return f"What `{title}` owns on the call path, and how it joins upstream and downstream."
@@ -978,7 +1283,7 @@ def subsystems_from_topics(topics: list[TopicOutline], *, limit: int = 8) -> lis
             if symbol and "/" not in symbol and not str(symbol).endswith(".rs")
         ]
         if not types:
-            types = _fallback_key_types_for_topic(topic)
+            types = _fallback_key_types_for_topic(topic, files_by_path=None)
         title = topic.title or topic.id
         if "上下文装配" in title and "Agent Loop" in title:
             title = "Agent Loop"
@@ -1002,31 +1307,49 @@ def subsystems_from_topics(topics: list[TopicOutline], *, limit: int = 8) -> lis
     return out
 
 
-def _fallback_key_types_for_topic(topic: TopicOutline) -> list[KeyType]:
+def _fallback_key_types_for_topic(
+    topic: TopicOutline, files_by_path: dict[str, FileInfo] | None = None
+) -> list[KeyType]:
+    files = list(topic.key_files or [])
+    if not files:
+        return []
+    harvested = list(topic.key_symbols or [])
+    if not harvested and files_by_path:
+        harvested = _harvest_topic_symbols(files, files_by_path)
+    blob = _topic_file_blob(files, files_by_path)
     hints: list[tuple[str, str]] = []
     tid = topic.id or ""
-    if tid == "agent-loop":
+    if tid == "agent-loop" and "start_turn" in blob:
         hints = [
             ("start_turn", "pager dispatch / start_turn"),
             ("TurnRunning", "本轮运行中"),
         ]
-    elif tid in {"terminal-ui", "tui-pager"}:
+    elif tid in {"terminal-ui", "tui-pager"} and re.search(r"\bPager\b", blob):
         hints = [("Pager", "TUI pager")]
-    elif tid == "tool-system":
+    elif tid == "tool-system" and "ToolBridge" in blob:
         hints = [("ToolBridge", "执行模型 tool calls")]
     elif tid == ENTRY_ID:
         hints = [("main", "进程入口")]
     out: list[KeyType] = []
-    files = list(topic.key_files or [])
-    if not files:
-        return out
+    seen: set[str] = set()
+    for i, name in enumerate(harvested):
+        if not name or name in seen or "/" in name:
+            continue
+        seen.add(name)
+        path = files[min(i, len(files) - 1)]
+        out.append(KeyType(name=name, role="", path=path, line=1))
+        if len(out) >= 4:
+            return out
     for i, (name, role) in enumerate(hints):
+        if name in seen or (blob and name not in blob and name != "main"):
+            continue
+        seen.add(name)
         path = files[min(i, len(files) - 1)]
         out.append(KeyType(name=name, role=role, path=path, line=1))
     if not out:
         leaf = files[0].replace("\\", "/").rsplit("/", 1)[-1]
         stem = leaf.rsplit(".", 1)[0]
-        if stem not in {"lib", "mod", "main"}:
+        if stem not in {"lib", "mod", "main", "index"}:
             out.append(KeyType(name=stem, role="", path=files[0], line=1))
     return out[:4]
 
@@ -1085,10 +1408,12 @@ def runtime_mermaid_for(
 ) -> str:
     """Tiny runtime flowchart when the import graph has no edges."""
     nodes: list[str] = []
+    seen: set[str] = set()
     for path in entry_files or []:
         leaf = path.replace("\\", "/").rstrip("/").split("/")[-1]
-        if leaf:
+        if leaf and leaf not in seen:
             nodes.append(leaf[:32])
+            seen.add(leaf)
             break
     for topic in topics or []:
         section = getattr(topic, "section", "") or ""
@@ -1098,8 +1423,10 @@ def runtime_mermaid_for(
         title = getattr(topic, "title", "") or tid
         label = re.sub(r'[\[\]{}"#\n]', " ", str(title))
         label = re.sub(r"\s+", " ", label).strip()[:32]
-        if label:
-            nodes.append(label)
+        if not label or label in seen:
+            continue
+        nodes.append(label)
+        seen.add(label)
         if len(nodes) >= limit + 1:
             break
     if len(nodes) < 2:
@@ -1109,5 +1436,6 @@ def runtime_mermaid_for(
     for nid, lab in zip(ids, nodes, strict=True):
         lines.append(f'  {nid}["{lab}"]')
     for src, dst in zip(ids, ids[1:], strict=False):
-        lines.append(f"  {src} --> {dst}")
+        if src != dst:
+            lines.append(f"  {src} --> {dst}")
     return "\n".join(lines)

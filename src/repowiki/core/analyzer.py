@@ -903,7 +903,10 @@ class Analyzer:
                 and not str(kt.name or "").endswith(".rs")
             ]
         if arch.description:
-            arch.description = arch.description.replace("AgentLoop", "start_turn")
+            if _project_has_token(project, "start_turn"):
+                arch.description = arch.description.replace("AgentLoop", "start_turn")
+            else:
+                arch.description = arch.description.replace("AgentLoop", "Agent Loop")
             arch.description = arch.description.replace(
                 "Agent Loop 与上下文装配", "Agent Loop"
             )
@@ -915,13 +918,17 @@ class Analyzer:
             )
         )
         seq = (arch.mermaid_sequence or "").strip()
-        if has_loop and (not seq or sequence_tools_before_model(seq)):
+        if (
+            has_loop
+            and _project_has_token(project, "start_turn")
+            and (not seq or sequence_tools_before_model(seq))
+        ):
             arch.mermaid_sequence = GROK_LOOP_SEQUENCE
         if not arch.description:
             if zh:
                 arch.description = (
                     "仓库按一次调用真正经过的系统切页，而不是按目录罗列。"
-                    "请求从入口进来，经过运行时、工具层和界面。"
+                    "请求从入口进来，经过本仓库自己的核心包和 seam。"
                     "结构图用来看耦合；类型在链路上是角色，不是文件清单。"
                 )
             else:
@@ -1372,3 +1379,14 @@ def _coerce_term_tips(raw) -> list[dict]:
                 continue
             out.append({"term": term, "tip": str(item.get("tip") or item.get("explanation") or "")})
     return out
+
+
+def _project_has_token(project: ProjectContext, token: str) -> bool:
+    needle = (token or "").strip()
+    if not needle:
+        return False
+    for f in project.files or []:
+        text = f"{f.path}\n{f.content or ''}\n{f.preview or ''}"
+        if needle in text:
+            return True
+    return False

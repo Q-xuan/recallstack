@@ -131,8 +131,12 @@ def build_outline_prompt(
                 "    }\n"
                 "  ]\n"
                 "}\n\n"
-                "topics are the PRIMARY wiki IA (zread 深入探索): 8-14 conceptual systems "
-                "this repo actually has (Agent Runtime, Agent Loop, Tool System, ACP, TUI, entry/boot). "
+                "topics are the PRIMARY wiki IA (handbook: 概述 → 启动 → 架构/seam → 子系统): "
+                "8-14 conceptual systems THIS repo actually has, named from its packages, "
+                "symbols, README and docs (e.g. Cordis, plugin, Capability Seam, packages/core). "
+                "Do NOT copy a grok-study / xai-grok-pager vocabulary "
+                "(Agent Runtime, Agent Loop, Terminal UI, System Prompt 模板, Sub-Agent 并行调度, "
+                "start_turn as the entry myth) unless those crates or symbols exist in the tree. "
                 "section is getting-started or deep-dive. Titles are human system names, "
                 "NEVER directory paths and NEVER 'Module: crates/foo'. "
                 "Do NOT invent a generic web-app syllabus (authentication, caching, "
@@ -140,6 +144,7 @@ def build_outline_prompt(
                 "is named that way (e.g. `xai-grok-auth`). A helper file named auth.rs "
                 "inside another crate does not count. "
                 "topics[].key_files MUST be real paths from the tree (2-6 per topic). "
+                "WHEN the tree has xai-grok-agent / crates/agent loop.rs: "
                 "agent-loop key_files MUST be the runtime loop "
                 "(xai-grok-agent `agent.rs` / run / turn / tool dispatch, or crates/agent loop.rs) "
                 "— NEVER conversation_util.rs, PromptContext, or replace_or_insert_system_head, "
@@ -147,7 +152,9 @@ def build_outline_prompt(
                 "Context assembly (System head, PromptContext, xai-chat-state) is a SEPARATE "
                 "topic id context-assembly, not a subtitle of agent-loop. "
                 "entry-and-boot key_files MUST be the grok binary / pager boot "
-                "(bin/grok.rs, xai-grok-pager, pager app/boot, CLI main.rs the user runs). "
+                "WHEN those paths exist "
+                "(bin/grok.rs, xai-grok-pager, pager app/boot, CLI main.rs the user runs); "
+                "otherwise the process this repo actually starts (apps/*/main.ts, src/main.*). "
                 "NEVER bin/protoc, protobuf codegen, dotslash toolchain scripts, "
                 "code-graph, or fast-worktree CLIs. "
                 "tool-system key_files MUST include ToolBridge when that type exists. "
@@ -226,9 +233,9 @@ def build_overview_prompt(
                 "    {\n"
                 '      "name": "subsystem matching a planned topic if possible",\n'
                 '      "role": "what it does on the call flow",\n'
-                '      "key_types": [{"name": "start_turn", "role": "pager dispatch / start_turn", "path": "src/file.rs:12"}],\n'
-                '      "files": ["src/file.rs"],\n'
-                '      "mermaid": "flowchart LR\\n  A[Pager] --> B[Agent] --> C[Model]"\n'
+                '      "key_types": [{"name": "TypeName", "role": "role on the call", "path": "src/file.ts:12"}],\n'
+                '      "files": ["src/file.ts"],\n'
+                '      "mermaid": "flowchart LR\\n  A[Entry] --> B[Core] --> C[Seam]"\n'
                 "    }\n"
                 "  ],\n"
                 '  "see_also": ["architecture", "topics/agent-loop"],\n'
@@ -256,15 +263,19 @@ def build_overview_prompt(
                 "prefer 3-6 labeled nodes that are the key_types (Type as role); "
                 "labels ≤ ~12 CJK characters; "
                 "FORBIDDEN: 2-node one-edge toys, crate-folder nodes, unlabeled A/B. "
-                "Example: flowchart LR\\n  A[Pager] --> B[start_turn] --> C[ToolBridge]. "
-                "Name Agent Loop (pager dispatch / start_turn), never 'Agent Loop 与上下文装配'. "
-                "Terminal UI / TUI MUST cite pager types (Pager / TuiPager), not an empty section. "
+                "Example: flowchart LR\\n  A[Entry] --> B[Core] --> C[Seam]. "
+                "Node labels MUST be types or systems from THIS tree. "
+                "Do not draw Pager → start_turn → start_turn or name Agent Loop / start_turn "
+                "unless those symbols exist in the source. "
+                "WHEN start_turn exists: name Agent Loop (pager dispatch / start_turn), "
+                "never 'Agent Loop 与上下文装配'. "
+                "WHEN a TUI / pager crate exists: Terminal UI MUST cite pager types "
+                "(Pager / TuiPager), not an empty section. "
                 "Omit a key_type if `path` is missing; never invent Type names that are not in the source. "
                 "Never use lib.rs or a crate folder name as a Type. "
                 "see_also: architecture plus planned topic ids only "
-                "(e.g. topics/agent-loop, topics/context-assembly when that topic is planned). "
-                "Never invent topics/pty-control or topics/code-graph — use the planned ids "
-                "(topics/agent-loop, topics/context-assembly, topics/tui-pager, topics/codebase-graph). "
+                "(e.g. topics/capability-seam, topics/agent-loop when that topic is planned). "
+                "Never invent topics/pty-control or topics/code-graph — use the planned ids. "
                 "If a crate is code-graph / codebase-graph, name that subsystem "
                 "代码图谱 / codebase graph, never 代码生成. "
                 "Leave key_features empty. Do not dump a file inventory, method list, or JavaDoc. "
