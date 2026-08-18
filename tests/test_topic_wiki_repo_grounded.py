@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+from recallstack.domain.schemas import ConceptDraft, SourceReference
 from recallstack.learning.concept_extractor import ConceptExtractor
 from recallstack.learning.learning_contract import suggested_ask_questions
 from recallstack.learning.path_builder import PathBuilder
-from recallstack.learning.wiki_generator import WIKI_GROUND_REVISION, build_wiki_payload
+from recallstack.learning.wiki_generator import (
+    WIKI_GROUND_REVISION,
+    append_concept_pages,
+    build_deterministic_wiki_data,
+    build_wiki_payload,
+)
 from recallstack.learning.wiki_serve import materialize_wiki_payload
 from repowiki.core.cite_check import verify_wiki_data
 from repowiki.core.graph import DependencyGraph
@@ -25,8 +31,8 @@ from repowiki.core.models import (
 from repowiki.core.modules import group_into_modules
 from repowiki.core.outline import build_deterministic_outline, merge_outline
 from repowiki.core.scanner import build_file_tree
-from repowiki.core.topics import build_deterministic_topics
-from repowiki.core.wiki_builder import collapse_repeated_mermaid_labels
+from repowiki.core.topics import build_deterministic_topics, codebase_structure_for
+from repowiki.core.wiki_builder import WikiBuilder, collapse_repeated_mermaid_labels
 
 GROK_SLUGS = {
     "agent-loop",
@@ -119,6 +125,62 @@ are providers. `vendor/cordis` loads plugins onto ctx.
         ],
         file_tree="",
     )
+
+
+def _dsh_project_with_decoys() -> ProjectContext:
+    """Real harness plus the files that stole seam / loop / plugin evidence."""
+    project = _dsh_project()
+    decoys = [
+        _file("AGENTS.md", "# Agent notes\nnot a package.\n", language="markdown"),
+        _file("CLAUDE.md", "# Claude\nnot a package.\n", language="markdown"),
+        _file("packages/README.md", "# packages\nnot a crate.\n", language="markdown"),
+        _file(
+            "packages/client/tsdown.client.ts",
+            "export const browserSourcePath = 1\n"
+            "export const clientBundle = 1\n"
+            "export const clientLibrary = 1\n"
+            "export const clientOnly = 1\n"
+            "export function defineStore() {}\n",
+        ),
+        _file(
+            "packages/client/src/store.ts",
+            "export function defineStore() { return null }\n",
+        ),
+        _file(
+            "docs/postmortem/0003-web-agent-gui-feedback-loop.md",
+            "seedPackageInventory whenTurnsSettled\n",
+            language="markdown",
+        ),
+        _file(
+            "apps/cli/README.md",
+            "# CLI\nprofile and bundle.\n",
+            language="markdown",
+        ),
+        _file(
+            "apps/cli/config/agent-presets/code/agent.cordis.yml",
+            "Clock: {}\n",
+            language="yaml",
+        ),
+        _file(
+            "apps/cli/e2e/WebScaffold.ts",
+            "export class WebScaffold {}\n",
+        ),
+        _file("apps/cli/e2e/session.jsonl", '{"d":1}\n', language="jsonl"),
+        _file(
+            "packages/boot/src/index.ts",
+            "export function boot() { loadBundle() }\n",
+        ),
+        _file(
+            "packages/bundle/src/index.ts",
+            "export function loadBundle() {}\n",
+        ),
+        _file(
+            "packages/core/src/session.ts",
+            "export async function runTurn() { await model() }\n",
+        ),
+    ]
+    project.files.extend(decoys)
+    return project
 
 
 def _dsh_project_with_notes() -> ProjectContext:
@@ -523,6 +585,103 @@ def test_dsh_like_typename_llm_overview_is_repaired(monkeypatch):
     gs = next(p for p in out["pages"] if p["id"] == "getting-started")
     assert "open-source, plugin-based agent harness" not in gs["content"]
     assert "# TypeName" not in gs["content"]
+
+
+def test_dsh_decoys_do_not_steal_overview_or_topics(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    project = _dsh_project_with_decoys()
+    graph = DependencyGraph.build_from_project(project)
+    topics = build_deterministic_topics(project, graph, language="zh")
+    by_id = {t.id: t for t in topics}
+
+    structure = codebase_structure_for(project, language="zh")
+    locs = {row.location for row in structure}
+    names = {row.name for row in structure}
+    assert "README.md" not in locs
+    assert "AGENTS.md" not in names
+    assert "CLAUDE.md" not in names
+    assert "packages/README.md" not in locs
+    assert any(loc.startswith("apps/") or loc.startswith("packages/") for loc in locs)
+
+    seam = by_id["capability-seam"]
+    assert any("docs/architecture.md" in p or "packages/core" in p for p in seam.key_files)
+    assert not any("tsdown" in p or "defineStore" in p for p in seam.key_files)
+    assert "Capability Seam" in (seam.purpose or "")
+    assert "Definition" in (seam.purpose or "") or "Provider" in (seam.purpose or "")
+
+    plugin = by_id["plugin-architecture"]
+    assert any(
+        tok in p
+        for p in plugin.key_files
+        for tok in ("packages/boot", "packages/bundle", "packages/core", "plugin")
+    )
+    assert not any(p.endswith("README.md") for p in plugin.key_files)
+
+    cordis = by_id["cordis"]
+    assert any("vendor/cordis" in p or "packages/core" in p for p in cordis.key_files)
+    assert not any(p.endswith(".yml") or p.endswith(".yaml") for p in cordis.key_files)
+
+    if "agent-loop" in by_id:
+        loop_files = by_id["agent-loop"].key_files
+        assert not any("postmortem" in p or "e2e" in p or p.endswith(".md") for p in loop_files)
+
+    payload = build_wiki_payload(project, graph, [])
+    texts = {f.path: f.content or "" for f in project.files}
+    out = materialize_wiki_payload(payload, [], texts)
+    index = next(p for p in out["pages"] if p["id"] == "index")
+    gs = next(p for p in out["pages"] if p["id"] == "getting-started")
+    blob = index["content"] + "\n" + gs["content"]
+    assert "`ts:1`" not in blob
+    assert "- ts:1" not in blob
+    assert "`client.ts:1`" not in blob
+    assert "- client.ts:1" not in blob
+    assert "files).ts" not in blob
+    assert "organized as directory modules" not in blob
+    assert "Configuration lives in ." not in blob
+    split_sec = ""
+    if "代码如何拆分" in index["content"]:
+        split_sec = index["content"].split("代码如何拆分", 1)[1]
+        split_sec = split_sec.split("## ", 1)[0]
+    assert "| README.md |" not in split_sec
+    assert "| AGENTS.md |" not in split_sec
+    assert "| CLAUDE.md |" not in split_sec
+    assert "packages/README.md" not in split_sec
+    assert "tsdown.client.ts" not in index["content"]
+    assert "seedPackageInventory" not in index["content"]
+    assert "whenTurnsSettled" not in index["content"]
+    assert "agent.cordis.yml" not in index["content"]
+    assert "WebScaffold" not in index["content"]
+    assert "start_turn" not in blob.lower() or "start_turn" in texts.get(
+        "packages/core/src/session.ts", ""
+    )
+
+    seam_page = next(
+        (p for p in out["pages"] if p["id"] == "topics/capability-seam"), None
+    )
+    assert seam_page is not None
+    assert "defineStore" not in seam_page["content"]
+    assert "Definition" in seam_page["content"] or "Provider" in seam_page["content"]
+
+    wiki = WikiBuilder().build(
+        project,
+        build_deterministic_wiki_data(project, graph, []),
+        graph,
+        language="zh",
+    )
+    draft = ConceptDraft(
+        slug="agent-loop",
+        title="Agent Loop",
+        description="一轮对话怎么走。",
+        importance=0.9,
+        source_references=[
+            SourceReference(path="packages/core/src/session.ts", start_line=1, symbol="runTurn"),
+        ],
+    )
+    page = append_concept_pages(wiki, [draft], file_texts=texts).get_page("concepts/agent-loop")
+    assert page is not None
+    assert "start_turn 是这一轮的闸门" not in page.content
+    assert "不是重绘界面" not in page.content
+    assert "WebScaffold" not in page.content
 
 
 def test_mermaid_does_not_keep_start_turn_self_loop():

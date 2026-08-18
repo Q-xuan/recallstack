@@ -246,7 +246,16 @@ _REEXPORT_RE = re.compile(
 _SLUG_DENY_NEEDLES: dict[str, tuple[str, ...]] = {
     "entry-and-boot": ("ptyctl", "protoc", "protobuf", "dotslash", "/proto/"),
     "application-entry": ("ptyctl", "protoc", "protobuf", "dotslash", "/proto/"),
-    "agent-loop": ("ptyctl", "protoc"),
+    "agent-loop": (
+        "ptyctl",
+        "protoc",
+        "postmortem",
+        "/e2e/",
+        "/fixtures/",
+        "tsdown",
+        "session.jsonl",
+        "webscaffold",
+    ),
     "tool-system": ("ptyctl", "protoc"),
     "terminal-ui": ("ptyctl", "protoc"),
     "tui-pager": ("ptyctl", "protoc"),
@@ -2441,6 +2450,17 @@ def suggested_ask_questions(
 def evidence_reading(concept: Any, chip: str | None = None) -> str:
     """2–3 sentences: why this one line proves the invariant. Not syntax."""
     slug = getattr(concept, "slug", "") or ""
+    chip_text = " ".join(
+        [
+            chip or "",
+            getattr(concept, "slug", "") or "",
+            " ".join(
+                str(getattr(ref, "symbol", "") or "")
+                for ref in (_source_refs_of(concept) if concept is not None else [])
+            ),
+        ]
+    )
+    has_start_turn = "start_turn" in chip_text
     texts = {
         "project-goal": t(
             "This line is not a crate inventory. It pins the product to a runnable path. "
@@ -2464,13 +2484,24 @@ def evidence_reading(concept: Any, chip: str | None = None) -> str:
             "旁边的 crate 名不会让任何东西跑起来。"
             "若它消失，后面的模块只在磁盘上。",
         ),
-        "agent-loop": t(
-            "start_turn is the gate of this turn, not a UI redraw. "
-            "The next call after this line must be the model, or the turn is a script. "
-            "If this line ran tools first, the user would not see a model decision.",
-            "start_turn 是这一轮的闸门，不是重绘界面。"
-            "这一行之后第一个调用必须是模型，否则这一轮是脚本。"
-            "若这一行先跑工具，用户看不见「模型在决定」。",
+        "agent-loop": (
+            t(
+                "start_turn is the gate of this turn, not a UI redraw. "
+                "The next call after this line must be the model, or the turn is a script. "
+                "If this line ran tools first, the user would not see a model decision.",
+                "start_turn 是这一轮的闸门，不是重绘界面。"
+                "这一行之后第一个调用必须是模型，否则这一轮是脚本。"
+                "若这一行先跑工具，用户看不见「模型在决定」。",
+            )
+            if has_start_turn
+            else t(
+                "This line is one hop on the live turn: input enters, the model is called, "
+                "tools run only after that decision, then the result is written back. "
+                "If the order flipped, the user would see a script, not a model turn.",
+                "这一行是活着的一轮里的一跳：输入进来、模型先被调用、"
+                "工具只在那次决定之后跑、再把结果写回。"
+                "若顺序反了，用户看见的是脚本，不是模型在决定。",
+            )
         ),
         "call-flow": t(
             "This line is a call in order, not a file in a list. "
@@ -2480,13 +2511,22 @@ def evidence_reading(concept: Any, chip: str | None = None) -> str:
             "看输入到模型之间经过谁。"
             "若顺序反了，用户看见的这一轮会变。",
         ),
-        "runtime-loop": t(
-            "start_turn is the gate of this turn. "
-            "The next call after this line must be the model. "
-            "If tools ran first, the turn would be a batch job.",
-            "start_turn 是这一轮的闸门。"
-            "这一行之后第一个调用必须是模型。"
-            "若先跑工具，这一轮就变成批处理。",
+        "runtime-loop": (
+            t(
+                "start_turn is the gate of this turn. "
+                "The next call after this line must be the model. "
+                "If tools ran first, the turn would be a batch job.",
+                "start_turn 是这一轮的闸门。"
+                "这一行之后第一个调用必须是模型。"
+                "若先跑工具，这一轮就变成批处理。",
+            )
+            if has_start_turn
+            else t(
+                "This line keeps the turn alive: the model is called before tools. "
+                "If tools ran first, the turn would be a batch job.",
+                "这一行让这一轮还活着：模型必须先于工具被调用。"
+                "若先跑工具，这一轮就变成批处理。",
+            )
         ),
         "tool-system": t(
             "This line is the write-back, not a tools folder. "

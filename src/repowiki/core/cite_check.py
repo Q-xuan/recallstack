@@ -306,12 +306,17 @@ def sanitize_text(text: str, index: CiteIndex) -> str:
             end = 0
         return _format_resolved_chip(resolved, start, end, symbol)
 
-    return _BARE_LINE_CITE.sub(bare_repl, out)
+    out = _BARE_LINE_CITE.sub(bare_repl, out)
+    from repowiki.core.grounding import repair_grounded_prose
+
+    return repair_grounded_prose(out)
 
 
 def _sanitize_term_tips(tips, index: CiteIndex):
     if not tips:
         return []
+    from repowiki.core.grounding import is_hollow_tip
+
     kept = []
     for tip in tips:
         term = (getattr(tip, "term", "") or "").strip()
@@ -321,6 +326,8 @@ def _sanitize_term_tips(tips, index: CiteIndex):
         if _JUNK_TIP.search(text):
             continue
         tip.tip = sanitize_text(text, index)
+        if is_hollow_tip(tip.tip):
+            continue
         kept.append(tip)
     return kept
 

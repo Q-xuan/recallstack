@@ -159,7 +159,7 @@ _DOC_CONCEPTS: tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...]], ...
             "ctx.llm",
             "ctx.fs",
         ),
-        ("architecture.md", "packages/core", "packages/fs", "packages/llm", "packages/"),
+        ("docs/architecture.md", "packages/core", "packages/fs", "packages/llm"),
     ),
     (
         "plugin-architecture",
@@ -171,14 +171,14 @@ _DOC_CONCEPTS: tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...]], ...
             "plugin-based",
             "is a plugin",
         ),
-        ("plugin", "packages/core", "readme.md"),
+        ("packages/boot", "packages/bundle", "packages/core", "plugin"),
     ),
     (
         "cordis",
         "Cordis",
         "Cordis",
         ("cordis",),
-        ("cordis", "vendor/cordis", "packages/core"),
+        ("vendor/cordis", "packages/core"),
     ),
 )
 
@@ -479,6 +479,8 @@ def build_deterministic_topics(
                 continue
             if is_agent_memory_path(path) and not notes_primary:
                 continue
+            if is_weak_topic_evidence_path(path):
+                continue
             leaf = _system_leaf(path)
             if not leaf or (leaf.startswith(".") and not notes_primary):
                 continue
@@ -625,6 +627,7 @@ def merge_topics(
         )
     _rebind_loop_and_assembly(by_id, known, base)
     _rebind_entry_and_boot(by_id, known, base)
+    _rebind_doc_concepts(by_id, known, base, files_by_path=None)
     _drop_notes_sidebar_topics(by_id, known, base)
     getting = [t for t in by_id.values() if t.section == "getting-started"]
     deep = [t for t in by_id.values() if t.section != "getting-started"]
@@ -773,12 +776,24 @@ def _doc_derived_topics(
             p
             for p in known
             if any(tok in p.replace("\\", "/").lower() for tok in path_needles)
+            and not is_weak_topic_evidence_path(p)
         ]
         if not matched:
+            matched = [
+                p
+                for p in known
+                if any(tok in p.replace("\\", "/").lower() for tok in path_needles)
+                and p.replace("\\", "/").lower().endswith("docs/architecture.md")
+            ]
+        if not matched:
             continue
-        key = _pick_keys(matched, rank_index, claimed, limit=6)
+        key = _pick_doc_concept_files(
+            topic_id, matched, files_by_path, rank_index, claimed, limit=6
+        )
         if not key:
-            key = _pick_keys(matched, rank_index, set(), limit=6)
+            key = _pick_doc_concept_files(
+                topic_id, matched, files_by_path, rank_index, set(), limit=6
+            )
         if not key:
             continue
         title = title_zh if zh else title_en
@@ -815,6 +830,126 @@ def _doc_derived_topics(
                 )
             )
     return out
+
+
+def _doc_concept_file_score(
+    topic_id: str,
+    path: str,
+    files_by_path: dict[str, FileInfo] | None,
+) -> int:
+    """Prefer definition / assembly source over README, tsdown, or yaml presets."""
+    low = _norm_topic_path(path)
+    score = 0
+    if low.endswith("docs/architecture.md") or low == "docs/architecture.md":
+        score += 80
+    if topic_id == "capability-seam":
+        if any(tok in low for tok in ("packages/core", "packages/fs", "packages/llm")):
+            score += 40
+        blob = _topic_file_blob([path], files_by_path).lower()
+        if "service definition" in blob or "capability seam" in blob:
+            score += 50
+        if "provider" in blob and "consumer" in blob:
+            score += 30
+        if "definestore" in blob or "zustand" in blob or "tsdown" in low:
+            score -= 80
+    elif topic_id == "plugin-architecture":
+        if any(tok in low for tok in ("packages/boot", "packages/bundle", "/plugin")):
+            score += 50
+        if low.endswith("plugin.ts") or low.endswith("plugin.js"):
+            score += 20
+        if low.rsplit("/", 1)[-1] in {"readme.md", "readme"}:
+            score -= 80
+    elif topic_id == "cordis":
+        if "vendor/cordis" in low:
+            score += 60
+        if "packages/core" in low:
+            score += 20
+        if low.endswith((".yml", ".yaml")):
+            score -= 80
+    if is_weak_topic_evidence_path(path) and "architecture.md" not in low:
+        score -= 60
+    return score
+
+
+def _pick_doc_concept_files(
+    topic_id: str,
+    paths: list[str],
+    files_by_path: dict[str, FileInfo] | None,
+    rank_index: dict[str, int],
+    claimed: set[str],
+    *,
+    limit: int,
+) -> list[str]:
+    unused = [p for p in paths if p not in claimed] or list(paths)
+    unused.sort(
+        key=lambda p: (
+            -_doc_concept_file_score(topic_id, p, files_by_path),
+            _production_rank(p),
+            rank_index.get(p, 10_000),
+        )
+    )
+    return unused[:limit]
+
+
+def _rebind_doc_concepts(
+    by_id: dict[str, TopicOutline],
+    known: set[str],
+    base: list[TopicOutline],
+    files_by_path: dict[str, FileInfo] | None = None,
+) -> None:
+    """Keep seam / plugin / cordis on definition and assembly files."""
+    known_list = sorted(p.replace("\\", "/") for p in known)
+    rank_index = {p: i for i, p in enumerate(known_list)}
+    for topic_id, _en, _zh, _needles, path_needles in _DOC_CONCEPTS:
+        item = by_id.get(topic_id)
+        if item is None:
+            continue
+        pool = [
+            p
+            for p in known_list
+            if any(tok in p.replace("\\", "/").lower() for tok in path_needles)
+        ]
+        if not pool:
+            continue
+        kept = [
+            p
+            for p in item.key_files
+            if p in known
+            and (
+                not is_weak_topic_evidence_path(p)
+                or p.replace("\\", "/").lower().endswith("docs/architecture.md")
+            )
+        ]
+        if topic_id == "capability-seam" and not any(
+            "architecture.md" in p.replace("\\", "/").lower()
+            or "packages/core" in p.replace("\\", "/").lower()
+            for p in kept
+        ):
+            kept = []
+        if topic_id == "plugin-architecture" and not any(
+            tok in p.replace("\\", "/").lower()
+            for p in kept
+            for tok in ("packages/boot", "packages/bundle", "/plugin", "packages/core")
+        ):
+            kept = []
+        if topic_id == "cordis" and any(
+            p.replace("\\", "/").lower().endswith((".yml", ".yaml")) for p in kept
+        ):
+            kept = [p for p in kept if not p.replace("\\", "/").lower().endswith((".yml", ".yaml"))]
+        if not kept:
+            kept = _pick_doc_concept_files(
+                topic_id, pool, files_by_path, rank_index, set(), limit=6
+            )
+        else:
+            extra = _pick_doc_concept_files(
+                topic_id, pool, files_by_path, rank_index, set(kept), limit=6
+            )
+            for path in extra:
+                if path not in kept:
+                    kept.append(path)
+                if len(kept) >= 6:
+                    break
+        item.key_files = kept[:6]
 
 
 def _path_has_system(path: str, names: tuple[str, ...]) -> bool:
@@ -899,13 +1034,43 @@ def is_context_assembly_file(path: str) -> bool:
     )
 
 
+_LOOP_SKIP_NEEDLES = (
+    "/docs/",
+    "docs/",
+    "postmortem",
+    "/e2e/",
+    "/fixtures/",
+    "/fixture/",
+    "tsdown",
+    ".yml",
+    ".yaml",
+)
+
+
+def is_weak_topic_evidence_path(path: str) -> bool:
+    """Docs / postmortem / e2e / tsdown / yaml presets are not runtime evidence."""
+    low = _norm_topic_path(path)
+    if low.endswith("docs/architecture.md") or low == "docs/architecture.md":
+        return False
+    if any(n in low for n in _LOOP_SKIP_NEEDLES):
+        return True
+    leaf = low.rsplit("/", 1)[-1]
+    if leaf.endswith((".md", ".yml", ".yaml", ".json")):
+        return True
+    if leaf in {"agents.md", "claude.md", "readme.md", "readme"}:
+        return True
+    return False
+
+
 def is_agent_loop_file(path: str) -> bool:
-    """Runtime loop (run / turn / tool dispatch), never conversation_util."""
-    if is_context_assembly_file(path):
+    """Runtime loop (run / turn / tool dispatch), never conversation_util or postmortem."""
+    if is_context_assembly_file(path) or is_weak_topic_evidence_path(path):
+        return False
+    low = _norm_topic_path(path)
+    if not low.endswith((".ts", ".tsx", ".js", ".mjs", ".cjs", ".rs", ".py", ".go")):
         return False
     if _path_has_system(path, ("loop", "turn")):
         return True
-    low = _norm_topic_path(path)
     if not _AGENT_CRATE_RE.search(low):
         return False
     stem = low.rsplit("/", 1)[-1].rsplit(".", 1)[0]
@@ -1011,6 +1176,8 @@ def _production_rank(path: str) -> int:
     leaf = low.rsplit("/", 1)[-1]
     if is_agent_memory_path(path):
         return 8
+    if is_weak_topic_evidence_path(path):
+        return 6
     if (
         "/tests/" in f"/{low}/"
         or "/test/" in f"/{low}/"
@@ -1019,6 +1186,8 @@ def _production_rank(path: str) -> int:
         or leaf.startswith("test_")
     ):
         return 1
+    if low.endswith("docs/architecture.md") or low == "docs/architecture.md":
+        return 0
     return 0
 
 
@@ -1055,7 +1224,11 @@ def _rebind_loop_and_assembly(
         if "上下文装配" in title or "context assembly" in title.lower():
             loop.title = _system_title("agent-loop", zh)
             loop.purpose = _purpose_for(loop.title, zh, topic_id="agent-loop")
-        kept = [p for p in loop.key_files if not is_context_assembly_file(p)]
+        kept = [
+            p
+            for p in loop.key_files
+            if not is_context_assembly_file(p) and not is_weak_topic_evidence_path(p)
+        ]
         moved_assembly = [p for p in loop.key_files if is_context_assembly_file(p)]
         if not any(is_agent_loop_file(p) for p in kept) and loop_pool:
             kept = loop_pool[:6]
@@ -1066,7 +1239,9 @@ def _rebind_loop_and_assembly(
                 if len(kept) >= 8:
                     break
         loop.key_files = _prefer_production(kept)[:8]
-        if not loop.purpose or "上下文装配" in (loop.purpose or ""):
+        if not loop.key_files:
+            by_id.pop("agent-loop", None)
+        elif not loop.purpose or "上下文装配" in (loop.purpose or ""):
             loop.purpose = _purpose_for(loop.title, zh, topic_id="agent-loop")
 
     assembly = by_id.get("context-assembly")
@@ -1310,6 +1485,8 @@ def codebase_structure_for(
     project: ProjectContext, *, language: str = "zh", limit: int = 12
 ) -> list[CodebasePart]:
     """Crate / top-package rows for 代码如何拆分. Not a file dump."""
+    from repowiki.core.grounding import is_doc_pack_row
+
     zh = _is_zh(language)
     clusters: dict[str, str] = {}
     for f in project.files:
@@ -1324,6 +1501,8 @@ def codebase_structure_for(
             continue
         else:
             name, loc = parts[0], parts[0]
+        if is_doc_pack_row(name, loc):
+            continue
         clusters.setdefault(name, loc)
     rows: list[CodebasePart] = []
     for name, loc in list(clusters.items())[:limit]:
@@ -1396,6 +1575,17 @@ def _fallback_key_types_for_topic(
             ("start_turn", "pager dispatch / start_turn"),
             ("TurnRunning", "本轮运行中"),
         ]
+    elif tid == "capability-seam" and (
+        not blob
+        or "definition" in blob.lower()
+        or "provider" in blob.lower()
+        or "capability seam" in blob.lower()
+    ):
+        hints = [
+            ("Service Definition", "swappable capability contract"),
+            ("Provider", "implements a definition"),
+            ("Consumer", "uses ctx.llm / ctx.fs"),
+        ]
     elif tid in {"terminal-ui", "tui-pager"} and re.search(r"\bPager\b", blob):
         hints = [("Pager", "TUI pager")]
     elif tid == "tool-system" and "ToolBridge" in blob:
@@ -1404,7 +1594,10 @@ def _fallback_key_types_for_topic(
         hints = [("main", "进程入口")]
     out: list[KeyType] = []
     seen: set[str] = set()
-    for i, name in enumerate(harvested):
+    prefer_hints_first = tid == "capability-seam" and hints
+    harvest_iter = [] if prefer_hints_first else harvested
+    hint_iter = hints + ([(n, "") for n in harvested] if prefer_hints_first else [])
+    for i, name in enumerate(harvest_iter):
         if not name or name in seen or "/" in name:
             continue
         seen.add(name)
@@ -1412,8 +1605,10 @@ def _fallback_key_types_for_topic(
         out.append(KeyType(name=name, role="", path=path, line=1))
         if len(out) >= 4:
             return out
-    for i, (name, role) in enumerate(hints):
-        if name in seen or (blob and name not in blob and name != "main"):
+    for i, (name, role) in enumerate(hint_iter if prefer_hints_first else hints):
+        if name in seen or (
+            blob and name not in blob and name != "main" and tid != "capability-seam"
+        ):
             continue
         seen.add(name)
         path = files[min(i, len(files) - 1)]

@@ -20,7 +20,7 @@ from repowiki.core.models import (
 )
 
 # Bump when grounding rules change so the same content_hash is rescanned.
-WIKI_GROUND_REVISION = 2
+WIKI_GROUND_REVISION = 3
 
 # Training-memory product tokens. Kept only when the tree actually has them.
 _FOREIGN_PRODUCT_CRATES = (
@@ -57,6 +57,32 @@ _MERMAID_PARTICIPANT = re.compile(
     re.I,
 )
 _MERMAID_FENCE_RE = re.compile(r"(?ms)^```mermaid\n(.*?)```")
+# Leftover after a path:line chip was cut: `ts:1` / `md:1` / bare ts:1.
+# Do not match the `py:3` inside `app/main.py:3` (dot precedes the ext).
+_ORPHAN_EXT_CHIP = re.compile(
+    r"`(?:[A-Za-z]{1,4}):\d+(?:-\d+)?(?:[ \t]+[^`]*)?`"
+)
+_ORPHAN_EXT_BARE = re.compile(
+    r"(?<![A-Za-z0-9_/.`])(?:[A-Za-z]{1,4}):\d+(?:-\d+)?(?![A-Za-z0-9_])"
+)
+_GLUED_FILE_EXT = re.compile(
+    r"(\bfiles\))\.(ts|tsx|js|jsx|mjs|cjs|md|py|rs)\b",
+    re.I,
+)
+_INVENTORY_FOCUS_RE = re.compile(
+    r"organized as directory modules|"
+    r"按目录模块组织|"
+    r"Hub packages to explain first|"
+    r"Configuration lives in|"
+    r"Directory modules form the architecture|"
+    r"Heaviest modules by PageRank",
+    re.I,
+)
+_FALLBACK_ENTRY_TAIL = "启动，一次调用从这里进图"
+_HOLE_CONJ_RE = re.compile(
+    r"[、,]\s*(?:与|和|and|or)\s*[。.]|[、,]\s*[。.]",
+    re.I,
+)
 _SAFE_MERMAID_LABELS = {
     "entry",
     "core",
@@ -147,6 +173,102 @@ def text_cites_foreign_tree(text: str, index: CiteIndex) -> bool:
     return bool(_ungrounded_product_spans(text or "", index))
 
 
+def text_cites_foreign_product(text: str, index: CiteIndex) -> bool:
+    """True when prose names grok-study crates/symbols missing from this tree.
+
+    Unlike ``text_cites_foreign_tree``, this ignores ordinary crate paths so a
+    topic page can keep an unresolved-but-complete chip (``Ghost``) while still
+    dropping ``start_turn`` lecture leftovers.
+    """
+    hits = []
+    for match in _XAI_GROK_RE.finditer(text or ""):
+        raw = match.group(0)
+        leaf = raw.replace("\\", "/").rstrip("/").split("/")[-1]
+        if not symbol_in_tree(index, leaf) and not location_in_tree(index, raw):
+            hits.append(raw)
+    for name in _FOREIGN_SYMBOLS:
+        if symbol_in_tree(index, name):
+            continue
+        if re.search(r"(?<![A-Za-z0-9_])" + re.escape(name) + r"(?![A-Za-z0-9_])", text or ""):
+            hits.append(name)
+    for name in _FOREIGN_PRODUCT_CRATES:
+        if symbol_in_tree(index, name) or location_in_tree(index, name):
+            continue
+        if re.search(r"(?<![A-Za-z0-9_])" + re.escape(name) + r"(?![A-Za-z0-9_])", text or "", re.I):
+            hits.append(name)
+    return bool(hits)
+
+
+def scrub_foreign_product_prose(text: str, index: CiteIndex) -> str:
+    """Drop grok-study leftovers; keep ordinary path chips for topic pages."""
+    if not text:
+        return text
+    parts = _SENTENCE_SPLIT.split(text)
+    kept = [part for part in parts if not text_cites_foreign_product(part, index)]
+    return repair_grounded_prose("".join(kept))
+
+
+def is_inventory_focus(text: str) -> bool:
+    """True when outline fallback dumped a file-count inventory, not a call path."""
+    return bool(_INVENTORY_FOCUS_RE.search(text or ""))
+
+
+def is_fragment_claim(text: str) -> bool:
+    """True when a bullet/sentence is a cite leftover, not a real claim."""
+    raw = (text or "").strip()
+    s = re.sub(r"^[-*]\s+", "", raw).strip()
+    if not s:
+        return True
+    if re.fullmatch(r"`?[A-Za-z0-9_.@-]+:\d+(?:-\d+)?`?[。.]?", s):
+        return True
+    if re.match(r"^`?(?:[A-Za-z]{1,4}|[A-Za-z0-9_-]+\.[A-Za-z]{1,4}):\d+`?\s*启动", s):
+        return True
+    if _FALLBACK_ENTRY_TAIL in s and not re.search(r"`[^`]+/[^`]+`", s):
+        return True
+    if re.fullmatch(r"[。.\s、与和]+", s):
+        return True
+    if _HOLE_CONJ_RE.search(s) and len(re.sub(r"\s+", "", s)) < 16:
+        return True
+    if re.match(r"^\s*(?:列出|包含)\s", s) and len(s) < 24:
+        return True
+    return False
+
+
+def is_hollow_tip(text: str) -> bool:
+    """True when cite-scrub left a broken term gloss (「、 与 。」)."""
+    s = re.sub(r"\s+", " ", (text or "").strip())
+    if len(s) < 4:
+        return True
+    if _HOLE_CONJ_RE.search(s):
+        return True
+    if re.search(r"(?:与|和|and)\s*[。.]$", s, re.I):
+        return True
+    if re.match(r"^(?:列出|包含)\s", s) and len(s) < 24:
+        return True
+    if s in {"列出其顺序", "包含 。", "包含."}:
+        return True
+    return False
+
+
+def repair_grounded_prose(text: str) -> str:
+    """Collapse cite-scrub holes and orphan extension leftovers. No LLM."""
+    if not text:
+        return text
+    out = _ORPHAN_EXT_CHIP.sub("", text)
+    out = _ORPHAN_EXT_BARE.sub("", out)
+    out = _GLUED_FILE_EXT.sub(r"\1.", out)
+    out = re.sub(r"Configuration lives in\s*[.。]", "", out, flags=re.I)
+    out = re.sub(r"[、,]\s*[、,]", "、", out)
+    out = re.sub(r"[、,]\s*(?:与|和|and|or)\s*[。.]", "。", out, flags=re.I)
+    out = re.sub(r"(?:与|和)\s*[。.]", "。", out)
+    out = re.sub(r"\s+[。.]", lambda m: m.group(0).strip(), out)
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    parts = _SENTENCE_SPLIT.split(out)
+    kept = [part for part in parts if not is_fragment_claim(part)]
+    return "".join(kept).strip()
+
+
 def scrub_ungrounded_prose(text: str, index: CiteIndex) -> str:
     """Drop sentences that name crates/symbols/paths not in version_files."""
     if not text:
@@ -159,10 +281,10 @@ def scrub_ungrounded_prose(text: str, index: CiteIndex) -> str:
     for part in parts:
         if text_cites_foreign_tree(part, index):
             continue
+        if is_inventory_focus(part) and "entrypoint" not in part.lower():
+            continue
         kept.append(part)
-    out = "".join(kept)
-    out = re.sub(r"[ \t]{2,}", " ", out)
-    out = re.sub(r"\n{3,}", "\n\n", out)
+    out = repair_grounded_prose("".join(kept))
     return out.strip()
 
 
@@ -230,11 +352,49 @@ def sanitize_mermaid_to_tree(source: str, index: CiteIndex) -> str:
     return "\n".join(out).strip()
 
 
+_DOC_PACK_LEAVES = frozenset(
+    {
+        "readme.md",
+        "readme",
+        "agents.md",
+        "claude.md",
+        "contributing.md",
+        "changelog.md",
+        "license",
+        "license.md",
+        "code_of_conduct.md",
+    }
+)
+
+
+def is_doc_pack_row(name: str, location: str) -> bool:
+    """True when a 拆分-table row is a markdown/agent file, not a package."""
+    loc = (location or name or "").replace("\\", "/").strip().strip("`")
+    leaf = loc.rsplit("/", 1)[-1].lower()
+    if leaf in _DOC_PACK_LEAVES:
+        return True
+    if "." in leaf and leaf.rsplit(".", 1)[-1].lower() in {
+        "md",
+        "txt",
+        "rst",
+        "yml",
+        "yaml",
+    }:
+        return True
+    if "." in (name or "") and (name or "").replace("\\", "/").rsplit("/", 1)[
+        -1
+    ].lower() in _DOC_PACK_LEAVES:
+        return True
+    return False
+
+
 def _scrub_codebase_parts(rows: list[CodebasePart], index: CiteIndex) -> list[CodebasePart]:
     kept: list[CodebasePart] = []
     for row in rows or []:
         loc = (row.location or "").strip()
         name = (row.name or "").strip()
+        if is_doc_pack_row(name, loc):
+            continue
         if loc and not location_in_tree(index, loc):
             continue
         if name and not (
@@ -242,6 +402,8 @@ def _scrub_codebase_parts(rows: list[CodebasePart], index: CiteIndex) -> list[Co
         ):
             continue
         row.purpose = scrub_ungrounded_prose(row.purpose, index)
+        if is_fragment_claim(row.purpose) or is_hollow_tip(row.purpose):
+            row.purpose = ""
         if text_cites_foreign_tree(f"{row.name} {row.location} {row.purpose}", index):
             continue
         kept.append(row)
@@ -264,7 +426,7 @@ def ground_overview(overview: ProjectOverview, index: CiteIndex) -> ProjectOverv
             scrub_ungrounded_prose(item, index)
             for item in (getattr(overview, "what_it_is", None) or [])
         )
-        if s
+        if s and not is_fragment_claim(s)
     ]
     overview.key_features = [
         s
@@ -399,6 +561,21 @@ def scrub_wiki_page_content(content: str, index: CiteIndex) -> str:
 
     out = _MERMAID_FENCE_RE.sub(fence_repl, content)
     return scrub_ungrounded_prose(out, index)
+
+
+def scrub_topic_page_content(content: str, index: CiteIndex) -> str:
+    """GET/materialize for topics/concepts: drop grok leftovers, not all cites."""
+    if not content:
+        return content
+
+    def fence_repl(match: re.Match[str]) -> str:
+        body = sanitize_mermaid_to_tree(match.group(1), index)
+        if not body:
+            return ""
+        return f"```mermaid\n{body}\n```"
+
+    out = _MERMAID_FENCE_RE.sub(fence_repl, content)
+    return scrub_foreign_product_prose(out, index)
 
 
 def tree_has_grok_product(*blobs: str) -> bool:

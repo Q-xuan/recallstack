@@ -871,11 +871,18 @@ class Analyzer:
             focus = ""
             if outline and outline.overview_focus:
                 from repowiki.core.cite_check import CiteIndex
-                from repowiki.core.grounding import scrub_ungrounded_prose
-
-                focus = scrub_ungrounded_prose(
-                    outline.overview_focus, CiteIndex.from_project(project)
+                from repowiki.core.grounding import (
+                    is_inventory_focus,
+                    scrub_ungrounded_prose,
                 )
+
+                raw_focus = outline.overview_focus
+                if not is_inventory_focus(raw_focus):
+                    focus = scrub_ungrounded_prose(
+                        raw_focus, CiteIndex.from_project(project)
+                    )
+                    if is_inventory_focus(focus):
+                        focus = ""
             if focus:
                 overview.runtime_flow = focus
             elif zh:
@@ -1098,8 +1105,10 @@ class Analyzer:
                     "结构图用来看耦合；类型在链路上是角色，不是文件清单。"
                 )
             else:
+                from repowiki.core.grounding import is_inventory_focus
+
                 focus = (outline.architecture_focus if outline else "").strip()
-                if "Heaviest modules by PageRank" in focus:
+                if is_inventory_focus(focus) or "Heaviest modules by PageRank" in focus:
                     focus = ""
                 arch.description = focus or (
                     "The repo is split by the systems that actually run a call. "
@@ -1217,6 +1226,10 @@ def _fallback_what_it_is(
             if topic.section == "getting-started" or not topic.key_files:
                 continue
             path = topic.key_files[0]
+            from repowiki.core.topics import is_weak_topic_evidence_path
+
+            if is_weak_topic_evidence_path(path):
+                continue
             cite = path if re.search(r":\d+", path) else f"{path}:1"
             title = topic.title or topic.id
             if zh:

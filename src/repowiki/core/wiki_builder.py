@@ -270,8 +270,12 @@ class WikiBuilder:
         ):
             lines.append(f"{overview.one_liner}\n")
 
+        from repowiki.core.grounding import is_fragment_claim, is_inventory_focus
+
         what = _dedupe_claim_lines(
-            s for s in (getattr(overview, "what_it_is", None) or []) if str(s).strip()
+            s
+            for s in (getattr(overview, "what_it_is", None) or [])
+            if str(s).strip() and not is_fragment_claim(str(s))
         )
         lines.append(f"## {structural_title('what-is', language)}\n")
         if what:
@@ -287,6 +291,8 @@ class WikiBuilder:
         if not mermaid and architecture:
             mermaid = (getattr(architecture, "mermaid_component", "") or "").strip()
         flow = (getattr(overview, "runtime_flow", "") or "").strip()
+        if flow and is_inventory_focus(flow):
+            flow = ""
         arch_type = getattr(architecture, "architecture_type", "") if architecture else ""
         arch_title = structural_title("architecture", language)
         if mermaid or flow or arch_type:
@@ -378,7 +384,11 @@ class WikiBuilder:
                 "Follow the README (npm / pnpm / source / Web UI) until the process starts, then read architecture. "
                 "Cite `README.md`; do not paste the README into this section.\n"
             )
+        from repowiki.core.grounding import is_inventory_focus
+
         flow = (getattr(overview, "runtime_flow", "") or "").strip()
+        if flow and is_inventory_focus(flow):
+            flow = ""
         if flow:
             lines.append(f"## {structural_title('how-a-call-runs', language)}\n")
             lines.append(f"{flow}\n")
@@ -1158,7 +1168,14 @@ def _see_also_lines(
 
 
 def _append_term_tips(lines: list[str], tips, language: str = "en") -> None:
-    items = [tip for tip in (tips or []) if getattr(tip, "term", "")]
+    from repowiki.core.grounding import is_hollow_tip
+
+    items = [
+        tip
+        for tip in (tips or [])
+        if getattr(tip, "term", "")
+        and not is_hollow_tip(getattr(tip, "tip", "") or "")
+    ]
     if not items:
         return
     lines.append(f"## {structural_title('term-tips', language)}\n")
@@ -1315,6 +1332,9 @@ _MERMAID_NODE_RE = re.compile(
     r'(?P<pre>\b[A-Za-z][\w-]*\s*)(?P<open>\[(?:")?)(?P<label>[^\]"\n]+)(?P<close>"?\])'
 )
 _INCOMPLETE_TRAIL_RE = re.compile(r"(然后|后将|并把|并将|为|把|从)$")
+_MERMAID_TRAIL_JUNK = re.compile(
+    r"(?:、-|、$|--$|-$|（[A-Za-z0-9_./-]+$|\([A-Za-z0-9_./-]+$)"
+)
 _MERMAID_TYPE_RE = re.compile(
     r"^(?:flowchart|graph|sequenceDiagram|classDiagram|stateDiagram(?:-v2)?|"
     r"erDiagram|gantt|pie|gitGraph|mindmap|timeline)\b",
@@ -1396,9 +1416,14 @@ def _mostly_cjk(text: str) -> bool:
 
 def _strip_incomplete_mermaid_trail(text: str) -> str:
     cleaned = (text or "").strip()
+    cleaned = _MERMAID_TRAIL_JUNK.sub("", cleaned).rstrip()
     while cleaned and _INCOMPLETE_TRAIL_RE.search(cleaned):
         cleaned = _INCOMPLETE_TRAIL_RE.sub("", cleaned).rstrip()
-    return cleaned
+    if cleaned.count("（") > cleaned.count("）"):
+        cleaned = cleaned.rsplit("（", 1)[0].rstrip()
+    if cleaned.count("(") > cleaned.count(")"):
+        cleaned = cleaned.rsplit("(", 1)[0].rstrip()
+    return cleaned.rstrip("、，,;:（(-")
 
 
 def normalize_mermaid_source(code: str) -> str:
@@ -1653,15 +1678,16 @@ def clip_mermaid_label(text: str) -> str:
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     if not cleaned:
         return ""
-    cap = 12 if _mostly_cjk(cleaned) else 24
+    cap = 12 if _mostly_cjk(cleaned) else 28
     if len(cleaned) > cap:
         chunk = cleaned[:cap]
         cut = -1
-        for sep in (" ", "、", "，", "；", "/", "-"):
+        # Do not break on '-' (--profile) or '/' (apps/cli mid-path).
+        for sep in (" ", "、", "，", "；"):
             idx = chunk.rfind(sep)
             if idx >= max(2, cap // 3):
                 cut = max(cut, idx)
-        cleaned = chunk[:cut] if cut > 0 else chunk
+        cleaned = chunk[:cut].rstrip() if cut > 0 else chunk
     return _strip_incomplete_mermaid_trail(cleaned)
 
 
