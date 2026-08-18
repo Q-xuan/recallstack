@@ -14,6 +14,8 @@ from repowiki.core.grounding import (
     is_fragment_claim,
     is_hollow_tip,
     repair_grounded_prose,
+    rewrite_lecture_claim,
+    rewrite_lecture_prose,
     scrub_ungrounded_prose,
     scrub_wiki_page_content,
     text_cites_foreign_tree,
@@ -224,6 +226,8 @@ def test_repair_grounded_prose_drops_orphan_ext_and_hollow_tips():
     assert is_hollow_tip("包含 `package.json`、 与")
     assert is_hollow_tip("插件通过 seam 暴露的上下文（如 、）")
     assert is_hollow_tip("把 交给 app")
+    assert is_hollow_tip("把 / 接上")
+    assert is_hollow_tip("Capability Seam 是 Service Definition / Provider / Consumer，把 / 接上。")
     assert is_hollow_tip("再叠加 profile 的 、`$DSH_HOME/cordis.patch.yml`")
     assert is_fragment_claim("再叠加 profile 的 、`$DSH_HOME/cordis.patch.yml`。")
     assert is_doc_pack_row("README.md", "README.md")
@@ -239,6 +243,12 @@ def test_repair_grounded_prose_drops_orphan_ext_and_hollow_tips():
     assert "files).ts" not in repaired
     assert "Configuration lives in ." not in repaired
     assert "`ts:1`" not in repaired
+
+    wired = repair_grounded_prose(
+        "Capability Seam 是 Service Definition / Provider / Consumer，把 / 接上。"
+    )
+    assert "把 / 接上" not in wired
+    assert "Service Definition" in wired
 
     leftover = scrub_ungrounded_prose(
         "- `ts:1` 启动，一次调用从这里进图。\n"
@@ -296,6 +306,40 @@ def test_repair_grounded_prose_keeps_markdown_newlines_and_drops_orphan_chip():
     assert "\n## 概述\n" in scrubbed
     assert "\n- 仓库目标与边界写在 README" in scrubbed
     assert "`ts:1`" not in scrubbed
+
+
+def test_scrub_rewrites_spaced_lecture_how_and_hollow_wire():
+    """GET scrub must rewrite「解释 X 如何」paragraphs and drop「把 / 接上」."""
+    spaced = "解释 Capability Seam 如何界定插件与宿主之间的能力边界。"
+    assert "解释" not in rewrite_lecture_claim(spaced)
+    assert "如何" not in rewrite_lecture_claim(spaced)
+    page = (
+        "## 核心子系统\n\n"
+        "### Capability Seam\n"
+        "解释 Capability Seam 如何界定插件与宿主之间的能力边界，"
+        "以及 permission policy 与 skill invocation policy 如何落在这条 seam 上。\n\n"
+        "Capability Seam 是 Service Definition / Provider / Consumer，把 / 接上。\n\n"
+        "> **profile** — 包含 `package.json`、 与\n"
+        "> **cmdline** — 把 交给 app\n"
+    )
+    rewritten = rewrite_lecture_prose(page)
+    assert "解释 Capability Seam 如何" not in rewritten
+    assert "Service Definition" in rewritten
+    index = cite_index_from_texts(
+        {
+            "docs/architecture.md": (
+                "# Architecture\n\n"
+                "A seam is a swappable capability: Service Definition, Provider, Consumer.\n"
+            ),
+            "apps/cli/src/bin.ts": "export function main() {}\n",
+        }
+    )
+    scrubbed = scrub_wiki_page_content(page, index)
+    assert "解释 Capability Seam 如何" not in scrubbed
+    assert "把 / 接上" not in scrubbed
+    assert "package.json、 与" not in scrubbed
+    assert "把 交给" not in scrubbed
+    assert "Service Definition" in scrubbed
 
 
 def test_cite_check_works_without_llm_on_deterministic_content():

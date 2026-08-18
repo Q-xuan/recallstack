@@ -2351,6 +2351,21 @@ def fill_wiki_key_type_lines(content: str, file_texts: dict[str, str] | None) ->
         if not symbol or _is_dummy_symbol(symbol):
             rewritten = stamp_or_drop_path_only(path, line, end)
             return rewritten if rewritten else match.group(0)
+        store_path = _resolve_store_key(file_texts, path) or path
+        store_text = (file_texts or {}).get(store_path) or (file_texts or {}).get(path) or ""
+        loc = (store_path or path).replace("\\", "/")
+        seam_chip = (symbol or "").strip().lower() in {
+            "service definition",
+            "service provider",
+            "provider",
+            "consumer",
+        } or loc.endswith("architecture.md")
+        if seam_chip and store_text and (line == "1" or not line):
+            from repowiki.core.topics import pin_key_type_line
+
+            pinned = pin_key_type_line(store_path, symbol, store_text, int(line or 0))
+            if pinned and pinned != 1:
+                return f"`{store_path}:{pinned} {symbol}`"
         if line and line != "1":
             store_existing = _resolve_store_key(file_texts, path)
             if store_existing or not file_texts:
@@ -2362,7 +2377,6 @@ def fill_wiki_key_type_lines(content: str, file_texts: dict[str, str] | None) ->
             new_path, new_line = hit
             if _resolve_store_key(file_texts, new_path):
                 return f"`{new_path}:{new_line} {symbol}`"
-        store_path = _resolve_store_key(file_texts, path)
         if store_path:
             found = line_of_symbol_in_text(file_texts.get(store_path) or "", symbol)
             if found:
