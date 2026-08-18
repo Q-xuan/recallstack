@@ -208,7 +208,7 @@ def scrub_foreign_product_prose(text: str, index: CiteIndex) -> str:
         part
         for part in parts
         if not text_cites_foreign_product(part, index)
-        and not _drop_scaffold_or_weak_start(part, index)
+            and not _drop_scaffold_or_weak_start(part)
     ]
     return repair_grounded_prose("".join(kept))
 

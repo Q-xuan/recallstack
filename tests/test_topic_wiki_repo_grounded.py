@@ -671,18 +671,24 @@ def test_dsh_decoys_do_not_steal_overview_or_topics(monkeypatch):
     assert "whenTurnsSettled" not in index["content"]
     assert "agent.cordis.yml" not in index["content"]
     assert "WebScaffold" not in index["content"]
-    assert "node-module-stub" not in index["content"]
-    assert "LoadHookContext" not in index["content"]
     start_lines = [
-        ln for ln in index["content"].splitlines() if "启动，一次调用从这里进图" in ln
+        ln
+        for ln in index["content"].splitlines()
+        if "启动，一次调用从这里进图" in ln or "process starts at" in ln.lower()
     ]
     assert start_lines
     assert all(
-        "node-module-stub" not in ln and "e2e" not in ln and "fixture" not in ln
+        "node-module-stub" not in ln
+        and "LoadHookContext" not in ln
+        and "e2e" not in ln
+        and "fixture" not in ln
+        and "tsdown" not in ln
         for ln in start_lines
     )
     assert any(
-        "apps/cli/src/bin.ts" in ln or "apps/web/src/main.ts" in ln or "apps/dsh/src/main.ts" in ln
+        "apps/cli/src/bin.ts" in ln
+        or "apps/web/src/main.ts" in ln
+        or "apps/dsh/src/main.ts" in ln
         for ln in start_lines
     )
     assert "start_turn" not in blob.lower() or "start_turn" in texts.get(
