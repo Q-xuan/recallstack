@@ -8,7 +8,14 @@ from repowiki.core.cite_check import (
     sanitize_text,
     verify_wiki_data,
 )
-from repowiki.core.grounding import scrub_ungrounded_prose, text_cites_foreign_tree
+from repowiki.core.grounding import (
+    is_doc_pack_row,
+    is_fragment_claim,
+    is_hollow_tip,
+    repair_grounded_prose,
+    scrub_ungrounded_prose,
+    text_cites_foreign_tree,
+)
 from repowiki.core.models import (
     ArchitectureDiagram,
     CallChain,
@@ -200,6 +207,41 @@ def test_sanitize_text_keeps_path_line_symbol_and_drops_truncated_chips():
     assert not scrubbed.startswith("ts:")
 
 
+def test_repair_grounded_prose_drops_orphan_ext_and_hollow_tips():
+    assert is_fragment_claim("ts:1 启动，一次调用从这里进图。")
+    assert is_fragment_claim("`ts:1`。")
+    assert is_fragment_claim("`client.ts:1`。")
+    assert is_fragment_claim("- ts:1 启动，一次调用从这里进图。")
+    assert not is_fragment_claim(
+        "进程从 `apps/dsh/src/main.ts:1` 启动，一次调用从这里进图。"
+    )
+    assert is_hollow_tip("列出其顺序")
+    assert is_hollow_tip("包含 `package.json`、 与 。")
+    assert is_doc_pack_row("README.md", "README.md")
+    assert is_doc_pack_row("README.md", "packages/README.md")
+    assert is_doc_pack_row("AGENTS.md", "AGENTS.md")
+    assert not is_doc_pack_row("cli", "apps/cli")
+
+    glued = (
+        "deepseek-ai-dsh-root is organized as directory modules (1000 files).ts. "
+        "Configuration lives in . Hub packages to explain first: `apps`."
+    )
+    repaired = repair_grounded_prose(glued)
+    assert "files).ts" not in repaired
+    assert "Configuration lives in ." not in repaired
+    assert "`ts:1`" not in repaired
+
+    leftover = scrub_ungrounded_prose(
+        "- `ts:1` 启动，一次调用从这里进图。\n"
+        "- `client.ts:1`。\n"
+        "bundle 列出 `ghost/pack.ts` 与 `nope.ts`。",
+        CiteIndex.from_project(_project()),
+    )
+    assert "`ts:1`" not in leftover
+    assert "client.ts:1" not in leftover
+    assert "启动，一次调用从这里进图" not in leftover
+
+
 def test_cite_check_works_without_llm_on_deterministic_content():
     """Offline path: still strip impossible paths if any slipped in."""
     project = _project()
@@ -330,3 +372,52 @@ def test_overview_drops_grok_symbols_missing_from_tree():
     assert "start_turn" not in blob
     assert "packages/xai-grok-pager" not in blob
     assert any(p.location == "app" for p in cleaned.overview.codebase_structure)
+
+
+def test_verify_drops_doc_pack_rows_and_hollow_term_tips():
+    project = _project()
+    project.files.extend(
+        [
+            FileInfo(path="README.md", size=8, language="markdown", lines=2, content="# demo\n"),
+            FileInfo(path="AGENTS.md", size=8, language="markdown", lines=2, content="# agents\n"),
+            FileInfo(
+                path="packages/README.md",
+                size=8,
+                language="markdown",
+                lines=2,
+                content="# pkgs\n",
+            ),
+        ]
+    )
+    data = WikiData(
+        overview=ProjectOverview(
+            name="demo",
+            codebase_structure=[
+                CodebasePart(name="README.md", location="README.md", purpose="文档"),
+                CodebasePart(name="AGENTS.md", location="AGENTS.md", purpose="代理说明"),
+                CodebasePart(
+                    name="README.md",
+                    location="packages/README.md",
+                    purpose="`md` 这一包在仓库里的职责边界。",
+                ),
+                CodebasePart(
+                    name="app",
+                    location="app",
+                    purpose="`app` 这一包在仓库里的职责边界。",
+                ),
+            ],
+            term_tips=[
+                TermTip(term="boot", tip="包含 `package.json`、 与 。"),
+                TermTip(term="boot", tip="列出其顺序"),
+                TermTip(term="boot", tip="进程从入口启动后再装配。"),
+            ],
+        )
+    )
+    cleaned = verify_wiki_data(data, project)
+    locs = [p.location for p in cleaned.overview.codebase_structure]
+    assert "README.md" not in locs
+    assert "AGENTS.md" not in locs
+    assert "app" in locs
+    tips = [t.tip for t in cleaned.overview.term_tips]
+    assert all("与 。" not in tip and tip != "列出其顺序" for tip in tips)
+    assert any("入口" in tip for tip in tips)

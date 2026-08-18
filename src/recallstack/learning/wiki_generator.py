@@ -24,7 +24,7 @@ from recallstack.learning.learning_contract import (
     wiki_prose_excerpt,
 )
 from repowiki.core.graph import DependencyGraph
-from repowiki.core.grounding import WIKI_GROUND_REVISION
+from repowiki.core.grounding import WIKI_GROUND_REVISION, is_inventory_focus
 from repowiki.core.models import (
     ArchitectureDiagram,
     Citation,
@@ -165,7 +165,7 @@ def build_deterministic_wiki_data(
         what_it_is=what_it_is,
         runtime_flow=(
             outline.overview_focus
-            if outline.overview_focus
+            if outline.overview_focus and not is_inventory_focus(outline.overview_focus)
             else t(
                 "Work enters at the process entrypoint, moves through hub types, "
                 "then out to dependents. The diagram follows that call, not the crate tree.",

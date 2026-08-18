@@ -60,7 +60,6 @@ def build_deterministic_outline(
     if not entry_paths:
         entry_paths = graph.get_entry_points()[:8]
     entry_set = set(entry_paths)
-    config_paths = [f.path for f in project.files if f.is_config]
 
     entry_modules: list[str] = []
     seen_entry_mod: set[str] = set()
@@ -114,33 +113,47 @@ def build_deterministic_outline(
     ][:6]
     if not top_mods:
         top_mods = names[: min(6, len(names))]
-    overview_bits = [
-        f"{project.name} is organized as directory modules ({len(project.files)} files)."
-    ]
-    if entry_paths:
-        overview_bits.append(
-            "Start at the entrypoints to see how the process is wired: "
-            + ", ".join(f"`{p}`" for p in entry_paths[:6])
-            + "."
-        )
-    if config_paths:
-        overview_bits.append(
-            "Configuration lives in " + ", ".join(f"`{p}`" for p in config_paths[:6]) + "."
-        )
-    if top_mods:
-        overview_bits.append(
-            "Hub packages to explain first: " + ", ".join(f"`{n}`" for n in top_mods) + "."
-        )
-
-    arch_bits = [
-        "Directory modules form the architecture. Read from entrypoints into the "
-        "highest-centrality packages, then out to dependents. PageRank ranks which "
-        "modules to write deeply — it is not a file inventory."
-    ]
-    if entry_modules:
-        arch_bits.append("Start from: " + ", ".join(f"`{n}`" for n in entry_modules) + ".")
-    if top_mods:
-        arch_bits.append("Core packages: " + ", ".join(f"`{n}`" for n in top_mods) + ".")
+    zh = (language or "en").strip().lower().startswith(("zh", "cn"))
+    hubs = ", ".join(f"`{n}`" for n in top_mods[:6]) if top_mods else ""
+    entries = ", ".join(f"`{p}`" for p in entry_paths[:6]) if entry_paths else ""
+    if zh:
+        overview_bits = [
+            f"{project.name} 的目标、一次真实调用经过谁、仓库怎么拆。"
+        ]
+        if entries:
+            overview_bits.append(f"进程从 {entries} 进来，一次调用从这里进图。")
+        if hubs:
+            overview_bits.append(f"先看这些枢纽包：{hubs}。")
+        arch_bits = [
+            "仓库按一次调用真正经过的系统切页，而不是按目录罗列。"
+        ]
+        if entry_modules:
+            arch_bits.append(
+                "从 "
+                + ", ".join(f"`{n}`" for n in entry_modules)
+                + " 进链路。"
+            )
+        if hubs:
+            arch_bits.append(f"核心包：{hubs}。")
+    else:
+        overview_bits = [
+            f"{project.name}: the goal, who a real call passes through, and how the repo is split."
+        ]
+        if entries:
+            overview_bits.append(
+                "The process starts at "
+                + entries
+                + "; one call enters the graph here."
+            )
+        if hubs:
+            overview_bits.append("Hub packages: " + hubs + ".")
+        arch_bits = [
+            "Split pages by the systems a real call crosses, not a file inventory."
+        ]
+        if entry_modules:
+            arch_bits.append("Start from: " + ", ".join(f"`{n}`" for n in entry_modules) + ".")
+        if hubs:
+            arch_bits.append("Core packages: " + hubs + ".")
 
     emphasized = ["overview", "architecture"]
     emphasized.extend(names[:n_deep])

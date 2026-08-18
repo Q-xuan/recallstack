@@ -27,6 +27,7 @@ from repowiki.core.modules import ROOT_NAME, group_into_modules
 from repowiki.core.wiki_builder import (
     WikiBuilder,
     cap_directory_sidebar,
+    clip_mermaid_label,
     fill_key_type_chip_lines,
     filter_unknown_wiki_links,
     normalize_mermaid_source,
@@ -1239,5 +1240,26 @@ def test_directory_sidebar_excludes_cargo_and_ranks_product_crates():
     assert "xai-grok-pager" in titles
     assert "xai-grok-agent" in titles
     assert len(titles) <= 8
+
+
+def test_clip_mermaid_label_does_not_cut_mid_flag_or_path():
+    assert clip_mermaid_label("launcher 解析 --profile、--config 并启动") != (
+        "launcher 解析 --profile、-"
+    )
+    clipped = clip_mermaid_label("launcher 解析 --profile、--config 并启动")
+    assert "、-" not in clipped
+    assert "--profile、-" not in clipped
+    mid_path = clip_mermaid_label("创建 AppWebEntry 并运行（apps/cli/src/index.ts）")
+    assert not mid_path.endswith("（apps")
+    assert "（apps" not in mid_path
+    rendered = shorten_mermaid_node_labels(
+        "```mermaid\n"
+        "flowchart TD\n"
+        '  s1["launcher 解析 --profile、--config 并启动"]\n'
+        '  s2["创建 AppWebEntry 并运行（apps/cli/src/index.ts）"]\n'
+        "```\n"
+    )
+    assert 's1["launcher 解析 --profile、-"]' not in rendered
+    assert 's2["创建 AppWebEntry 并运行（apps"]' not in rendered
 
 
