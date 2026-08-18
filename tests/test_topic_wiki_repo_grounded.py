@@ -24,14 +24,20 @@ from repowiki.core.models import (
     Citation,
     CodebasePart,
     FileInfo,
+    KeyType,
     ProjectContext,
     ProjectOverview,
+    Subsystem,
     WikiData,
 )
 from repowiki.core.modules import group_into_modules
 from repowiki.core.outline import build_deterministic_outline, merge_outline
 from repowiki.core.scanner import build_file_tree
-from repowiki.core.topics import build_deterministic_topics, codebase_structure_for
+from repowiki.core.topics import (
+    build_deterministic_topics,
+    codebase_structure_for,
+    is_boilerplate_pack_purpose,
+)
 from repowiki.core.wiki_builder import WikiBuilder, collapse_repeated_mermaid_labels
 
 GROK_SLUGS = {
@@ -188,6 +194,30 @@ def _dsh_project_with_decoys() -> ProjectContext:
         _file(
             "packages/boot/src/index.ts",
             "export function boot() { loadBundle() }\n",
+        ),
+        _file(
+            "packages/boot/src/app-boot.ts",
+            "/** Stack bundle patches into the Cordis root and expose ctx. */\n"
+            "export function appBoot(ctx) { ctx.plugin(loadBundle()) }\n",
+        ),
+        _file(
+            "packages/boot/package.json",
+            '{"name":"@dsh/boot","description":"Stack bundle patches into the Cordis root"}\n',
+            language="json",
+        ),
+        _file(
+            "apps/cli/package.json",
+            '{"name":"@dsh/cli","description":"Parse argv and start the runner by profile"}\n',
+            language="json",
+        ),
+        _file(
+            "apps/cli/src/args.ts",
+            "export function parseArgs(argv: string[]) { return argv }\n",
+        ),
+        _file(
+            "apps/web/package.json",
+            '{"name":"@dsh/web","description":"Desktop/Web client UI"}\n',
+            language="json",
         ),
         _file(
             "packages/bundle/src/index.ts",
@@ -691,6 +721,44 @@ def test_dsh_decoys_do_not_steal_overview_or_topics(monkeypatch):
         or "apps/dsh/src/main.ts" in ln
         for ln in start_lines
     )
+    link_lines = [
+        ln
+        for ln in index["content"].splitlines()
+        if "接住链路上的一段工作" in ln or "owns one stretch" in ln.lower()
+    ]
+    assert link_lines
+    assert all(
+        "node-module-stub" not in ln
+        and "LoadHookContext" not in ln
+        and "e2e" not in ln
+        and "fixture" not in ln
+        and "tsdown" not in ln
+        for ln in link_lines
+    )
+    cordis_lines = [ln for ln in link_lines if "Cordis" in ln or "插件容器" in ln]
+    assert cordis_lines
+    assert all(
+        "vendor/cordis" in ln or "packages/boot" in ln or "app-boot" in ln
+        for ln in cordis_lines
+    )
+    assert "这一包在仓库里的职责边界" not in split_sec
+    assert "Responsibility boundary of" not in split_sec
+    if "| cli |" in split_sec or "| boot |" in split_sec:
+        assert "职责边界" not in split_sec
+    if "| cli |" in split_sec:
+        assert "argv" in split_sec or "profile" in split_sec or "runner" in split_sec
+    if "| boot |" in split_sec:
+        assert "bundle" in split_sec or "Cordis" in split_sec or "patch" in split_sec
+    assert "概述页需要说明" not in gs["content"]
+    assert "产品形态包括" not in gs["content"]
+    gs_flow = ""
+    if "## 调用链" in gs["content"]:
+        gs_flow = gs["content"].split("## 调用链", 1)[1].split("## ", 1)[0]
+    assert gs_flow
+    assert "概述页需要说明" not in gs_flow
+    assert any(tok in gs_flow for tok in ("pnpm", "dsh web", "bin.ts", "args.ts", "启动"))
+    assert "的 、" not in blob
+    assert "的、" not in blob
     assert "start_turn" not in blob.lower() or "start_turn" in texts.get(
         "packages/core/src/session.ts", ""
     )
@@ -772,6 +840,85 @@ def test_dsh_decoys_do_not_steal_overview_or_topics(monkeypatch):
     )
     assert "WebScaffold" not in concept_md
     assert ".e2e.ts" not in concept_md
+
+
+def test_callpath_stub_boilerplate_and_overview_instruction_are_rewritten(monkeypatch):
+    """Deterministic fallback must not keep stub evidence, 职责边界, or 概述页提纲."""
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    project = _dsh_project_with_decoys()
+    graph = DependencyGraph.build_from_project(project)
+    polluted = WikiData(
+        overview=ProjectOverview(
+            name="deepseek-harness",
+            runtime_flow=(
+                "概述页需要说明这个仓库是 DeepSeek 官方桌面/Web 客户端与 CLI 的 monorepo："
+                "产品形态包括 apps/web。"
+            ),
+            what_it_is=[
+                "「Cordis 与插件容器」接住链路上的一段工作，"
+                "证据在 `apps/web/src/node-module-stub.ts:12 LoadHookContext`。",
+                "进程从 `apps/cli/src/bin.ts:1` 启动，一次调用从这里进图。",
+            ],
+            codebase_structure=[
+                CodebasePart(
+                    name="cli",
+                    location="apps/cli",
+                    purpose="`apps/cli` 这一包在仓库里的职责边界。",
+                ),
+                CodebasePart(
+                    name="boot",
+                    location="packages/boot",
+                    purpose="`packages/boot` 这一包在仓库里的职责边界。",
+                ),
+            ],
+            subsystems=[
+                Subsystem(
+                    name="Cordis 与插件容器",
+                    role="装 plugin",
+                    key_types=[
+                        KeyType(
+                            name="LoadHookContext",
+                            path="apps/web/src/node-module-stub.ts",
+                            line=12,
+                        )
+                    ],
+                    files=["apps/web/src/node-module-stub.ts"],
+                )
+            ],
+        ),
+        architecture=ArchitectureDiagram(
+            architecture_type="plugin-system",
+            description=(
+                "按 `ghost/order.ts` 顺序叠加 bundle patch，"
+                "再叠加 profile 的 `ghost/profile.yml`、`$DSH_HOME/cordis.patch.yml`。"
+            ),
+        ),
+    )
+    cleaned = verify_wiki_data(polluted, project)
+    assert not any(
+        "node-module-stub" in (item or "") for item in cleaned.overview.what_it_is
+    )
+    assert all(
+        not is_boilerplate_pack_purpose(row.purpose)
+        for row in cleaned.overview.codebase_structure
+    )
+    payload = build_wiki_payload(project, graph, [], wiki_data=cleaned)
+    texts = {f.path: f.content or "" for f in project.files}
+    out = materialize_wiki_payload(payload, [], texts)
+    index = next(p for p in out["pages"] if p["id"] == "index")
+    gs = next(p for p in out["pages"] if p["id"] == "getting-started")
+    arch = next(p for p in out["pages"] if p["id"] == "architecture")
+    assert "node-module-stub" not in index["content"]
+    assert "LoadHookContext" not in index["content"]
+    assert "这一包在仓库里的职责边界" not in index["content"]
+    assert "argv" in index["content"] or "profile" in index["content"]
+    assert "bundle" in index["content"] or "Cordis" in index["content"]
+    assert "概述页需要说明" not in gs["content"]
+    assert "产品形态包括" not in gs["content"]
+    assert any(tok in gs["content"] for tok in ("pnpm", "bin.ts", "args.ts", "dsh"))
+    assert "的 、" not in arch["content"]
+    assert "的、" not in arch["content"]
+    assert "按 顺序" not in arch["content"]
 
 
 def test_mermaid_does_not_keep_start_turn_self_loop():

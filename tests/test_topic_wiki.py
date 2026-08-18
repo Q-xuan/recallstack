@@ -296,6 +296,7 @@ def test_e2e_tests_and_stubs_are_not_loop_or_process_evidence():
     from repowiki.core.topics import (
         is_agent_loop_file,
         is_entry_boot_file,
+        is_weak_callpath_evidence_path,
         is_weak_entrypoint_path,
         is_weak_topic_evidence_path,
         pick_process_entrypoint,
@@ -311,6 +312,8 @@ def test_e2e_tests_and_stubs_are_not_loop_or_process_evidence():
     assert is_junk_evidence_path(e2e, slug="agent-loop")
     assert chip_needs_restamp("agent-loop", f"{e2e}:15 WebScaffold")
     assert is_weak_entrypoint_path(stub)
+    assert is_weak_topic_evidence_path(stub)
+    assert is_weak_callpath_evidence_path(stub)
     assert not is_entry_boot_file(stub)
     assert is_entry_boot_file("apps/cli/src/bin.ts")
     assert is_entry_boot_file("apps/web/src/main.ts")

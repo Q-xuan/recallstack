@@ -334,6 +334,8 @@ def _sanitize_term_tips(tips, index: CiteIndex):
 
 def _sanitize_key_types(types, index: CiteIndex) -> list:
     """Drop types with no path, or whose path is not in the repo."""
+    from repowiki.core.topics import is_weak_callpath_evidence_path
+
     kept = []
     for kt in types or []:
         path = (getattr(kt, "path", "") or "").strip()
@@ -341,6 +343,8 @@ def _sanitize_key_types(types, index: CiteIndex) -> list:
             continue
         resolved = index.resolve(path)
         if not resolved:
+            continue
+        if is_weak_callpath_evidence_path(resolved):
             continue
         kt.path = resolved
         kt.role = sanitize_text(getattr(kt, "role", "") or "", index)

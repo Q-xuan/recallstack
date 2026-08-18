@@ -178,7 +178,7 @@ _DOC_CONCEPTS: tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...]], ...
         "Cordis",
         "Cordis",
         ("cordis",),
-        ("vendor/cordis", "packages/core"),
+        ("vendor/cordis", "packages/boot", "packages/core", "app-boot"),
     ),
 )
 
@@ -556,10 +556,13 @@ def fallback_topic_doc(
 def _topic_what_it_is(topic: TopicOutline, language: str) -> list[str]:
     zh = _is_zh(language)
     items: list[str] = []
-    cite = f"`{topic.key_files[0]}`" if topic.key_files else ""
+    evidence = pick_topic_callpath_evidence(topic)
+    cite = f"`{evidence}`" if evidence else ""
     if topic.purpose:
         items.append(f"{topic.purpose} {cite}".strip())
     for path in topic.key_files[:3]:
+        if is_weak_callpath_evidence_path(path):
+            continue
         if zh:
             items.append(f"这条链路经过 `{path}`。")
         else:
@@ -584,11 +587,13 @@ def merge_topics(
         if is_generic_web_slug(topic_id) and not repo_has_web_system(known, topic_id):
             continue
         files = [p for p in item.key_files if p.replace("\\", "/") in known]
+        section = item.section if item.section in {"getting-started", "deep-dive"} else "deep-dive"
+        if section != "getting-started":
+            files = [p for p in files if not is_weak_callpath_evidence_path(p)]
         if not files:
             continue
         if not _keep_system_topic(topic_id, files, known):
             continue
-        section = item.section if item.section in {"getting-started", "deep-dive"} else "deep-dive"
         depth = item.depth if item.depth in {"deep", "standard", "brief"} else "standard"
         title = (item.title or "").strip()
         if not title or title.startswith("模块") or title.lower().startswith("module:"):
@@ -862,6 +867,10 @@ def _doc_concept_file_score(
     elif topic_id == "cordis":
         if "vendor/cordis" in low:
             score += 60
+        if "packages/boot" in low or "app-boot" in low:
+            score += 50
+        if "plugin" in low or low.endswith(("context.ts", "context.js", "ctx.ts")):
+            score += 30
         if "packages/core" in low:
             score += 20
         if low.endswith((".yml", ".yaml")):
@@ -902,6 +911,8 @@ def _rebind_doc_concepts(
     rank_index = {p: i for i, p in enumerate(known_list)}
     for topic_id, _en, _zh, _needles, path_needles in _DOC_CONCEPTS:
         item = by_id.get(topic_id)
+        if item is None and topic_id == "cordis":
+            item = next((t for t in by_id.values() if topic_looks_like_cordis(t)), None)
         if item is None:
             continue
         pool = [
@@ -932,10 +943,15 @@ def _rebind_doc_concepts(
             for tok in ("packages/boot", "packages/bundle", "/plugin", "packages/core")
         ):
             kept = []
-        if topic_id == "cordis" and any(
-            p.replace("\\", "/").lower().endswith((".yml", ".yaml")) for p in kept
-        ):
-            kept = [p for p in kept if not p.replace("\\", "/").lower().endswith((".yml", ".yaml"))]
+        if topic_id == "cordis":
+            kept = [
+                p
+                for p in kept
+                if not p.replace("\\", "/").lower().endswith((".yml", ".yaml"))
+                and not is_weak_callpath_evidence_path(p)
+            ]
+            if not any(_is_cordis_runtime_path(p) for p in kept):
+                kept = []
         if not kept:
             kept = _pick_doc_concept_files(
                 topic_id, pool, files_by_path, rank_index, set(), limit=6
@@ -1069,11 +1085,24 @@ _SCAFFOLD_TEXT_RE = re.compile(
 )
 
 
+def is_stub_file_path(path: str) -> bool:
+    """Node module stubs / ``*-stub.ts`` — not a runtime container."""
+    low = _norm_topic_path(path)
+    leaf = low.rsplit("/", 1)[-1]
+    stem = leaf.rsplit(".", 1)[0]
+    if stem.endswith(("-stub", "_stub")) or stem == "stub":
+        return True
+    if "stub" in stem and ("module" in stem or "node" in stem):
+        return True
+    return False
+
+
 def is_weak_topic_evidence_path(path: str) -> bool:
-    """Docs / postmortem / e2e / tests / tsdown / yaml presets are not runtime evidence.
+    """Docs / postmortem / e2e / tests / tsdown / yaml / stubs are not runtime evidence.
 
     ``apps/web/tests/foo.e2e.ts`` is a test file even though it is not under
     ``/e2e/``. ``WebScaffold`` / ``session.jsonl`` are harnesses, not the loop.
+    ``node-module-stub.ts`` is a Node module shim, not Cordis / a plugin host.
     """
     low = _norm_topic_path(path)
     if low.endswith("docs/architecture.md") or low == "docs/architecture.md":
@@ -1090,21 +1119,107 @@ def is_weak_topic_evidence_path(path: str) -> bool:
     compact = leaf.replace("-", "").replace("_", "")
     if "webscaffold" in compact:
         return True
+    if is_stub_file_path(path):
+        return True
     return False
 
 
 def is_weak_entrypoint_path(path: str) -> bool:
     """Stub / fixture / e2e / tsdown — never the process start chip."""
-    if is_weak_topic_evidence_path(path):
-        return True
+    return is_weak_topic_evidence_path(path)
+
+
+def is_weak_callpath_evidence_path(path: str) -> bool:
+    """Stub / fixture / e2e / tsdown — never「接住链路上的一段工作」evidence."""
+    return is_weak_entrypoint_path(path)
+
+
+def _is_cordis_runtime_path(path: str) -> bool:
+    """True when the file is vendored Cordis or a real plugin / ctx host."""
     low = _norm_topic_path(path)
-    leaf = low.rsplit("/", 1)[-1]
-    stem = leaf.rsplit(".", 1)[0]
-    if stem.endswith(("-stub", "_stub")) or stem == "stub":
+    if is_weak_callpath_evidence_path(path):
+        return False
+    if "vendor/cordis" in low:
         return True
-    if "stub" in stem and ("module" in stem or "node" in stem):
+    if "packages/boot" in low or "app-boot" in low:
+        return True
+    if "plugin" in low and low.endswith((".ts", ".js", ".mjs", ".cjs")):
+        return True
+    leaf = low.rsplit("/", 1)[-1]
+    if leaf in {"context.ts", "context.js", "ctx.ts", "ctx.js"}:
         return True
     return False
+
+
+def topic_looks_like_cordis(topic: TopicOutline | None) -> bool:
+    if topic is None:
+        return False
+    tid = (getattr(topic, "id", "") or getattr(topic, "name", "") or "").lower()
+    title = getattr(topic, "title", "") or ""
+    blob = f"{tid} {title}".lower()
+    return "cordis" in blob or "插件容器" in title
+
+
+_CALLPATH_TOPIC_FIRST = (
+    "capability-seam",
+    "plugin-architecture",
+    "cordis",
+    CORE_ARCHITECTURE_ID,
+)
+
+
+def _callpath_topic_rank(topic: TopicOutline) -> tuple[int, str]:
+    tid = topic.id or ""
+    if tid in _CALLPATH_TOPIC_FIRST or topic_looks_like_cordis(topic):
+        return (0, tid)
+    if tid == ENTRY_ID:
+        return (2, tid)
+    return (1, tid)
+
+
+def callpath_topics_for_overview(topics: list[TopicOutline]) -> list[TopicOutline]:
+    """Topics that can own a「接住链路上」bullet. Entry is already the start line."""
+    out: list[TopicOutline] = []
+    for topic in topics or []:
+        if topic.section == "getting-started" or topic.id == GETTING_STARTED_ID:
+            continue
+        if topic.id == ENTRY_ID:
+            continue
+        out.append(topic)
+    out.sort(key=_callpath_topic_rank)
+    return out
+
+
+def pick_topic_callpath_evidence(
+    topic: TopicOutline,
+    known_paths: list[str] | None = None,
+) -> str | None:
+    """First non-stub key_file. Cordis prefers vendor/cordis / boot / plugin."""
+    files = [
+        p
+        for p in (topic.key_files or [])
+        if p and not is_weak_callpath_evidence_path(p)
+    ]
+    if topic_looks_like_cordis(topic):
+        preferred = [p for p in files if _is_cordis_runtime_path(p)]
+        if preferred:
+            preferred.sort(key=lambda p: -_doc_concept_file_score("cordis", p, None))
+            return preferred[0]
+        extra = [
+            p
+            for p in (known_paths or [])
+            if _is_cordis_runtime_path(p)
+        ]
+        if extra:
+            extra.sort(key=lambda p: -_doc_concept_file_score("cordis", p, None))
+            return extra[0]
+        return None
+    source = [
+        p
+        for p in files
+        if not p.replace("\\", "/").lower().endswith((".md", ".yml", ".yaml"))
+    ]
+    return (source or files)[0] if (source or files) else None
 
 
 def text_cites_scaffold_evidence(text: str) -> bool:
@@ -1580,13 +1695,214 @@ def _purpose_for(
     return f"What `{title}` owns on the call path, and how it joins upstream and downstream."
 
 
+_PACK_PURPOSE_HINTS: dict[str, tuple[str, str]] = {
+    "cli": (
+        "Parse argv and start the runner by profile.",
+        "解析 argv 并按 profile 启动 runner。",
+    ),
+    "dsh": (
+        "CLI entry that boots the harness by profile.",
+        "CLI 入口，按 profile 启动 harness。",
+    ),
+    "web": (
+        "Host the desktop/Web client UI.",
+        "承载桌面/Web 客户端界面。",
+    ),
+    "docs": (
+        "Architecture and usage notes.",
+        "架构与使用说明。",
+    ),
+    "acp": (
+        "ACP protocol adapter.",
+        "ACP 协议适配。",
+    ),
+    "api": (
+        "HTTP/RPC API surface.",
+        "HTTP/RPC API 面。",
+    ),
+    "attachment": (
+        "File and attachment delivery.",
+        "附件与文件投递。",
+    ),
+    "boot": (
+        "Stack bundle patches into the Cordis root.",
+        "把 bundle patch 叠成 Cordis 根。",
+    ),
+    "bundle": (
+        "Assemble and emit bundle patches.",
+        "组装并下发 bundle patch。",
+    ),
+    "client": (
+        "Client SDK talking to the host.",
+        "客户端 SDK，和宿主通信。",
+    ),
+    "core": (
+        "Product API spine and runtime types.",
+        "产品 API 与运行时类型。",
+    ),
+    "fs": (
+        "Local filesystem capability.",
+        "本地文件系统能力。",
+    ),
+    "llm": (
+        "Model-call capability.",
+        "模型调用能力。",
+    ),
+}
+
+_BOILERPLATE_PACK_PURPOSE_RE = re.compile(
+    r"这一包在仓库里的职责边界|Responsibility boundary of",
+    re.I,
+)
+
+
+def is_boilerplate_pack_purpose(text: str) -> bool:
+    """True when the split-table purpose is the canned template, not a handbook line."""
+    return bool(_BOILERPLATE_PACK_PURPOSE_RE.search(text or ""))
+
+
+def purpose_for_pack(
+    name: str,
+    loc: str,
+    project: ProjectContext | None,
+    *,
+    language: str = "zh",
+) -> str:
+    """One handbook sentence: package.json / README / entry comment / name hint."""
+    zh = _is_zh(language)
+    leaf = (name or loc.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1] or "").lower()
+    hint = _PACK_PURPOSE_HINTS.get(leaf)
+    extracted = _extract_pack_purpose(loc, project)
+    if extracted and not is_boilerplate_pack_purpose(extracted):
+        if zh and hint and re.fullmatch(r"[A-Za-z0-9 ,.'`/:+_-]+", extracted):
+            return hint[1]
+        return extracted.rstrip("。. ") + ("。" if zh else ".")
+    if hint:
+        return hint[1] if zh else hint[0]
+    if loc.startswith("apps/"):
+        return (
+            f"应用入口 `{loc}`：解析启动参数并拉起进程。"
+            if zh
+            else f"App entry `{loc}`: parse launch args and start the process."
+        )
+    if loc.startswith("packages/") or loc.startswith("crates/"):
+        return (
+            f"`{loc}` 在一次调用里接住自己的那一段，再交给上下游。"
+            if zh
+            else f"`{loc}` owns one stretch of a call and hands off upstream/downstream."
+        )
+    return (
+        f"`{loc}` 在仓库里实际干什么，以入口和 README 为准。"
+        if zh
+        else f"What `{loc}` actually does, from its entry and README."
+    )
+
+
+def _extract_pack_purpose(loc: str, project: ProjectContext | None) -> str:
+    if not project or not loc:
+        return ""
+    prefix = loc.replace("\\", "/").rstrip("/") + "/"
+    files_by_path = {f.path.replace("\\", "/"): f for f in project.files}
+    pkg = files_by_path.get(f"{loc}/package.json")
+    if pkg:
+        desc = _package_json_description(pkg.content or pkg.preview or "")
+        if desc:
+            return desc
+    for readme_name in ("README.md", "readme.md", "README"):
+        readme = files_by_path.get(f"{loc}/{readme_name}")
+        if readme:
+            sentence = _first_handbook_sentence(readme.content or readme.preview or "")
+            if sentence:
+                return sentence
+    entries: list[FileInfo] = []
+    for path, info in files_by_path.items():
+        if not path.startswith(prefix):
+            continue
+        leaf = path.rsplit("/", 1)[-1]
+        if leaf in {"index.ts", "index.js", "bin.ts", "main.ts", "app-boot.ts"} or getattr(
+            info, "is_entrypoint", False
+        ):
+            entries.append(info)
+    for info in entries:
+        sentence = _first_file_comment(info.content or info.preview or "")
+        if sentence:
+            return sentence
+    return ""
+
+
+def _package_json_description(raw: str) -> str:
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    try:
+        import json
+
+        data = json.loads(text)
+    except (TypeError, ValueError):
+        match = re.search(r'"description"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+        return (match.group(1).encode("utf-8").decode("unicode_escape") if match else "").strip()
+    if isinstance(data, dict):
+        return str(data.get("description") or "").strip()
+    return ""
+
+
+def _first_handbook_sentence(raw: str) -> str:
+    lines: list[str] = []
+    for line in (raw or "").splitlines():
+        s = line.strip()
+        if not s or s.startswith("#") or s.startswith("```") or s.startswith("["):
+            continue
+        if s.startswith(">") :
+            s = s.lstrip("> ").strip()
+        if s:
+            lines.append(s)
+        if len(lines) >= 3:
+            break
+    blob = " ".join(lines).strip()
+    if not blob or is_boilerplate_pack_purpose(blob):
+        return ""
+    match = re.split(r"(?<=[。.!])\s+", blob, maxsplit=1)
+    sentence = (match[0] if match else blob).strip()
+    return sentence[:160]
+
+
+def _first_file_comment(raw: str) -> str:
+    text = (raw or "").lstrip()
+    if text.startswith("/**") or text.startswith("/*"):
+        body = re.sub(r"^/\*+|\*+/$", "", text.split("*/", 1)[0], flags=re.S)
+        body = re.sub(r"^\s*\*\s?", "", body, flags=re.M).strip()
+        return _first_handbook_sentence(body)
+    if text.startswith("//"):
+        lines: list[str] = []
+        for line in text.splitlines():
+            if not line.strip().startswith("//"):
+                break
+            lines.append(line.strip().lstrip("/").strip())
+        return _first_handbook_sentence("\n".join(lines))
+    return ""
+
+
+def fill_codebase_purposes(
+    rows: list[CodebasePart],
+    project: ProjectContext | None,
+    *,
+    language: str = "zh",
+) -> list[CodebasePart]:
+    """Replace empty / canned split-table purposes with handbook lines."""
+    for row in rows or []:
+        if not (row.purpose or "").strip() or is_boilerplate_pack_purpose(row.purpose):
+            row.purpose = purpose_for_pack(
+                row.name, row.location, project, language=language
+            )
+    return rows
+
+
 def codebase_structure_for(
     project: ProjectContext, *, language: str = "zh", limit: int = 12
 ) -> list[CodebasePart]:
     """Crate / top-package rows for 代码如何拆分. Not a file dump."""
     from repowiki.core.grounding import is_doc_pack_row
 
-    zh = _is_zh(language)
     clusters: dict[str, str] = {}
     for f in project.files:
         parts = [p for p in f.path.replace("\\", "/").split("/") if p]
@@ -1605,12 +1921,13 @@ def codebase_structure_for(
         clusters.setdefault(name, loc)
     rows: list[CodebasePart] = []
     for name, loc in list(clusters.items())[:limit]:
-        purpose = (
-            f"`{loc}` 这一包在仓库里的职责边界。"
-            if zh
-            else f"Responsibility boundary of `{loc}`."
+        rows.append(
+            CodebasePart(
+                name=name,
+                location=loc,
+                purpose=purpose_for_pack(name, loc, project, language=language),
+            )
         )
-        rows.append(CodebasePart(name=name, location=loc, purpose=purpose))
     return rows
 
 
@@ -1623,17 +1940,23 @@ def subsystems_from_topics(topics: list[TopicOutline], *, limit: int = 8) -> lis
             topic.title or topic.id
         ):
             continue
+        evidence = pick_topic_callpath_evidence(topic)
         types = [
             KeyType(
                 name=symbol,
                 role="",
-                path=(topic.key_files[0] if topic.key_files else ""),
+                path=evidence or "",
             )
             for symbol in (topic.key_symbols or [])[:4]
             if symbol and "/" not in symbol and not str(symbol).endswith(".rs")
         ]
         if not types:
             types = _fallback_key_types_for_topic(topic, files_by_path=None)
+        types = [
+            kt
+            for kt in types
+            if (kt.path or "").strip() and not is_weak_callpath_evidence_path(kt.path)
+        ]
         title = topic.title or topic.id
         if "上下文装配" in title and "Agent Loop" in title:
             title = "Agent Loop"
@@ -1648,7 +1971,11 @@ def subsystems_from_topics(topics: list[TopicOutline], *, limit: int = 8) -> lis
                 name=title,
                 role=topic.purpose,
                 key_types=types,
-                files=list(topic.key_files[:4]),
+                files=[
+                    p
+                    for p in topic.key_files[:6]
+                    if not is_weak_callpath_evidence_path(p)
+                ][:4],
                 mermaid=mermaid,
             )
         )
@@ -1660,7 +1987,14 @@ def subsystems_from_topics(topics: list[TopicOutline], *, limit: int = 8) -> lis
 def _fallback_key_types_for_topic(
     topic: TopicOutline, files_by_path: dict[str, FileInfo] | None = None
 ) -> list[KeyType]:
-    files = list(topic.key_files or [])
+    files = [
+        p
+        for p in (topic.key_files or [])
+        if p and not is_weak_callpath_evidence_path(p)
+    ]
+    if topic_looks_like_cordis(topic):
+        preferred = [p for p in files if _is_cordis_runtime_path(p)]
+        files = preferred or files
     if not files:
         return []
     harvested = list(topic.key_symbols or [])
@@ -1755,6 +2089,70 @@ def sequence_tools_before_model(text: str) -> bool:
     if tool_at is None or model_at is None:
         return False
     return tool_at < model_at
+
+
+def getting_started_call_path(
+    project: ProjectContext,
+    *,
+    language: str = "zh",
+) -> str:
+    """How the user starts the process — not overview product copy."""
+    zh = _is_zh(language)
+    paths = [(f.path or "").replace("\\", "/") for f in project.files]
+    flagged = [f.path for f in project.files if getattr(f, "is_entrypoint", False)]
+    entries = process_entrypoint_paths(paths, flagged=flagged)
+    args = [
+        p
+        for p in paths
+        if p.rsplit("/", 1)[-1] in {"args.ts", "args.js", "args.py"}
+        and not is_weak_callpath_evidence_path(p)
+    ]
+    readme = next((p for p in paths if p.lower() in {"readme.md", "readme"}), "")
+    readme_text = ""
+    if readme:
+        info = next((f for f in project.files if (f.path or "").replace("\\", "/") == readme), None)
+        readme_text = (info.content or info.preview or "") if info else ""
+    has_pnpm = bool(
+        re.search(r"\bpnpm\b", readme_text)
+        or any(p.lower() in {"pnpm-workspace.yaml", "pnpm-lock.yaml"} for p in paths)
+    )
+    has_dsh_web = bool(re.search(r"\bdsh\s+web\b", readme_text))
+    bits: list[str] = []
+    if zh:
+        if has_pnpm:
+            bits.append("按 README 用 pnpm 在仓库根安装")
+        else:
+            bits.append("按 README 写的包管理器在仓库根安装")
+        if has_dsh_web:
+            bits.append("再用 `dsh web` 或 CLI 入口把进程拉起来")
+        elif entries:
+            bits.append(f"再从 `{entries[0]}` 把进程拉起来")
+        else:
+            bits.append("再按 README 的启动命令把进程拉起来")
+        if args:
+            bits.append(f"启动参数在 `{args[0]}`")
+        elif entries and len(entries) > 1:
+            bits.append(f"另一条入口是 `{entries[1]}`")
+        text = "，".join(bits) + "。"
+        if readme:
+            text += f" 细节以 `{readme}` 为准。"
+        return text
+    if has_pnpm:
+        bits.append("Install at the repo root with pnpm as the README says")
+    else:
+        bits.append("Install at the repo root with the package manager the README names")
+    if has_dsh_web:
+        bits.append("then start with `dsh web` or the CLI entry")
+    elif entries:
+        bits.append(f"then start from `{entries[0]}`")
+    else:
+        bits.append("then follow the README start command")
+    if args:
+        bits.append(f"launch flags live in `{args[0]}`")
+    text = ", ".join(bits) + "."
+    if readme:
+        text += f" Cite `{readme}`."
+    return text
 
 
 def topic_wiki_links(topics: list[TopicOutline]) -> list[str]:
