@@ -46,8 +46,12 @@ from repowiki.core.topics import (
     fallback_topic_doc,
     fill_codebase_purposes,
     is_generic_web_slug,
+    overview_callpath_claim,
     pick_topic_callpath_evidence,
-    runtime_mermaid_for,
+    pin_overview_claim_cites,
+    pin_topic_evidence_cite,
+    prefer_overview_mermaid,
+    process_entry_cite,
     subsystems_from_topics,
     topic_wiki_links,
 )
@@ -131,26 +135,23 @@ def build_deterministic_wiki_data(
             )
         )
     for path in entry_files[:3]:
+        cite = process_entry_cite(path, project)
         what_it_is.append(
             t(
-                f"The process starts at `{path}:1`; one call enters the graph here.",
-                f"进程从 `{path}:1` 启动，一次调用从这里进图。",
+                f"The process starts at `{cite}`; one call enters the graph here.",
+                f"进程从 `{cite}` 启动，一次调用从这里进图。",
             )
         )
     known_paths = [f.path.replace("\\", "/") for f in project.files]
     for topic in callpath_topics_for_overview(outline.topics):
-        title = topic.title or topic.id
         path = pick_topic_callpath_evidence(topic, known_paths)
         if not path:
             continue
-        what_it_is.append(
-            t(
-                f"{title} owns one stretch of the call path; see `{path}`.",
-                f"「{title}」接住链路上的一段工作，证据在 `{path}`。",
-            )
-        )
+        cite = pin_topic_evidence_cite(path, project, topic.id or "")
+        what_it_is.append(overview_callpath_claim(topic, cite, zh=lang == "zh"))
         if len(what_it_is) >= 6:
             break
+    what_it_is = pin_overview_claim_cites(what_it_is, project)
 
     overview = ProjectOverview(
         name=project.name,
@@ -182,8 +183,9 @@ def build_deterministic_wiki_data(
                 "下面的结构图按这条链路画，而不是按 crate 目录。",
             )
         ),
-        mermaid_component=graph.to_mermaid()
-        or runtime_mermaid_for(entry_files=entry_files, topics=outline.topics),
+        mermaid_component=prefer_overview_mermaid(
+            project, graph, topics=outline.topics
+        ),
         codebase_structure=fill_codebase_purposes(
             codebase_structure_for(project, language=lang),
             project,
@@ -250,8 +252,9 @@ def build_deterministic_wiki_data(
             "结构图用来看耦合；左侧是概念导航，不是 crate 树。",
         ),
         components=components,
-        mermaid_component=graph.to_mermaid()
-        or runtime_mermaid_for(entry_files=entry_files, topics=outline.topics),
+        mermaid_component=prefer_overview_mermaid(
+            project, graph, topics=outline.topics
+        ),
         data_flow=t(
             "Entrypoints → core systems → dependents (see architecture and the learning path).",
             "入口文件 → 核心系统 → 依赖方（见架构概览与学习路径）。",
@@ -545,6 +548,10 @@ def append_concept_pages(
     concept_sidebar = SidebarItem(title=t("Concepts", "词条"), page_id="", children=[])
     for i, c in enumerate(concepts):
         if is_generic_web_slug(c.slug):
+            continue
+        from repowiki.core.topics import is_config_file_concept
+
+        if is_config_file_concept(c.slug, c.title):
             continue
         page_id = f"concepts/{c.slug}"
         folded = _fold_overview_architecture(wiki, c)
@@ -929,14 +936,13 @@ def build_wiki_payload(
     wiki_data = verify_wiki_data(wiki_data, project)
     lang = content_lang()
     prefer_product_overview(wiki_data.overview, project, language=lang)
-    entry_files = [
-        f.path for f in project.files if getattr(f, "is_entrypoint", False)
-    ]
     topics = wiki_data.outline.topics if wiki_data.outline else None
-    if not (wiki_data.overview.mermaid_component or "").strip():
-        wiki_data.overview.mermaid_component = graph.to_mermaid() or runtime_mermaid_for(
-            entry_files=entry_files, topics=topics
-        )
+    wiki_data.overview.mermaid_component = prefer_overview_mermaid(
+        project,
+        graph,
+        topics=topics,
+        current=wiki_data.overview.mermaid_component,
+    )
     if not wiki_data.overview.codebase_structure:
         wiki_data.overview.codebase_structure = codebase_structure_for(
             project, language=lang
@@ -946,11 +952,18 @@ def build_wiki_payload(
         project,
         language=lang,
     )
-    if not (wiki_data.architecture.mermaid_component or "").strip():
-        wiki_data.architecture.mermaid_component = (
-            graph.to_mermaid()
-            or runtime_mermaid_for(entry_files=entry_files, topics=topics)
-        )
+    from repowiki.core.grounding import rewrite_lecture_claim
+
+    wiki_data.overview.what_it_is = pin_overview_claim_cites(
+        [rewrite_lecture_claim(s) for s in (wiki_data.overview.what_it_is or [])],
+        project,
+    )
+    wiki_data.architecture.mermaid_component = prefer_overview_mermaid(
+        project,
+        graph,
+        topics=topics,
+        current=wiki_data.architecture.mermaid_component,
+    )
     wiki = WikiBuilder().build(project, wiki_data, graph, language=lang)
     store = {
         (f.path or "").replace("\\", "/"): (f.content or f.preview or "")

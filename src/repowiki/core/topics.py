@@ -1671,21 +1671,22 @@ def _purpose_for(
     if topic_id == "capability-seam":
         if zh:
             return (
-                "Capability Seam：Service Definition / Provider / Consumer 怎么把 "
-                "`ctx.llm` / `ctx.fs` 这类能力接上，以及换 Provider 时谁跟着变。"
+                "Capability Seam 是 Service Definition / Provider / Consumer："
+                "插件声明能力，Provider 实现，Consumer 使用 `ctx.llm` / `ctx.fs`。"
             )
         return (
-            "Capability Seam: how Service Definition / Provider / Consumer wire "
-            "`ctx.llm` / `ctx.fs`, and what changes when a provider is swapped."
+            "Capability Seam is Service Definition / Provider / Consumer: "
+            "plugins declare a capability, a Provider implements it, a Consumer uses "
+            "`ctx.llm` / `ctx.fs`."
         )
     if topic_id == "plugin-architecture":
         if zh:
-            return "everything-is-a-plugin：组件如何被声明、装上、以及被配置替换。"
-        return "everything-is-a-plugin: how a component is declared, loaded, and swapped."
+            return "everything-is-a-plugin：组件被声明、装上，并被配置替换。"
+        return "everything-is-a-plugin: a component is declared, loaded, and swapped."
     if topic_id == "cordis":
         if zh:
-            return "vendored Cordis 如何装 plugin、暴露 ctx，以及和核心包怎么接。"
-        return "How vendored Cordis loads plugins, exposes ctx, and joins the core package."
+            return "vendored Cordis 装 plugin、暴露 ctx，并和核心包相接。"
+        return "Vendored Cordis loads plugins, exposes ctx, and joins the core package."
     if topic_id == CORE_ARCHITECTURE_ID:
         if zh:
             return "文档里的核心架构：一次调用经过哪些包，seam 落在哪。"
@@ -1733,8 +1734,8 @@ _PACK_PURPOSE_HINTS: dict[str, tuple[str, str]] = {
         "组装并下发 bundle patch。",
     ),
     "client": (
-        "Client SDK talking to the host.",
-        "客户端 SDK，和宿主通信。",
+        "Browser/desktop session and UI.",
+        "浏览器/桌面端会话与 UI。",
     ),
     "core": (
         "Product API spine and runtime types.",
@@ -1754,11 +1755,46 @@ _BOILERPLATE_PACK_PURPOSE_RE = re.compile(
     r"这一包在仓库里的职责边界|Responsibility boundary of",
     re.I,
 )
+_ENGLISH_PURPOSE_PREFIX_RE = re.compile(r"^(?:English|EN|英文)\s*\|\s*", re.I)
+_ENGLISH_PROSE_RE = re.compile(
+    r"\b(the|and|with|for|that|this|group|exposes|package|harness|agents)\b",
+    re.I,
+)
 
 
 def is_boilerplate_pack_purpose(text: str) -> bool:
     """True when the split-table purpose is the canned template, not a handbook line."""
     return bool(_BOILERPLATE_PACK_PURPOSE_RE.search(text or ""))
+
+
+def strip_english_purpose_prefix(text: str) -> str:
+    return _ENGLISH_PURPOSE_PREFIX_RE.sub("", text or "").strip()
+
+
+def is_english_pack_purpose(text: str) -> bool:
+    """True when a 职责 cell is English | … or a pasted package.json English dump."""
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    if _ENGLISH_PURPOSE_PREFIX_RE.match(raw):
+        return True
+    body = strip_english_purpose_prefix(raw)
+    if not body or re.search(r"[\u4e00-\u9fff]", body):
+        return False
+    if len(body) > 24 and _ENGLISH_PROSE_RE.search(body):
+        return True
+    if re.fullmatch(r"[A-Za-z0-9 ,.'`/:+_()\"\-]+", body) and len(body) > 20:
+        return True
+    return False
+
+
+def should_rewrite_pack_purpose(text: str, *, language: str = "zh") -> bool:
+    raw = (text or "").strip()
+    if not raw or is_boilerplate_pack_purpose(raw):
+        return True
+    if _is_zh(language) and is_english_pack_purpose(raw):
+        return True
+    return False
 
 
 def purpose_for_pack(
@@ -1772,10 +1808,13 @@ def purpose_for_pack(
     zh = _is_zh(language)
     leaf = (name or loc.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1] or "").lower()
     hint = _PACK_PURPOSE_HINTS.get(leaf)
-    extracted = _extract_pack_purpose(loc, project)
+    extracted = strip_english_purpose_prefix(_extract_pack_purpose(loc, project))
     if extracted and not is_boilerplate_pack_purpose(extracted):
-        if zh and hint and re.fullmatch(r"[A-Za-z0-9 ,.'`/:+_-]+", extracted):
+        if zh and (is_english_pack_purpose(extracted) or len(extracted) > 80):
+            extracted = ""
+        elif zh and hint and re.fullmatch(r"[A-Za-z0-9 ,.'`/:+_()\"-]+", extracted):
             return hint[1]
+    if extracted:
         return extracted.rstrip("。. ") + ("。" if zh else ".")
     if hint:
         return hint[1] if zh else hint[0]
@@ -1888,9 +1927,9 @@ def fill_codebase_purposes(
     *,
     language: str = "zh",
 ) -> list[CodebasePart]:
-    """Replace empty / canned split-table purposes with handbook lines."""
+    """Replace empty / canned / English-dump split-table purposes with handbook lines."""
     for row in rows or []:
-        if not (row.purpose or "").strip() or is_boilerplate_pack_purpose(row.purpose):
+        if should_rewrite_pack_purpose(row.purpose, language=language):
             row.purpose = purpose_for_pack(
                 row.name, row.location, project, language=language
             )
@@ -2203,3 +2242,243 @@ def runtime_mermaid_for(
         if src != dst:
             lines.append(f"  {src} --> {dst}")
     return "\n".join(lines)
+
+
+_CALLPATH_STAGES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("apps/cli", "apps/dsh"), "CLI"),
+    (("packages/bundle",), "Bundle"),
+    (("packages/boot", "vendor/cordis"), "Boot/Cordis"),
+    (("packages/acp",), "ACP"),
+    (("packages/api",), "API"),
+    (("packages/client",), "Client"),
+    (("apps/web", "packages/web"), "Web"),
+)
+_SEAM_DEFINITION_NEEDLES = (
+    "service definition",
+    "service provider",
+    "consumer",
+    "ctx.llm",
+    "ctx.fs",
+    "capability seam",
+)
+_ENTRY_CHIP_SYMBOLS = frozenset({"main", "bin", "cli", "boot", "app", "dsh", "run"})
+_MERMAID_NODE_LABEL = re.compile(r'\[\s*"?([^"\]]+)"?\s*\]')
+
+
+def _paths_hit_prefixes(paths: list[str], prefixes: tuple[str, ...]) -> bool:
+    for path in paths:
+        low = (path or "").replace("\\", "/")
+        for pref in prefixes:
+            if low == pref or low.startswith(pref + "/"):
+                return True
+    return False
+
+
+def callpath_mermaid_for(project: ProjectContext | None) -> str:
+    """One-call flowchart: CLI → Bundle → Boot/Cordis → ACP → API → Client → Web."""
+    if project is None:
+        return ""
+    paths = [(f.path or "").replace("\\", "/") for f in project.files]
+    stages = [
+        label
+        for prefixes, label in _CALLPATH_STAGES
+        if _paths_hit_prefixes(paths, prefixes)
+    ]
+    if len(stages) < 2:
+        return ""
+    lines = ["flowchart LR"]
+    ids = [f"s{i}" for i in range(len(stages))]
+    for nid, lab in zip(ids, stages, strict=True):
+        lines.append(f'  {nid}["{lab}"]')
+    for src, dst in zip(ids, ids[1:], strict=False):
+        lines.append(f"  {src} --> {dst}")
+    return "\n".join(lines)
+
+
+def mermaid_is_local_package_subgraph(source: str) -> bool:
+    """True when every path-like node sits under one packages/* (e.g. client)."""
+    labels = [_norm_topic_path(m.group(1)) for m in _MERMAID_NODE_LABEL.finditer(source or "")]
+    if len(labels) < 2:
+        return False
+    if all("packages/client" in lab for lab in labels):
+        return True
+    pkgs: list[str] = []
+    for lab in labels:
+        match = re.search(r"(?:packages|apps)/([^/\s]+)", lab)
+        if match:
+            pkgs.append(match.group(1))
+    return len(pkgs) >= 2 and len(set(pkgs)) == 1
+
+
+def mermaid_looks_like_import_graph(source: str) -> bool:
+    """True when a diagram is crate/package edges, not a one-call flowchart."""
+    if mermaid_is_local_package_subgraph(source):
+        return True
+    labels = [_norm_topic_path(m.group(1)) for m in _MERMAID_NODE_LABEL.finditer(source or "")]
+    pathish = sum(
+        1
+        for lab in labels
+        if "/" in lab or lab.startswith(("packages/", "apps/", "crates/"))
+    )
+    return pathish >= 2
+
+
+def prefer_overview_mermaid(
+    project: ProjectContext | None,
+    graph: DependencyGraph | None = None,
+    topics=None,
+    current: str = "",
+) -> str:
+    """Overview/architecture diagram follows one call, not a package subgraph."""
+    callpath = callpath_mermaid_for(project)
+    graph_m = (graph.to_mermaid() if graph else "") or ""
+    existing = (current or "").strip()
+
+    def _runtime() -> str:
+        return runtime_mermaid_for(
+            entry_files=[
+                f.path
+                for f in (project.files if project else [])
+                if getattr(f, "is_entrypoint", False)
+            ],
+            topics=topics,
+        )
+
+    if existing and not mermaid_is_local_package_subgraph(existing):
+        if callpath and mermaid_looks_like_import_graph(existing):
+            return callpath
+        return existing
+    if mermaid_is_local_package_subgraph(existing or graph_m):
+        return callpath or _runtime()
+    if callpath:
+        return callpath
+    if graph_m and not mermaid_is_local_package_subgraph(graph_m):
+        return graph_m
+    return _runtime()
+
+
+def definition_line_in_text(text: str, needles: tuple[str, ...]) -> int:
+    """First non-heading line that names the definition, not the file title."""
+    best_line = 0
+    best_score = 0
+    for i, line in enumerate((text or "").splitlines(), 1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        low = stripped.lower()
+        score = sum(1 for n in needles if n.lower() in low)
+        if score > best_score:
+            best_score = score
+            best_line = i
+    return best_line if best_score else 0
+
+
+def pin_topic_evidence_cite(
+    path: str,
+    project: ProjectContext | None,
+    topic_id: str = "",
+) -> str:
+    """Bind a topic chip to the definition paragraph, not ``path:1``."""
+    loc = (path or "").replace("\\", "/").split(":")[0]
+    if not loc:
+        return path
+    text = ""
+    if project:
+        for info in project.files:
+            if (info.path or "").replace("\\", "/") == loc:
+                text = info.content or info.preview or ""
+                break
+    needles = _SEAM_DEFINITION_NEEDLES
+    if topic_id == "capability-seam" or loc.endswith("docs/architecture.md"):
+        line = definition_line_in_text(text, needles)
+        if line:
+            return f"{loc}:{line}"
+        return loc
+    if re.search(r":\d+", path or ""):
+        return path
+    return loc
+
+
+def process_entry_cite(
+    path: str,
+    project: ProjectContext | None = None,
+    contents: dict[str, str] | None = None,
+) -> str:
+    """Process-entry chip: bin/main, never a helper export like readVersion."""
+    loc = (path or "").replace("\\", "/").split(":")[0]
+    if not loc:
+        return path
+    text = ""
+    if project:
+        for info in project.files:
+            if (info.path or "").replace("\\", "/") == loc:
+                text = info.content or info.preview or ""
+                break
+    if not text and contents:
+        text = contents.get(loc) or contents.get(path) or ""
+    from repowiki.core.cite_check import line_of_symbol_in_text
+
+    main_line = line_of_symbol_in_text(text, "main")
+    if main_line:
+        return f"{loc}:{main_line} main"
+    return loc
+
+
+def is_entry_chip_symbol(symbol: str) -> bool:
+    return (symbol or "").strip().lower() in _ENTRY_CHIP_SYMBOLS
+
+
+_CONFIG_CONCEPT_RE = re.compile(
+    r"(?i)(?:^|[./_-])(?:vitest|jest|eslint|prettier|tsconfig|webpack|babel)"
+    r"|(?:^|[./_-])[\w.-]+\.(?:shared|config|setup)\.(?:ts|js|mjs|cjs)"
+    r"|vitest[./_-]shared"
+)
+
+
+def is_config_file_concept(slug: str, title: str = "") -> bool:
+    """True when a concept is a toolchain config file, not a handbook topic."""
+    blob = f"{slug or ''} {title or ''}"
+    if _CONFIG_CONCEPT_RE.search(blob):
+        return True
+    return bool(_CONFIG_CONCEPT_RE.search((slug or "").replace("-", ".")))
+
+
+def pin_overview_claim_cites(items: list[str], project: ProjectContext | None) -> list[str]:
+    """Keep handbook claims, but pin architecture.md chips off line 1."""
+    out: list[str] = []
+    for raw in items or []:
+        text = raw or ""
+        if "Capability Seam" in text and "architecture.md" not in text and project:
+            cite = pin_topic_evidence_cite(
+                "docs/architecture.md", project, "capability-seam"
+            )
+            if cite:
+                text = text.rstrip("。") + f"。证据在 `{cite}`。"
+        def repl(match: re.Match[str]) -> str:
+            inner = match.group(1)
+            path = inner.split()[0].split(":")[0]
+            if path.endswith("docs/architecture.md") or path.endswith("architecture.md"):
+                return f"`{pin_topic_evidence_cite(inner, project, 'capability-seam')}`"
+            return match.group(0)
+
+        out.append(re.sub(r"`([^`]+)`", repl, text))
+    return out
+
+
+def overview_callpath_claim(topic: TopicOutline, cite: str, *, zh: bool) -> str:
+    """Direct handbook bullet — never「解释 X 如何」."""
+    title = topic.title or topic.id
+    tid = topic.id or ""
+    if tid == "capability-seam" or "Capability Seam" in title:
+        if zh:
+            return (
+                f"Capability Seam 是 Service Definition / Provider / Consumer，"
+                f"把 `ctx.llm` / `ctx.fs` 接上。证据在 `{cite}`。"
+            )
+        return (
+            f"Capability Seam is Service Definition / Provider / Consumer; "
+            f"it wires `ctx.llm` / `ctx.fs`. See `{cite}`."
+        )
+    if zh:
+        return f"「{title}」接住链路上的一段工作，证据在 `{cite}`。"
+    return f"{title} owns one stretch of the call path; see `{cite}`."

@@ -20,7 +20,7 @@ from repowiki.core.models import (
 )
 
 # Bump when grounding rules change so the same content_hash is rescanned.
-WIKI_GROUND_REVISION = 5
+WIKI_GROUND_REVISION = 6
 
 # Training-memory product tokens. Kept only when the tree actually has them.
 _FOREIGN_PRODUCT_CRATES = (
@@ -111,6 +111,14 @@ _SAFE_MERMAID_LABELS = {
     "provider",
     "consumer",
     "definition",
+    "cli",
+    "bundle",
+    "acp",
+    "api",
+    "client",
+    "web",
+    "cordis",
+    "boot/cordis",
     "入口",
     "核心",
     "调用",
@@ -273,19 +281,30 @@ def rewrite_weak_start_claims(text: str, index: CiteIndex) -> str:
     """Swap stub/e2e start-line chips for a real process entry, or drop them."""
     if not text or not _START_CLAIM_RE.search(text):
         return text
-    from repowiki.core.topics import is_weak_entrypoint_path, pick_process_entrypoint
+    from repowiki.core.topics import (
+        is_entry_chip_symbol,
+        is_weak_entrypoint_path,
+        pick_process_entrypoint,
+        process_entry_cite,
+    )
 
     replacement = pick_process_entrypoint(list(index.paths))
     out = text
 
     def repl(match: re.Match[str]) -> str:
-        path = _chip_path(match.group(1))
-        if not is_weak_entrypoint_path(path):
-            return match.group(0)
-        if not replacement:
-            return ""
+        inner = match.group(1)
+        path = _chip_path(inner)
+        bits = (inner or "").strip().split()
+        symbol = bits[1] if len(bits) > 1 else ""
         prefix = match.group(0).split("`", 1)[0]
-        return f"{prefix}`{replacement}:1`"
+        if is_weak_entrypoint_path(path):
+            if not replacement:
+                return ""
+            return f"{prefix}`{process_entry_cite(replacement, contents=index.contents)}`"
+        if symbol and not is_entry_chip_symbol(symbol):
+            resolved = index.resolve(path) or path
+            return f"{prefix}`{process_entry_cite(resolved, contents=index.contents)}`"
+        return match.group(0)
 
     out = _START_CLAIM_RE.sub(repl, out)
     out = re.sub(r"\n{3,}", "\n\n", out)
@@ -317,19 +336,45 @@ def is_fragment_claim(text: str) -> bool:
         return True
     if _HOLE_PARTICLE_RE.search(s):
         return True
+    if _HOLE_EXAMPLE_RE.search(s):
+        return True
+    if _HOLE_HANDOFF_RE.search(s):
+        return True
     if re.match(r"^\s*(?:列出|包含)\s", s) and len(s) < 24:
         return True
     return False
 
 
+_HOLE_EXAMPLE_RE = re.compile(r"（如\s*、\s*）|\(e\.g\.\s*,\s*\)|如\s*、")
+_HOLE_HANDOFF_RE = re.compile(r"把\s+交给")
+_HANDBOOK_TERM_TIPS = {
+    "capability seam": (
+        "A seam is a swappable capability: Service Definition (`ctx.llm`, `ctx.fs`), Provider, Consumer.",
+        "插件通过 seam 暴露的上下文（如 `ctx.llm`、`ctx.fs`）。",
+    ),
+    "profile": (
+        "A profile is package.json plus bundle and cordis patches.",
+        "包含 `package.json`、bundle 与 cordis patch。",
+    ),
+    "cmdline": (
+        "cmdline hands argv to the app.",
+        "把 argv 交给 app。",
+    ),
+}
+
+
 def is_hollow_tip(text: str) -> bool:
-    """True when cite-scrub left a broken term gloss (「、 与 。」)."""
+    """True when cite-scrub left a broken term gloss (「如 、」/「把 交给」)."""
     s = re.sub(r"\s+", " ", (text or "").strip())
     if len(s) < 4:
         return True
     if _HOLE_CONJ_RE.search(s):
         return True
     if _HOLE_PARTICLE_RE.search(s):
+        return True
+    if _HOLE_EXAMPLE_RE.search(s):
+        return True
+    if _HOLE_HANDOFF_RE.search(s):
         return True
     if re.search(r"(?:与|和|and)\s*[。.]$", s, re.I):
         return True
@@ -338,6 +383,50 @@ def is_hollow_tip(text: str) -> bool:
     if s in {"列出其顺序", "包含 。", "包含."}:
         return True
     return False
+
+
+_LECTURE_HOW_RE = re.compile(
+    r"(?:解释|说明)\s*([^\n如何]{1,80}?)\s*如何([^。\n]*)。?"
+)
+_LECTURE_EXPLAIN_RE = re.compile(r"(?:解释|说明)\s+")
+
+
+def rewrite_lecture_claim(text: str) -> str:
+    """解释/说明 X 如何 Y → 直接陈述. Capability Seam keeps Definition/Provider/Consumer."""
+    raw = (text or "").strip()
+    if not raw:
+        return raw
+    chips = re.findall(r"`[^`]+`", raw)
+    tail = f" 证据在 {chips[0]}。" if chips else ""
+    if re.search(r"(?:解释|说明).{0,40}Capability Seam", raw):
+        return (
+            "Capability Seam 是 Service Definition / Provider / Consumer，"
+            "用来界定插件与宿主之间的能力边界。"
+            + tail
+        )
+    if re.search(r"(?:解释|说明).{0,40}conversation", raw, re.I):
+        return "client runtime 的 conversation 是浏览器/桌面端会话状态。"
+    match = _LECTURE_HOW_RE.search(raw)
+    if match:
+        subject = match.group(1).strip().strip("「」\"'")
+        rest = (match.group(2) or "").strip()
+        if subject and rest:
+            return f"{subject}{rest}。" if rest[0] in "是为把用接" else f"{subject} {rest}。"
+        if subject:
+            return f"{subject}。"
+    if raw.startswith(("解释", "说明")):
+        return _LECTURE_EXPLAIN_RE.sub("", raw).strip()
+    return raw
+
+
+def fill_hollow_term_tip(term: str, tip: str, *, language: str = "zh") -> str:
+    """Replace a cite-hollowed gloss, or return empty so the tip is dropped."""
+    if not is_hollow_tip(tip):
+        return tip
+    pair = _HANDBOOK_TERM_TIPS.get((term or "").strip().lower())
+    if not pair:
+        return ""
+    return pair[1] if (language or "zh").startswith("zh") else pair[0]
 
 
 def repair_grounded_prose(text: str) -> str:
@@ -530,13 +619,14 @@ def ground_overview(overview: ProjectOverview, index: CiteIndex) -> ProjectOverv
         getattr(overview, "runtime_flow", "") or "", index
     )
     overview.what_it_is = [
-        s
+        rewrite_lecture_claim(s)
         for s in (
             scrub_ungrounded_prose(item, index)
             for item in (getattr(overview, "what_it_is", None) or [])
         )
-        if s and not is_fragment_claim(s)
+        if s and not is_fragment_claim(s) and rewrite_lecture_claim(s)
     ]
+    # Project is not on CiteIndex; pin happens in wiki_generator / analyzer.
     overview.key_features = [
         s
         for s in (scrub_ungrounded_prose(item, index) for item in overview.key_features)

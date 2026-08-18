@@ -26,6 +26,8 @@ DIMENSIONS = (
 # grok-study dump stamps. Heuristic must fail fixtures that contain these
 # even when no API key is present.
 LECTURE_MARKERS = (
+    "解释 Capability Seam 如何",
+    "说明 client runtime 中的 conversation",
     "读完应能",
     "读完你应能",
     "读完你应该能",

@@ -11,6 +11,7 @@ from typing import Any, Iterator
 from recallstack.domain.schemas import ConceptDraft, SourceReference
 from recallstack.learning.i18n import t
 from repowiki.core.topics import (
+    is_config_file_concept,
     is_entry_boot_file,
     is_toolchain_boot_file,
     is_weak_topic_evidence_path,
@@ -448,6 +449,8 @@ def is_filler_slug_title(slug: str, title: str) -> bool:
     title = title or ""
     if slug in CORE_SLUGS:
         return False
+    if is_config_file_concept(slug, title):
+        return True
     if _FILLER_SLUG_RE.match(slug):
         return True
     if _FILLER_TITLE_RE.match(title):

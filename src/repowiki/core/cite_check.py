@@ -326,6 +326,12 @@ def _sanitize_term_tips(tips, index: CiteIndex):
         if _JUNK_TIP.search(text):
             continue
         tip.tip = sanitize_text(text, index)
+        from repowiki.core.grounding import fill_hollow_term_tip
+
+        filled = fill_hollow_term_tip(term, tip.tip)
+        if not filled:
+            continue
+        tip.tip = filled
         if is_hollow_tip(tip.tip):
             continue
         kept.append(tip)
