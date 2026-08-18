@@ -6,6 +6,7 @@ from recallstack.learning.concept_extractor import ConceptExtractor
 from recallstack.learning.learning_contract import suggested_ask_questions
 from recallstack.learning.path_builder import PathBuilder
 from recallstack.learning.wiki_generator import WIKI_GROUND_REVISION, build_wiki_payload
+from recallstack.learning.wiki_serve import materialize_wiki_payload
 from repowiki.core.cite_check import verify_wiki_data
 from repowiki.core.graph import DependencyGraph
 from repowiki.core.grounding import (
@@ -14,6 +15,7 @@ from repowiki.core.grounding import (
 )
 from repowiki.core.models import (
     ArchitectureDiagram,
+    Citation,
     CodebasePart,
     FileInfo,
     ProjectContext,
@@ -71,6 +73,10 @@ Cordis framework.
 
 A seam is a swappable capability: Service Definition (`ctx.llm`, `ctx.fs`),
 Service Provider (`llm-deepseek`, `fs-local`), and Consumer (`tool-bash`).
+
+```ts
+export type Config = { name: string };
+```
 """
     architecture = """# Architecture
 
@@ -346,7 +352,8 @@ def test_dsh_like_notes_volume_does_not_steal_overview(monkeypatch):
     index = next(p for p in payload["pages"] if p["id"] == "index")
     gs_page = next(p for p in payload["pages"] if p["id"] == "getting-started")
     assert index["title"] == "概述"
-    assert "# deepseek-harness" in index["content"]
+    assert "# DeepSeek Harness" in index["content"]
+    assert "# TypeName" not in index["content"]
     assert "决策日志仓库" not in index["content"]
     for phrase in _NOTES_AS_PRODUCT:
         assert phrase not in index["content"], phrase
@@ -408,7 +415,8 @@ def test_dsh_like_notes_as_product_llm_overview_is_rewritten(monkeypatch):
     index = next(p for p in payload["pages"] if p["id"] == "index")
     assert "决策日志仓库" not in index["content"]
     assert "不是" not in index["content"].split("\n")[0]
-    assert "# deepseek-harness" in index["content"]
+    assert "# DeepSeek Harness" in index["content"]
+    assert "# TypeName" not in index["content"]
     assert any(
         token in _all_text(payload)
         for token in ("Cordis", "plugin", "Capability Seam", "packages/core")
@@ -435,6 +443,86 @@ def test_merge_outline_drops_notes_as_product_focus():
     )
     assert "不是源码" not in merged.overview_focus
     assert "只是决策日志" not in merged.overview_focus
+
+
+def _assert_overview_chips_intact(content: str) -> None:
+    first = next((ln for ln in content.splitlines() if ln.startswith("# ")), "")
+    assert first == "# DeepSeek Harness"
+    assert "# TypeName" not in content
+    assert "README.ts" not in content
+    assert "`ts:1`" not in content
+    assert "src/file.ts" not in content
+    assert "`README.md`" in content or "`README.md:" in content
+    assert "README.md`" in content
+    assert "apps/dsh/src/main.ts" in content
+    assert content.count("启动，一次调用从这里进图") <= 1
+
+
+def test_dsh_like_overview_survives_materialize_without_broken_chips(monkeypatch):
+    """GET materialize must not smash H1 / path:line chips (DeepWiki regression)."""
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    project = _dsh_project_with_notes()
+    graph = DependencyGraph.build_from_project(project)
+    payload = build_wiki_payload(project, graph, [])
+    texts = {f.path: f.content or "" for f in project.files}
+    out = materialize_wiki_payload(payload, [], texts)
+    index = next(p for p in out["pages"] if p["id"] == "index")
+    _assert_overview_chips_intact(index["content"])
+    assert any(
+        token in index["content"]
+        for token in ("Cordis", "plugin", "Capability Seam", "packages")
+    )
+    for phrase in _NOTES_AS_PRODUCT:
+        assert phrase not in index["content"], phrase
+    gs = next(p for p in out["pages"] if p["id"] == "getting-started")
+    assert gs["title"] == "快速开始"
+    assert "open-source, plugin-based agent harness" not in gs["content"]
+    assert "export type Config" not in gs["content"]
+    assert "跑起来" in gs["content"]
+    assert any(tok in gs["content"] for tok in ("pnpm", "npm", "源码", "Web UI"))
+    assert "`README.md`" in gs["content"]
+
+
+def test_dsh_like_typename_llm_overview_is_repaired(monkeypatch):
+    """Schema leftovers (TypeName / src/file.ts / ts:1) must not become the H1 or chips."""
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    project = _dsh_project()
+    graph = DependencyGraph.build_from_project(project)
+    polluted = WikiData(
+        overview=ProjectOverview(
+            name="TypeName",
+            description=(
+                "# TypeName\n\n"
+                "DeepSeek Harness (`dsh`) is an open-source, plugin-based agent harness.\n"
+            ),
+            what_it_is=[
+                "仓库目标与边界写在 README，而不是目录名。 `README.ts:24 Config`",
+                "进程从 `src/file.ts:12 TypeName` 启动，一次调用从这里进图。",
+                "进程从 `ts:1` 启动，一次调用从这里进图。",
+                "进程从 `apps/dsh/src/main.ts:1` 启动，一次调用从这里进图。",
+                "进程从 `apps/dsh/src/main.ts:1 main` 启动，一次调用从这里进图。",
+            ],
+            citations=[
+                Citation(path="README.ts", start_line=24, symbol="Config"),
+                Citation(path="src/file.ts", start_line=12, symbol="TypeName"),
+                Citation(path="README.md", start_line=1, note="README"),
+                Citation(path="apps/dsh/src/main.ts", start_line=1, symbol="main"),
+            ],
+        )
+    )
+    cleaned = verify_wiki_data(polluted, project)
+    payload = build_wiki_payload(project, graph, [], wiki_data=cleaned)
+    texts = {f.path: f.content or "" for f in project.files}
+    out = materialize_wiki_payload(payload, [], texts)
+    index = next(p for p in out["pages"] if p["id"] == "index")
+    _assert_overview_chips_intact(index["content"])
+    assert any(
+        token in _all_text(out)
+        for token in ("Cordis", "plugin", "Capability Seam", "packages")
+    )
+    gs = next(p for p in out["pages"] if p["id"] == "getting-started")
+    assert "open-source, plugin-based agent harness" not in gs["content"]
+    assert "# TypeName" not in gs["content"]
 
 
 def test_mermaid_does_not_keep_start_turn_self_loop():

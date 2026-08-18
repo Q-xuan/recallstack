@@ -2289,19 +2289,22 @@ def fill_wiki_key_type_lines(content: str, file_texts: dict[str, str] | None) ->
         is_line_one = line == "1"
         is_span = bool(end and end != line)
         is_root = is_crate_root_path(path)
+        if is_readme_path(path):
+            # README is evidence, not a TypeScript definition site.
+            return f"`{path.replace('\\', '/')}`"
         if not is_line_one and not is_root:
             return ""
         if is_span and is_readme_path(path):
             return ""
         store_path = _resolve_store_key(file_texts, path)
-        if store_path:
+        if store_path and not is_readme_path(store_path):
             first, emit = _first_definition_line(file_texts.get(store_path) or "")
             if first and emit and not _is_dummy_symbol(emit):
                 return f"`{store_path}:{first} {emit}`"
             hit = _bind_crate_root_definition(store_path, file_texts)
             if hit:
                 return f"`{hit[0]}:{hit[1]} {hit[2]}`"
-        if is_line_one and (is_root or is_junk_evidence_path(path) or is_readme_path(path)):
+        if is_line_one and (is_root or is_junk_evidence_path(path)):
             return drop_crate_root_chip(path)
         return ""
 
@@ -2316,6 +2319,11 @@ def fill_wiki_key_type_lines(content: str, file_texts: dict[str, str] | None) ->
         symbol = (parsed.group(4) or "").strip()
         if not path:
             return match.group(0)
+        if "/" not in path and "." not in path:
+            # Truncated leftover (`ts:1`) — drop rather than keep a fake file.
+            return ""
+        if is_readme_path(path) and symbol:
+            return f"`{path.replace('\\', '/')}`"
         if not symbol or _is_dummy_symbol(symbol):
             rewritten = stamp_or_drop_path_only(path, line, end)
             return rewritten if rewritten else match.group(0)
@@ -3242,7 +3250,7 @@ def _sanitize_handbook_cites(text: str, file_texts: dict[str, str]) -> str:
         if not path:
             return match.group(0)
         if not _resolve_store_key(file_texts, path):
-            return path.rsplit("/", 1)[-1]
+            return ""
         return match.group(0)
 
     return re.sub(r"`([^`]+)`", keep_pill, stamped).strip()

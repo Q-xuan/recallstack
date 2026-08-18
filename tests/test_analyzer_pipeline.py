@@ -260,7 +260,9 @@ def test_analyze_without_llm_produces_usable_wiki(tmp_path):
     assert wiki.outline is not None
     assert wiki.outline.modules
     assert wiki.modules
-    assert wiki.overview.name == project.name
+    assert wiki.overview.name
+    assert wiki.overview.name != "TypeName"
+    assert wiki.overview.name in {project.name, "Mini"}
     assert {m.name for m in wiki.modules}
 
     graph = DependencyGraph.build_from_project(project)

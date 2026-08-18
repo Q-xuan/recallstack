@@ -20,9 +20,13 @@ from repowiki.core.models import (
 )
 
 # Backtick cites the frontend SourcePeek already understands:
-# `path/to/file.py`, `path/to/file.py:12`, `path/to/file.py:12-40`
+# `path/to/file.py`, `path/to/file.py:12`, `path/to/file.py:12 Symbol`
 _BACKTICK_CITE = re.compile(
-    r"`((?:[A-Za-z0-9_.@-]+/)*[A-Za-z0-9_.@-]+\.[A-Za-z0-9]+)(?::(\d+)(?:-(\d+))?)?`"
+    r"`((?:[A-Za-z0-9_.@-]+/)*[A-Za-z0-9_.@-]+\.[A-Za-z0-9]+)(?::(\d+)(?:-(\d+))?)?(?:[ \t]+([^`]+))?`"
+)
+# Truncated leftovers such as `ts:1` after a path:line Symbol chip was cut.
+_BARE_LINE_CITE = re.compile(
+    r"`([A-Za-z0-9_.@-]+):(\d+)(?:-(\d+))?(?:[ \t]+([^`]+))?`"
 )
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _CAMEL = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
@@ -242,16 +246,39 @@ def verify_reading_guide(guide: ReadingGuide, index: CiteIndex) -> ReadingGuide:
     return guide
 
 
+def _format_resolved_chip(
+    resolved: str, start: int, end: int, symbol: str = ""
+) -> str:
+    loc = resolved
+    if start:
+        loc += f":{start}"
+        if end and end != start:
+            loc += f"-{end}"
+    name = (symbol or "").strip()
+    if name:
+        return f"`{loc} {name}`"
+    return f"`{loc}`"
+
+
 def sanitize_text(text: str, index: CiteIndex) -> str:
-    """Rewrite backtick path cites; drop ones that cannot be resolved."""
+    """Rewrite backtick path cites; drop ones that cannot be resolved.
+
+    Keeps `` `path:line Symbol` `` as one chip. Never emits a truncated leftover
+    such as `` `ts:1` `` or `` `README.ts` `` when that path is not in the tree.
+    """
     if not text:
         return text
 
     def repl(match: re.Match[str]) -> str:
-        path, start_s, end_s = match.group(1), match.group(2), match.group(3)
+        path, start_s, end_s, symbol = (
+            match.group(1),
+            match.group(2),
+            match.group(3),
+            match.group(4) or "",
+        )
         resolved = index.resolve(path)
         if not resolved:
-            # Invented paths must disappear; do not keep the leaf (xai-grok-pager).
+            # Invented paths must disappear; do not keep the leaf or extension.
             return ""
         start = int(start_s) if start_s else 0
         end = int(end_s) if end_s else 0
@@ -259,14 +286,27 @@ def sanitize_text(text: str, index: CiteIndex) -> str:
         end = index.clamp_line(resolved, end)
         if start and end and end < start:
             end = 0
-        loc = resolved
-        if start:
-            loc += f":{start}"
-            if end and end != start:
-                loc += f"-{end}"
-        return f"`{loc}`"
+        return _format_resolved_chip(resolved, start, end, symbol)
 
-    return _BACKTICK_CITE.sub(repl, text)
+    out = _BACKTICK_CITE.sub(repl, text)
+
+    def bare_repl(match: re.Match[str]) -> str:
+        path, start_s, end_s, symbol = (
+            match.group(1),
+            match.group(2),
+            match.group(3),
+            match.group(4) or "",
+        )
+        resolved = index.resolve(path)
+        if not resolved:
+            return ""
+        start = index.clamp_line(resolved, int(start_s) if start_s else 0)
+        end = index.clamp_line(resolved, int(end_s) if end_s else 0)
+        if start and end and end < start:
+            end = 0
+        return _format_resolved_chip(resolved, start, end, symbol)
+
+    return _BARE_LINE_CITE.sub(bare_repl, out)
 
 
 def _sanitize_term_tips(tips, index: CiteIndex):

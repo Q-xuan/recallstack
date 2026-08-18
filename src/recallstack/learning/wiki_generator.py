@@ -151,9 +151,9 @@ def build_deterministic_wiki_data(
         ),
         document_scope=t(
             f"{project.name}: the goal, who a real call passes through, and how the repo is split. "
-            "Key types stay English identifiers; evidence is `path:line Symbol` next to the claim.",
+            "Key types stay English identifiers; evidence is path:line Symbol next to the claim.",
             f"{project.name} 的目标、一次真实调用经过谁、仓库怎么拆。"
-            "关键类型保持英文 identifier，证据用 `path:line Symbol` 贴在断言旁边。",
+            "关键类型保持英文 identifier，证据用 path:line Symbol 贴在断言旁边。",
         ),
         description=description
         or t(

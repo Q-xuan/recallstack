@@ -851,13 +851,13 @@ class Analyzer:
             if zh:
                 overview.document_scope = (
                     f"{project.name} 的目标、一次真实调用经过谁、仓库怎么拆。"
-                    "关键类型保持英文 identifier，证据用 `path:line Symbol` 贴在断言旁边。"
+                    "关键类型保持英文 identifier，证据用 path:line Symbol 贴在断言旁边。"
                 )
             else:
                 overview.document_scope = (
                     f"{project.name}: the goal, who a real call passes through, "
                     "and how the repo is split. Key types stay English identifiers; "
-                    "evidence is `path:line Symbol` next to the claim."
+                    "evidence is path:line Symbol next to the claim."
                 )
         if not overview.what_it_is:
             overview.what_it_is = _fallback_what_it_is(project, outline, zh)
@@ -953,13 +953,13 @@ class Analyzer:
             if zh:
                 overview.document_scope = (
                     f"{project.name} 的目标、一次真实调用经过谁、仓库怎么拆。"
-                    "关键类型保持英文 identifier，证据用 `path:line Symbol` 贴在断言旁边。"
+                    "关键类型保持英文 identifier，证据用 path:line Symbol 贴在断言旁边。"
                 )
             else:
                 overview.document_scope = (
                     f"{project.name}: the goal, who a real call passes through, "
                     "and how the repo is split. Key types stay English identifiers; "
-                    "evidence is `path:line Symbol` next to the claim."
+                    "evidence is path:line Symbol next to the claim."
                 )
         if not overview.description:
             overview.description = (
