@@ -206,8 +206,11 @@ def verify_overview(overview: ProjectOverview, index: CiteIndex) -> ProjectOverv
     overview.runtime_flow = sanitize_text(
         getattr(overview, "runtime_flow", "") or "", index
     )
+    from repowiki.core.grounding import rewrite_lecture_claim
+
     overview.what_it_is = [
-        sanitize_text(s, index) for s in (getattr(overview, "what_it_is", None) or [])
+        rewrite_lecture_claim(sanitize_text(s, index))
+        for s in (getattr(overview, "what_it_is", None) or [])
     ]
     overview.citations = [c for c in (_clamp_citation(c, index) for c in overview.citations) if c]
     overview.key_features = [sanitize_text(s, index) for s in overview.key_features]
@@ -216,7 +219,7 @@ def verify_overview(overview: ProjectOverview, index: CiteIndex) -> ProjectOverv
     for part in getattr(overview, "codebase_structure", None) or []:
         part.purpose = sanitize_text(part.purpose, index)
     for sub in getattr(overview, "subsystems", None) or []:
-        sub.role = sanitize_text(sub.role, index)
+        sub.role = rewrite_lecture_claim(sanitize_text(sub.role, index))
         sub.files = [p for p in (index.resolve(x) for x in sub.files) if p]
         sub.key_types = _sanitize_key_types(sub.key_types, index)
     return overview
@@ -228,8 +231,12 @@ def verify_architecture(arch: ArchitectureDiagram, index: CiteIndex) -> Architec
     arch.citations = [c for c in (_clamp_citation(c, index) for c in arch.citations) if c]
     for comp in arch.components:
         comp.files = [p for p in (index.resolve(x) for x in comp.files) if p]
-        comp.purpose = sanitize_text(comp.purpose, index)
-        comp.role = sanitize_text(getattr(comp, "role", "") or "", index)
+        from repowiki.core.grounding import rewrite_lecture_claim
+
+        comp.purpose = rewrite_lecture_claim(sanitize_text(comp.purpose, index))
+        comp.role = rewrite_lecture_claim(
+            sanitize_text(getattr(comp, "role", "") or "", index)
+        )
         comp.key_types = _sanitize_key_types(
             getattr(comp, "key_types", None) or [], index
         )
@@ -340,7 +347,7 @@ def _sanitize_term_tips(tips, index: CiteIndex):
 
 def _sanitize_key_types(types, index: CiteIndex) -> list:
     """Drop types with no path, or whose path is not in the repo."""
-    from repowiki.core.topics import is_weak_callpath_evidence_path
+    from repowiki.core.topics import is_weak_callpath_evidence_path, pin_key_type_line
 
     kept = []
     for kt in types or []:
@@ -354,6 +361,12 @@ def _sanitize_key_types(types, index: CiteIndex) -> list:
             continue
         kt.path = resolved
         kt.role = sanitize_text(getattr(kt, "role", "") or "", index)
+        text = index.contents.get(resolved) or ""
+        pinned = pin_key_type_line(
+            resolved, getattr(kt, "name", "") or "", text, int(getattr(kt, "line", 0) or 0)
+        )
+        if pinned:
+            kt.line = pinned
         kept.append(kt)
     return kept
 

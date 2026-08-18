@@ -1996,6 +1996,8 @@ def subsystems_from_topics(topics: list[TopicOutline], *, limit: int = 8) -> lis
             for kt in types
             if (kt.path or "").strip() and not is_weak_callpath_evidence_path(kt.path)
         ]
+        from repowiki.core.grounding import rewrite_lecture_claim
+
         title = topic.title or topic.id
         if "上下文装配" in title and "Agent Loop" in title:
             title = "Agent Loop"
@@ -2008,7 +2010,7 @@ def subsystems_from_topics(topics: list[TopicOutline], *, limit: int = 8) -> lis
         out.append(
             Subsystem(
                 name=title,
-                role=topic.purpose,
+                role=rewrite_lecture_claim(topic.purpose or ""),
                 key_types=types,
                 files=[
                     p
@@ -2074,7 +2076,14 @@ def _fallback_key_types_for_topic(
             continue
         seen.add(name)
         path = files[min(i, len(files) - 1)]
-        out.append(KeyType(name=name, role="", path=path, line=1))
+        out.append(
+            KeyType(
+                name=name,
+                role="",
+                path=path,
+                line=0 if tid == "capability-seam" else 1,
+            )
+        )
         if len(out) >= 4:
             return out
     for i, (name, role) in enumerate(hint_iter if prefer_hints_first else hints):
@@ -2084,7 +2093,14 @@ def _fallback_key_types_for_topic(
             continue
         seen.add(name)
         path = files[min(i, len(files) - 1)]
-        out.append(KeyType(name=name, role=role, path=path, line=1))
+        out.append(
+            KeyType(
+                name=name,
+                role=role,
+                path=path,
+                line=0 if tid == "capability-seam" else 1,
+            )
+        )
     if not out:
         leaf = files[0].replace("\\", "/").rsplit("/", 1)[-1]
         stem = leaf.rsplit(".", 1)[0]
@@ -2399,6 +2415,37 @@ def pin_topic_evidence_cite(
     return loc
 
 
+_SEAM_TYPE_NAMES = frozenset(
+    {
+        "service definition",
+        "service provider",
+        "provider",
+        "consumer",
+    }
+)
+
+
+def pin_key_type_line(path: str, name: str, text: str, current: int = 0) -> int:
+    """Bind Service Definition / Provider / Consumer to the definition paragraph.
+
+    Headings (``# …``) are skipped so ``architecture.md:1`` is never the title.
+    """
+    loc = (path or "").replace("\\", "/")
+    label = (name or "").strip().lower()
+    seam = label in _SEAM_TYPE_NAMES or loc.endswith("architecture.md")
+    if seam and text:
+        line = definition_line_in_text(text, _SEAM_DEFINITION_NEEDLES)
+        if line:
+            return line
+    if current > 1:
+        return current
+    if name and text:
+        line = definition_line_in_text(text, (name,))
+        if line:
+            return line
+    return current
+
+
 def process_entry_cite(
     path: str,
     project: ProjectContext | None = None,
@@ -2473,11 +2520,11 @@ def overview_callpath_claim(topic: TopicOutline, cite: str, *, zh: bool) -> str:
         if zh:
             return (
                 f"Capability Seam 是 Service Definition / Provider / Consumer，"
-                f"把 `ctx.llm` / `ctx.fs` 接上。证据在 `{cite}`。"
+                f"用来界定插件与宿主之间的能力边界。证据在 `{cite}`。"
             )
         return (
             f"Capability Seam is Service Definition / Provider / Consumer; "
-            f"it wires `ctx.llm` / `ctx.fs`. See `{cite}`."
+            f"it is the plugin/host capability boundary. See `{cite}`."
         )
     if zh:
         return f"「{title}」接住链路上的一段工作，证据在 `{cite}`。"

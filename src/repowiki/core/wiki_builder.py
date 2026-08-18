@@ -511,7 +511,11 @@ class WikiBuilder:
             )
             lines.append(f"## {structural_title(heading, language)}\n")
             for c in arch.components:
-                role = (getattr(c, "role", "") or "").strip() or (c.purpose or "").strip()
+                from repowiki.core.grounding import rewrite_lecture_claim
+
+                role = rewrite_lecture_claim(
+                    (getattr(c, "role", "") or "").strip() or (c.purpose or "").strip()
+                )
                 purpose = f" — {role}" if role else ""
                 files = ""
                 if c.files:
@@ -987,23 +991,12 @@ def replace_subgraph_overview_mermaid(content: str, *, page_id: str = "") -> str
 
 
 def upgrade_term_tip_markdown(content: str, *, language: str = "zh") -> str:
-    """GET: fill or drop hollow「如 、」term glosses."""
-    if not content or "## " not in content:
+    """GET: fill or drop hollow「如 、」/「把 / 接上」term glosses."""
+    if not content:
         return content
-    from repowiki.core.grounding import fill_hollow_term_tip, is_hollow_tip
+    from repowiki.core.grounding import repair_term_tip_markdown
 
-    def repl(match: re.Match[str]) -> str:
-        term, tip = match.group(1), match.group(2)
-        filled = fill_hollow_term_tip(term, tip, language=language)
-        if not filled or is_hollow_tip(filled):
-            return ""
-        return f"> **{term}** — {filled}"
-
-    return re.sub(
-        r"(?m)^>[ \t]*\*\*([^*]+)\*\*[ \t]*[—–−-][ \t]*(.+)$",
-        repl,
-        content,
-    )
+    return repair_term_tip_markdown(content, language=language)
 
 
 def _codebase_structure_table(rows, language: str = "en") -> list[str]:
@@ -1028,7 +1021,9 @@ def _render_subsystems(subsystems, language: str = "en") -> list[str]:
     lines: list[str] = []
     for sub in subsystems:
         name = _subsystem_display_name(getattr(sub, "name", "") or "")
-        role = (getattr(sub, "role", "") or "").strip()
+        from repowiki.core.grounding import rewrite_lecture_claim
+
+        role = rewrite_lecture_claim((getattr(sub, "role", "") or "").strip())
         types = list(getattr(sub, "key_types", None) or [])
         type_lines = [line for kt in types if (line := _key_type_line(kt))]
         mermaid = (getattr(sub, "mermaid", "") or "").strip()
@@ -1195,17 +1190,12 @@ def upgrade_zh_handbook_voice(content: str) -> str:
     """Strip lecture clauses; keep 你 not 您. Do not rewrite into 读完应能."""
     if not content:
         return content
+    from repowiki.core.grounding import rewrite_lecture_prose
+
     content = _LECTURE_CLAUSE_RE.sub("", content)
     content = _AFTER_READING_RE.sub("", content)
     content = _DOC_COVERS_PREFIX_RE.sub("", content)
-
-    def _bullet_repl(match: re.Match[str]) -> str:
-        prefix, body = match.group(1), match.group(2)
-        if re.match(r"(?:解释|说明)\s", body):
-            return f"{prefix}{rewrite_lecture_claim(body)}"
-        return match.group(0)
-
-    content = re.sub(r"(?m)^([ \t]*[-*][ \t]+)(.+)$", _bullet_repl, content)
+    content = rewrite_lecture_prose(content)
     content = re.sub(r"[ \t]{2,}", " ", content)
     content = re.sub(r"。{2,}", "。", content)
     return content.replace("您", "你")

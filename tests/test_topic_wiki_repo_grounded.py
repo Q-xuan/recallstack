@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from recallstack.domain.schemas import ConceptDraft, SourceReference
 from recallstack.learning.concept_extractor import ConceptExtractor
 from recallstack.learning.learning_contract import suggested_ask_questions
@@ -18,6 +20,7 @@ from repowiki.core.graph import DependencyGraph
 from repowiki.core.grounding import (
     is_hollow_tip,
     rewrite_lecture_claim,
+    rewrite_lecture_prose,
     should_reuse_analyzed_wiki,
     wiki_payload_cites_foreign_tree,
 )
@@ -987,6 +990,7 @@ def _polluted_90_wiki(project: ProjectContext) -> WikiData:
                 "解释 Capability Seam 如何界定插件与宿主之间的能力边界。"
                 "证据在 `docs/architecture.md:1`。",
                 "说明 client runtime 中的 conversation 如何保存会话。",
+                "Capability Seam 是 Service Definition / Provider / Consumer，把 / 接上。",
                 "进程从 `apps/cli/src/bin.ts:20 readVersion` 启动，一次调用从这里进图。",
             ],
             mermaid_component=(
@@ -1014,6 +1018,71 @@ def _polluted_90_wiki(project: ProjectContext) -> WikiData:
                     name="client",
                     location="packages/client",
                     purpose="The client package implements the browser SDK talking to the host",
+                ),
+            ],
+            subsystems=[
+                Subsystem(
+                    name="Capability Seam",
+                    role=(
+                        "解释 Capability Seam 如何界定插件与宿主之间的能力边界，"
+                        "以及 permission policy 与 skill invocation policy 如何落在这条 seam 上。"
+                    ),
+                    key_types=[
+                        KeyType(
+                            name="Service Definition",
+                            role="swappable capability contract",
+                            path="docs/architecture.md",
+                            line=1,
+                        ),
+                        KeyType(
+                            name="Provider",
+                            role="implements a definition",
+                            path="docs/architecture.md",
+                            line=1,
+                        ),
+                        KeyType(
+                            name="Consumer",
+                            role="uses ctx.llm / ctx.fs",
+                            path="docs/architecture.md",
+                            line=1,
+                        ),
+                    ],
+                ),
+                Subsystem(
+                    name="客户端运行时与会话",
+                    role="说明 client runtime 中的 conversation、pending、notifier、remotes 等会话原语如何保存会话。",
+                    key_types=[
+                        KeyType(
+                            name="Harness",
+                            role="session runtime",
+                            path="packages/core/src/index.ts",
+                            line=1,
+                        )
+                    ],
+                ),
+                Subsystem(
+                    name="客户端连接层",
+                    role="说明 connection 包如何建立客户端与后端/本地 loopback 的连接。",
+                    key_types=[
+                        KeyType(
+                            name="Context",
+                            role="plugin ctx",
+                            path="vendor/cordis/src/context.ts",
+                            line=1,
+                        )
+                    ],
+                ),
+                Subsystem(
+                    name="Agent 预设与设置存储",
+                    role="说明 ui-agent-preset 如何管理 agent 预设的 settings-store。",
+                    key_types=[
+                        KeyType(
+                            name="defineStore",
+                            role="settings store",
+                            path="packages/client/src/store.ts",
+                            line=1,
+                        )
+                    ],
                 ),
             ],
         ),
@@ -1106,25 +1175,45 @@ def test_fixture_2_overview_mermaid_is_one_call_not_client_subgraph(monkeypatch)
 
 def test_fixture_3_overview_drops_lecture_how_voice(monkeypatch):
     monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
-    assert "解释" not in rewrite_lecture_claim(
-        "解释 Capability Seam 如何界定插件与宿主之间的能力边界。"
-    )
+    spaced = "解释 Capability Seam 如何界定插件与宿主之间的能力边界。"
+    assert "解释" not in rewrite_lecture_claim(spaced)
+    assert "如何" not in rewrite_lecture_claim(spaced)
     assert "说明" not in rewrite_lecture_claim(
         "说明 client runtime 中的 conversation 如何保存会话。"
     )
-    assert "Service Definition" in rewrite_lecture_claim(
-        "解释 Capability Seam 如何界定插件与宿主之间的能力边界。"
+    assert "Service Definition" in rewrite_lecture_claim(spaced)
+    assert "conversation / pending" in rewrite_lecture_claim(
+        "说明 client runtime 中的 conversation、pending、notifier、remotes 等会话原语如何保存会话。"
     )
+    assert "loopback" in rewrite_lecture_claim(
+        "说明 connection 包如何建立客户端与后端/本地 loopback 的连接。"
+    )
+    paragraph = (
+        "### Capability Seam\n"
+        "解释 Capability Seam 如何界定插件与宿主之间的能力边界，"
+        "以及 permission policy 与 skill invocation policy 如何落在这条 seam 上。\n"
+    )
+    rewritten = rewrite_lecture_prose(paragraph)
+    assert "解释" not in rewritten
+    assert "说明" not in rewritten
+    assert re.search(r"解释\s+\S.{0,80}如何", rewritten) is None
     project = _dsh_project_with_decoys()
     graph = DependencyGraph.build_from_project(project)
     payload = build_wiki_payload(
         project, graph, [], wiki_data=_polluted_90_wiki(project)
     )
     index = next(p for p in payload["pages"] if p["id"] == "index")
-    assert "解释 Capability Seam 如何" not in index["content"]
-    assert "说明 client runtime 中的 conversation" not in index["content"]
+    arch = next(p for p in payload["pages"] if p["id"] == "architecture")
+    for page in (index, arch):
+        body = page["content"]
+        assert "解释 Capability Seam 如何" not in body
+        assert "说明 client runtime 中的 conversation" not in body
+        assert "说明 connection 包如何" not in body
+        assert "说明 ui-agent-preset 如何" not in body
+        assert re.search(r"(?:解释|说明)\s+\S.{0,80}如何", body) is None
     assert "Capability Seam 是 Service Definition" in index["content"]
-    assert "conversation 是浏览器/桌面端会话" in index["content"]
+    assert "conversation / pending" in index["content"]
+    assert "loopback" in index["content"]
 
 
 def test_fixture_4_capability_seam_pins_definition_line(monkeypatch):
@@ -1152,9 +1241,13 @@ def test_fixture_4_capability_seam_pins_definition_line(monkeypatch):
     index = next(p for p in payload["pages"] if p["id"] == "index")
     assert "docs/architecture.md:1" not in index["content"]
     assert "docs/architecture.md:" in index["content"]
+    assert f"docs/architecture.md:{line}" in index["content"]
     assert "Service Definition" in index["content"]
     assert "Provider" in index["content"]
     assert "Consumer" in index["content"]
+    for name in ("Service Definition", "Provider", "Consumer"):
+        assert f"docs/architecture.md:1 {name}" not in index["content"]
+        assert f"docs/architecture.md:{line} {name}" in index["content"]
 
 
 def test_fixture_5_hollow_terms_are_filled_or_dropped(monkeypatch):
@@ -1162,6 +1255,8 @@ def test_fixture_5_hollow_terms_are_filled_or_dropped(monkeypatch):
     assert is_hollow_tip("插件通过 seam 暴露的上下文（如 、）")
     assert is_hollow_tip("包含 `package.json`、 与")
     assert is_hollow_tip("把 交给 app")
+    assert is_hollow_tip("把 / 接上")
+    assert is_hollow_tip("Capability Seam 是 Service Definition / Provider / Consumer，把 / 接上。")
     project = _dsh_project_with_decoys()
     payload = build_wiki_payload(
         project,
@@ -1169,11 +1264,20 @@ def test_fixture_5_hollow_terms_are_filled_or_dropped(monkeypatch):
         [],
         wiki_data=_polluted_90_wiki(project),
     )
+    index = next(p for p in payload["pages"] if p["id"] == "index")
     arch = next(p for p in payload["pages"] if p["id"] == "architecture")
+    for page in (index, arch):
+        assert "把 / 接上" not in page["content"]
+        assert "把/接上" not in page["content"]
+        assert "package.json、 与" not in page["content"]
+        assert "`package.json`、 与" not in page["content"]
     assert "（如 、）" not in arch["content"]
     assert "如 、" not in arch["content"]
     assert "把 交给" not in arch["content"]
-    assert "`package.json`、 与" not in arch["content"]
+    if "cmdline" in arch["content"]:
+        assert "argv" in arch["content"]
+    if "profile" in arch["content"]:
+        assert "bundle" in arch["content"] or "cordis" in arch["content"].lower()
     if "Capability Seam" in arch["content"]:
         assert "ctx.llm" in arch["content"] or "ctx.fs" in arch["content"]
 

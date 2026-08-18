@@ -20,7 +20,7 @@ from repowiki.core.models import (
 )
 
 # Bump when grounding rules change so the same content_hash is rescanned.
-WIKI_GROUND_REVISION = 6
+WIKI_GROUND_REVISION = 7
 
 # Training-memory product tokens. Kept only when the tree actually has them.
 _FOREIGN_PRODUCT_CRATES = (
@@ -92,10 +92,13 @@ _FALLBACK_ENTRY_TAIL = "启动，一次调用从这里进图"
 _HOLE_CONJ_RE = re.compile(
     r"[、,]\s*(?:与|和|and|or)\s*[。.]|"
     r"[、,]\s*[。.]|"
+    r"[、,]\s*(?:与|和)\s*$|"
     r"(?:的|地|得|与|和|及)\s*[、,]",
     re.I,
 )
 _HOLE_PARTICLE_RE = re.compile(r"(?:的|地|得|与|和|及)\s*[、,]\s*")
+_HOLE_WIRE_RE = re.compile(r"把\s*/\s*接上")
+_HOLE_PACKAGE_CONJ_RE = re.compile(r"package\.json[`']?、\s*与")
 _SAFE_MERMAID_LABELS = {
     "entry",
     "core",
@@ -340,6 +343,8 @@ def is_fragment_claim(text: str) -> bool:
         return True
     if _HOLE_HANDOFF_RE.search(s):
         return True
+    if _HOLE_WIRE_RE.search(s):
+        return True
     if re.match(r"^\s*(?:列出|包含)\s", s) and len(s) < 24:
         return True
     return False
@@ -349,12 +354,12 @@ _HOLE_EXAMPLE_RE = re.compile(r"（如\s*、\s*）|\(e\.g\.\s*,\s*\)|如\s*、")
 _HOLE_HANDOFF_RE = re.compile(r"把\s+交给")
 _HANDBOOK_TERM_TIPS = {
     "capability seam": (
-        "A seam is a swappable capability: Service Definition (`ctx.llm`, `ctx.fs`), Provider, Consumer.",
-        "插件通过 seam 暴露的上下文（如 `ctx.llm`、`ctx.fs`）。",
+        "A seam is a swappable capability: Service Definition (ctx.llm, ctx.fs), Provider, Consumer.",
+        "Capability Seam 是 Service Definition / Provider / Consumer；插件用 ctx.llm / ctx.fs。",
     ),
     "profile": (
         "A profile is package.json plus bundle and cordis patches.",
-        "包含 `package.json`、bundle 与 cordis patch。",
+        "包含 package.json、bundle 与 cordis patch。",
     ),
     "cmdline": (
         "cmdline hands argv to the app.",
@@ -364,9 +369,11 @@ _HANDBOOK_TERM_TIPS = {
 
 
 def is_hollow_tip(text: str) -> bool:
-    """True when cite-scrub left a broken term gloss (「如 、」/「把 交给」)."""
+    """True when cite-scrub left a broken term gloss (「如 、」/「把 / 接上」)."""
     s = re.sub(r"\s+", " ", (text or "").strip())
     if len(s) < 4:
+        return True
+    if re.fullmatch(r"`[^`]+`", s):
         return True
     if _HOLE_CONJ_RE.search(s):
         return True
@@ -376,18 +383,24 @@ def is_hollow_tip(text: str) -> bool:
         return True
     if _HOLE_HANDOFF_RE.search(s):
         return True
+    if _HOLE_WIRE_RE.search(s):
+        return True
+    if _HOLE_PACKAGE_CONJ_RE.search(s):
+        return True
     if re.search(r"(?:与|和|and)\s*[。.]$", s, re.I):
         return True
     if re.match(r"^(?:列出|包含)\s", s) and len(s) < 24:
         return True
-    if s in {"列出其顺序", "包含 。", "包含."}:
+    if s in {"列出其顺序", "包含 。", "包含.", "把 / 接上", "把/接上"}:
         return True
     return False
 
 
+# Identifier (incl. spaces) may sit between 解释/说明 and 如何.
 _LECTURE_HOW_RE = re.compile(
-    r"(?:解释|说明)\s*([^\n如何]{1,80}?)\s*如何([^。\n]*)。?"
+    r"(?:解释|说明)\s+(.+?)\s*如何([^。\n]*)。?"
 )
+_LECTURE_VOICE_RE = re.compile(r"(?:解释|说明)\s+\S.{0,80}?如何")
 _LECTURE_EXPLAIN_RE = re.compile(r"(?:解释|说明)\s+")
 
 
@@ -396,17 +409,27 @@ def rewrite_lecture_claim(text: str) -> str:
     raw = (text or "").strip()
     if not raw:
         return raw
-    chips = re.findall(r"`[^`]+`", raw)
-    tail = f" 证据在 {chips[0]}。" if chips else ""
-    if re.search(r"(?:解释|说明).{0,40}Capability Seam", raw):
+    body = re.sub(r"^[-*]\s+", "", raw)
+    chips = re.findall(r"`[^`]+`", body)
+    file_chips = [c for c in chips if "/" in c or re.search(r"\.[A-Za-z]{1,4}`", c)]
+    tail = f" 证据在 {file_chips[0]}。" if file_chips else ""
+    if re.search(r"(?:解释|说明).{0,80}Capability Seam", body):
         return (
             "Capability Seam 是 Service Definition / Provider / Consumer，"
             "用来界定插件与宿主之间的能力边界。"
             + tail
         )
-    if re.search(r"(?:解释|说明).{0,40}conversation", raw, re.I):
-        return "client runtime 的 conversation 是浏览器/桌面端会话状态。"
-    match = _LECTURE_HOW_RE.search(raw)
+    if re.search(
+        r"(?:解释|说明).{0,80}(?:client runtime|conversation|pending)", body, re.I
+    ):
+        return "client runtime 维护 conversation / pending。"
+    if re.search(r"(?:解释|说明).{0,80}connection", body, re.I):
+        return "connection 走 loopback。"
+    if re.search(
+        r"(?:解释|说明).{0,80}(?:ui-agent-preset|settings-store)", body, re.I
+    ):
+        return "ui-agent-preset 管理 agent 预设的 settings-store。"
+    match = _LECTURE_HOW_RE.search(body)
     if match:
         subject = match.group(1).strip().strip("「」\"'")
         rest = (match.group(2) or "").strip()
@@ -414,19 +437,79 @@ def rewrite_lecture_claim(text: str) -> str:
             return f"{subject}{rest}。" if rest[0] in "是为把用接" else f"{subject} {rest}。"
         if subject:
             return f"{subject}。"
-    if raw.startswith(("解释", "说明")):
-        return _LECTURE_EXPLAIN_RE.sub("", raw).strip()
+    if body.startswith(("解释", "说明")):
+        return _LECTURE_EXPLAIN_RE.sub("", body).strip()
     return raw
+
+
+def rewrite_lecture_prose(text: str) -> str:
+    """Rewrite 解释/说明 … 如何 in paragraphs and bullets. Keep fences/headings."""
+    if not text or not _LECTURE_VOICE_RE.search(text):
+        return text
+    parts = re.split(r"(?ms)(```.*?```)", text)
+    out: list[str] = []
+    for part in parts:
+        if part.startswith("```"):
+            out.append(part)
+            continue
+        lines: list[str] = []
+        for line in part.split("\n"):
+            if not line.strip() or re.match(r"^#{1,6}\s", line):
+                lines.append(line)
+                continue
+            bullet = re.match(r"^([ \t]*[-*][ \t]+)(.*)$", line)
+            if bullet and _LECTURE_VOICE_RE.search(bullet.group(2)):
+                lines.append(f"{bullet.group(1)}{rewrite_lecture_claim(bullet.group(2))}")
+                continue
+            quote = re.match(r"^([ \t]*>[ \t]*)(.*)$", line)
+            if quote and _LECTURE_VOICE_RE.search(quote.group(2)):
+                lines.append(f"{quote.group(1)}{rewrite_lecture_claim(quote.group(2))}")
+                continue
+            if _LECTURE_VOICE_RE.search(line):
+                lines.append(rewrite_lecture_claim(line))
+                continue
+            lines.append(line)
+        out.append("\n".join(lines))
+    return "".join(out)
 
 
 def fill_hollow_term_tip(term: str, tip: str, *, language: str = "zh") -> str:
     """Replace a cite-hollowed gloss, or return empty so the tip is dropped."""
     if not is_hollow_tip(tip):
         return tip
-    pair = _HANDBOOK_TERM_TIPS.get((term or "").strip().lower())
+    key = re.sub(r"\s+", " ", (term or "").strip().lower())
+    pair = _HANDBOOK_TERM_TIPS.get(key)
     if not pair:
         return ""
     return pair[1] if (language or "zh").startswith("zh") else pair[0]
+
+
+_TERM_TIP_LINE_RE = re.compile(
+    r"(?m)^((?:[ \t]*>[ \t]*)?(?:\*\*)?)([A-Za-z][A-Za-z0-9 _.]*?)((?:\*\*)?)"
+    r"[ \t]*[—–−][ \t]*(.+)$"
+)
+
+
+def repair_term_tip_markdown(content: str, *, language: str = "zh") -> str:
+    """Fill or drop hollow「如 、」/「把 / 接上」term glosses on the page."""
+    if not content or "—" not in content and "–" not in content and "-" not in content:
+        return content
+
+    def repl(match: re.Match[str]) -> str:
+        lead, term, trail, tip = match.group(1), match.group(2), match.group(3), match.group(4)
+        filled = fill_hollow_term_tip(term, tip, language=language)
+        if not filled or is_hollow_tip(filled):
+            return ""
+        return f"{lead}{term}{trail} — {filled}"
+
+    return _TERM_TIP_LINE_RE.sub(repl, content)
+
+
+def _repair_hollow_seam_tail(text: str) -> str:
+    """Keep the seam definition; drop the cite-scrubbed「把 / 接上」tail."""
+    out = re.sub(r"，把\s*/\s*接上", "", text)
+    out = re.sub(r"把\s*/\s*接上。?", "", out)
+    return out
 
 
 def repair_grounded_prose(text: str) -> str:
@@ -437,6 +520,7 @@ def repair_grounded_prose(text: str) -> str:
     out = _ORPHAN_EXT_BARE.sub("", out)
     out = _GLUED_FILE_EXT.sub(r"\1.", out)
     out = re.sub(r"Configuration lives in\s*[.。]", "", out, flags=re.I)
+    out = _repair_hollow_seam_tail(out)
     out = _HOLE_PARTICLE_RE.sub("", out)
     out = re.sub(r"按\s+顺序", "按顺序", out)
     out = re.sub(r"[、,]\s*[、,]", "、", out)
@@ -452,6 +536,14 @@ def repair_grounded_prose(text: str) -> str:
         # those is what glued ``。## 概述`` and list items onto one line.
         if part and not part.strip():
             kept.append(part)
+            continue
+        if _HOLE_WIRE_RE.search(part):
+            part = _repair_hollow_seam_tail(part)
+            if not part.strip() or is_hollow_tip(part) or is_fragment_claim(part):
+                continue
+        if is_hollow_tip(part) and (
+            _HOLE_PACKAGE_CONJ_RE.search(part) or _HOLE_CONJ_RE.search(part)
+        ):
             continue
         if not is_fragment_claim(part):
             kept.append(part)
@@ -476,7 +568,7 @@ def scrub_ungrounded_prose(text: str, index: CiteIndex) -> str:
         if is_inventory_focus(part) and "entrypoint" not in part.lower():
             continue
         kept.append(part)
-    out = repair_grounded_prose("".join(kept))
+    out = rewrite_lecture_prose(repair_grounded_prose("".join(kept)))
     return out.strip()
 
 
@@ -646,7 +738,7 @@ def ground_overview(overview: ProjectOverview, index: CiteIndex) -> ProjectOverv
     from repowiki.core.topics import is_weak_callpath_evidence_path
 
     for sub in getattr(overview, "subsystems", None) or []:
-        sub.role = scrub_ungrounded_prose(sub.role, index)
+        sub.role = rewrite_lecture_claim(scrub_ungrounded_prose(sub.role, index))
         sub.mermaid = sanitize_mermaid_to_tree(getattr(sub, "mermaid", "") or "", index)
         sub.files = [
             p for p in (getattr(sub, "files", None) or []) if not is_weak_callpath_evidence_path(p)
@@ -662,8 +754,8 @@ def ground_overview(overview: ProjectOverview, index: CiteIndex) -> ProjectOverv
 
 
 def ground_architecture(arch: ArchitectureDiagram, index: CiteIndex) -> ArchitectureDiagram:
-    arch.description = scrub_ungrounded_prose(arch.description, index)
-    arch.data_flow = scrub_ungrounded_prose(arch.data_flow, index)
+    arch.description = rewrite_lecture_prose(scrub_ungrounded_prose(arch.description, index))
+    arch.data_flow = rewrite_lecture_prose(scrub_ungrounded_prose(arch.data_flow, index))
     arch.mermaid_component = sanitize_mermaid_to_tree(arch.mermaid_component or "", index)
     arch.mermaid_sequence = sanitize_mermaid_to_tree(
         getattr(arch, "mermaid_sequence", "") or "", index
@@ -672,8 +764,10 @@ def ground_architecture(arch: ArchitectureDiagram, index: CiteIndex) -> Architec
     for comp in arch.components:
         if text_cites_foreign_tree(comp.name or "", index):
             continue
-        comp.purpose = scrub_ungrounded_prose(comp.purpose, index)
-        comp.role = scrub_ungrounded_prose(getattr(comp, "role", "") or "", index)
+        comp.purpose = rewrite_lecture_claim(scrub_ungrounded_prose(comp.purpose, index))
+        comp.role = rewrite_lecture_claim(
+            scrub_ungrounded_prose(getattr(comp, "role", "") or "", index)
+        )
         kept.append(comp)
     arch.components = kept
     return arch
@@ -764,7 +858,9 @@ def scrub_wiki_page_content(content: str, index: CiteIndex) -> str:
         return f"```mermaid\n{body}\n```"
 
     out = _MERMAID_FENCE_RE.sub(fence_repl, content)
-    return scrub_ungrounded_prose(out, index)
+    out = rewrite_lecture_prose(out)
+    out = scrub_ungrounded_prose(out, index)
+    return repair_term_tip_markdown(rewrite_lecture_prose(out), language="zh")
 
 
 def scrub_topic_page_content(content: str, index: CiteIndex) -> str:
