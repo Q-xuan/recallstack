@@ -221,6 +221,8 @@ def test_repair_grounded_prose_drops_orphan_ext_and_hollow_tips():
     )
     assert is_hollow_tip("列出其顺序")
     assert is_hollow_tip("包含 `package.json`、 与 。")
+    assert is_hollow_tip("再叠加 profile 的 、`$DSH_HOME/cordis.patch.yml`")
+    assert is_fragment_claim("再叠加 profile 的 、`$DSH_HOME/cordis.patch.yml`。")
     assert is_doc_pack_row("README.md", "README.md")
     assert is_doc_pack_row("README.md", "packages/README.md")
     assert is_doc_pack_row("AGENTS.md", "AGENTS.md")
@@ -244,6 +246,15 @@ def test_repair_grounded_prose_drops_orphan_ext_and_hollow_tips():
     assert "`ts:1`" not in leftover
     assert "client.ts:1" not in leftover
     assert "启动，一次调用从这里进图" not in leftover
+
+    hollow_body = (
+        "按 `ghost/order.ts` 顺序叠加 bundle patch，"
+        "再叠加 profile 的 `ghost/profile.yml`、`$DSH_HOME/cordis.patch.yml`。"
+    )
+    repaired_body = scrub_ungrounded_prose(hollow_body, CiteIndex.from_project(_project()))
+    assert "的 、" not in repaired_body
+    assert "的、" not in repaired_body
+    assert "按 顺序" not in repaired_body
 
 
 def test_repair_grounded_prose_keeps_markdown_newlines_and_drops_orphan_chip():

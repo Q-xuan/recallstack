@@ -20,7 +20,7 @@ from repowiki.core.models import (
 )
 
 # Bump when grounding rules change so the same content_hash is rescanned.
-WIKI_GROUND_REVISION = 4
+WIKI_GROUND_REVISION = 5
 
 # Training-memory product tokens. Kept only when the tree actually has them.
 _FOREIGN_PRODUCT_CRATES = (
@@ -75,14 +75,27 @@ _INVENTORY_FOCUS_RE = re.compile(
     r"Hub packages to explain first|"
     r"Configuration lives in|"
     r"Directory modules form the architecture|"
-    r"Heaviest modules by PageRank",
+    r"Heaviest modules by PageRank|"
+    r"概述页需要说明|"
+    r"what the overview page must explain|"
+    r"产品形态包括",
+    re.I,
+)
+_OVERVIEW_INSTRUCTION_RE = re.compile(
+    r"概述页需要说明|"
+    r"what the overview page must explain|"
+    r"产品形态包括|"
+    r"这个仓库是.{0,80}monorepo",
     re.I,
 )
 _FALLBACK_ENTRY_TAIL = "启动，一次调用从这里进图"
 _HOLE_CONJ_RE = re.compile(
-    r"[、,]\s*(?:与|和|and|or)\s*[。.]|[、,]\s*[。.]",
+    r"[、,]\s*(?:与|和|and|or)\s*[。.]|"
+    r"[、,]\s*[。.]|"
+    r"(?:的|地|得|与|和|及)\s*[、,]",
     re.I,
 )
+_HOLE_PARTICLE_RE = re.compile(r"(?:的|地|得|与|和|及)\s*[、,]\s*")
 _SAFE_MERMAID_LABELS = {
     "entry",
     "core",
@@ -218,6 +231,11 @@ def is_inventory_focus(text: str) -> bool:
     return bool(_INVENTORY_FOCUS_RE.search(text or ""))
 
 
+def is_overview_instruction_focus(text: str) -> bool:
+    """True when LLM leftover '概述页需要说明…' leaked into user-facing prose."""
+    return bool(_OVERVIEW_INSTRUCTION_RE.search(text or ""))
+
+
 _START_CLAIM_RE = re.compile(
     r"(?:进程从|The process starts at)\s*`([^`]+)`",
     re.I,
@@ -232,16 +250,23 @@ def _chip_path(inner: str) -> str:
 def _drop_scaffold_or_weak_start(part: str) -> bool:
     """True when a sentence cites e2e/WebScaffold or a leftover stub start chip."""
     from repowiki.core.topics import (
+        is_weak_callpath_evidence_path,
         is_weak_entrypoint_path,
         text_cites_scaffold_evidence,
     )
 
     if text_cites_scaffold_evidence(part):
         return True
+    if is_overview_instruction_focus(part or ""):
+        return True
     match = _START_CLAIM_RE.search(part or "")
-    if not match:
-        return False
-    return is_weak_entrypoint_path(_chip_path(match.group(1)))
+    if match and is_weak_entrypoint_path(_chip_path(match.group(1))):
+        return True
+    if "接住链路上的一段工作" in (part or "") or "owns one stretch" in (part or "").lower():
+        for chip in re.finditer(r"`([^`]+)`", part or ""):
+            if is_weak_callpath_evidence_path(_chip_path(chip.group(1))):
+                return True
+    return False
 
 
 def rewrite_weak_start_claims(text: str, index: CiteIndex) -> str:
@@ -290,6 +315,8 @@ def is_fragment_claim(text: str) -> bool:
         return True
     if _HOLE_CONJ_RE.search(s) and len(re.sub(r"\s+", "", s)) < 16:
         return True
+    if _HOLE_PARTICLE_RE.search(s):
+        return True
     if re.match(r"^\s*(?:列出|包含)\s", s) and len(s) < 24:
         return True
     return False
@@ -301,6 +328,8 @@ def is_hollow_tip(text: str) -> bool:
     if len(s) < 4:
         return True
     if _HOLE_CONJ_RE.search(s):
+        return True
+    if _HOLE_PARTICLE_RE.search(s):
         return True
     if re.search(r"(?:与|和|and)\s*[。.]$", s, re.I):
         return True
@@ -319,6 +348,8 @@ def repair_grounded_prose(text: str) -> str:
     out = _ORPHAN_EXT_BARE.sub("", out)
     out = _GLUED_FILE_EXT.sub(r"\1.", out)
     out = re.sub(r"Configuration lives in\s*[.。]", "", out, flags=re.I)
+    out = _HOLE_PARTICLE_RE.sub("", out)
+    out = re.sub(r"按\s+顺序", "按顺序", out)
     out = re.sub(r"[、,]\s*[、,]", "、", out)
     out = re.sub(r"[、,]\s*(?:与|和|and|or)\s*[。.]", "。", out, flags=re.I)
     out = re.sub(r"(?:与|和)\s*[。.]", "。", out)
@@ -474,7 +505,13 @@ def _scrub_codebase_parts(rows: list[CodebasePart], index: CiteIndex) -> list[Co
         ):
             continue
         row.purpose = scrub_ungrounded_prose(row.purpose, index)
-        if is_fragment_claim(row.purpose) or is_hollow_tip(row.purpose):
+        from repowiki.core.topics import is_boilerplate_pack_purpose
+
+        if (
+            is_fragment_claim(row.purpose)
+            or is_hollow_tip(row.purpose)
+            or is_boilerplate_pack_purpose(row.purpose)
+        ):
             row.purpose = ""
         if text_cites_foreign_tree(f"{row.name} {row.location} {row.purpose}", index):
             continue
@@ -516,9 +553,14 @@ def ground_overview(overview: ProjectOverview, index: CiteIndex) -> ProjectOverv
     overview.codebase_structure = _scrub_codebase_parts(
         list(getattr(overview, "codebase_structure", None) or []), index
     )
+    from repowiki.core.topics import is_weak_callpath_evidence_path
+
     for sub in getattr(overview, "subsystems", None) or []:
         sub.role = scrub_ungrounded_prose(sub.role, index)
         sub.mermaid = sanitize_mermaid_to_tree(getattr(sub, "mermaid", "") or "", index)
+        sub.files = [
+            p for p in (getattr(sub, "files", None) or []) if not is_weak_callpath_evidence_path(p)
+        ]
         if text_cites_foreign_tree(sub.name or "", index):
             sub.name = ""
     overview.subsystems = [

@@ -161,13 +161,13 @@ class WikiBuilder:
         if gs_topic and (overview.setup_instructions or gs_topic.files or overview.description):
             gs_title = structural_title("quick-start", lang)
             gs_md = self._build_getting_started_page(
-                overview, gs_topic, lang, topics=wiki_data.topics
+                overview, gs_topic, lang, topics=wiki_data.topics, project=project
             )
             pages.append(WikiPage(id="getting-started", title=gs_title, content=gs_md, order=1))
         elif overview.setup_instructions or overview.description or has_readme:
             gs_title = structural_title("quick-start", lang)
             gs_md = self._build_getting_started_page(
-                overview, None, lang, topics=wiki_data.topics
+                overview, None, lang, topics=wiki_data.topics, project=project
             )
             pages.append(WikiPage(id="getting-started", title=gs_title, content=gs_md, order=1))
 
@@ -271,7 +271,11 @@ class WikiBuilder:
             lines.append(f"{overview.one_liner}\n")
 
         from repowiki.core.grounding import is_fragment_claim, is_inventory_focus
-        from repowiki.core.topics import is_weak_entrypoint_path, text_cites_scaffold_evidence
+        from repowiki.core.topics import (
+            is_weak_callpath_evidence_path,
+            is_weak_entrypoint_path,
+            text_cites_scaffold_evidence,
+        )
 
         def _keep_what(raw: str) -> bool:
             text = str(raw or "").strip()
@@ -282,6 +286,11 @@ class WikiBuilder:
                 path = match.group(1).strip().split()[0].split(":")[0]
                 if is_weak_entrypoint_path(path):
                     return False
+            if "接住链路上的一段工作" in text or "owns one stretch" in text.lower():
+                for chip in re.finditer(r"`([^`]+)`", text):
+                    path = chip.group(1).strip().split()[0].split(":")[0]
+                    if is_weak_callpath_evidence_path(path):
+                        return False
             return True
 
         what = _dedupe_claim_lines(
@@ -316,7 +325,13 @@ class WikiBuilder:
                 else:
                     lines.append(f"Architecture: see [{arch_title}](architecture).\n")
 
-        structure = list(getattr(overview, "codebase_structure", None) or [])
+        from repowiki.core.topics import fill_codebase_purposes
+
+        structure = fill_codebase_purposes(
+            list(getattr(overview, "codebase_structure", None) or []),
+            project,
+            language=language,
+        )
         subsystems = list(getattr(overview, "subsystems", None) or [])
         if structure:
             lines.append(f"## {structural_title('codebase-split', language)}\n")
@@ -359,7 +374,7 @@ class WikiBuilder:
         return "\n".join(lines)
 
     def _build_getting_started_page(
-        self, overview, topic, language: str = "en", topics=None
+        self, overview, topic, language: str = "en", topics=None, project=None
     ) -> str:
         title = structural_title("quick-start", language)
         lines = [f"# {title}\n"]
@@ -394,11 +409,20 @@ class WikiBuilder:
                 "Follow the README (npm / pnpm / source / Web UI) until the process starts, then read architecture. "
                 "Cite `README.md`; do not paste the README into this section.\n"
             )
-        from repowiki.core.grounding import is_inventory_focus
+        from repowiki.core.grounding import (
+            is_inventory_focus,
+            is_overview_instruction_focus,
+        )
+        from repowiki.core.topics import getting_started_call_path
 
-        flow = (getattr(overview, "runtime_flow", "") or "").strip()
-        if flow and is_inventory_focus(flow):
-            flow = ""
+        flow = getting_started_call_path(project, language=language) if project else ""
+        leftover = (getattr(overview, "runtime_flow", "") or "").strip()
+        if leftover and (
+            is_inventory_focus(leftover) or is_overview_instruction_focus(leftover)
+        ):
+            leftover = ""
+        if not flow:
+            flow = leftover
         if flow:
             lines.append(f"## {structural_title('how-a-call-runs', language)}\n")
             lines.append(f"{flow}\n")
@@ -824,6 +848,8 @@ def _append_mermaid(lines: list[str], mermaid: str, *, max_lines: int = 40) -> N
 
 def _key_type_line(kt) -> str:
     """Type — 职责 — `` `path:line Symbol` ``. Drop dummy lib.rs / folder symbols."""
+    from repowiki.core.topics import is_weak_callpath_evidence_path
+
     name = (getattr(kt, "name", "") or "").strip()
     role = (getattr(kt, "role", "") or "").strip()
     path = (getattr(kt, "path", "") or "").strip()
@@ -831,7 +857,7 @@ def _key_type_line(kt) -> str:
     if not path:
         return ""
     file_path, path_line = _split_path_line(path)
-    if not file_path:
+    if not file_path or is_weak_callpath_evidence_path(file_path):
         return ""
     loc_line = path_line or (str(line) if line else "")
     loc = f"{file_path}:{loc_line}" if loc_line else file_path

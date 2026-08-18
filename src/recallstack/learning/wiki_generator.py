@@ -41,9 +41,12 @@ from repowiki.core.module_handbook import fallback_module_doc
 from repowiki.core.modules import group_into_modules
 from repowiki.core.path_class import prefer_product_overview
 from repowiki.core.topics import (
+    callpath_topics_for_overview,
     codebase_structure_for,
     fallback_topic_doc,
+    fill_codebase_purposes,
     is_generic_web_slug,
+    pick_topic_callpath_evidence,
     runtime_mermaid_for,
     subsystems_from_topics,
     topic_wiki_links,
@@ -134,11 +137,12 @@ def build_deterministic_wiki_data(
                 f"进程从 `{path}:1` 启动，一次调用从这里进图。",
             )
         )
-    for topic in outline.topics:
-        if topic.section == "getting-started" or not topic.key_files:
-            continue
+    known_paths = [f.path.replace("\\", "/") for f in project.files]
+    for topic in callpath_topics_for_overview(outline.topics):
         title = topic.title or topic.id
-        path = topic.key_files[0]
+        path = pick_topic_callpath_evidence(topic, known_paths)
+        if not path:
+            continue
         what_it_is.append(
             t(
                 f"{title} owns one stretch of the call path; see `{path}`.",
@@ -180,7 +184,11 @@ def build_deterministic_wiki_data(
         ),
         mermaid_component=graph.to_mermaid()
         or runtime_mermaid_for(entry_files=entry_files, topics=outline.topics),
-        codebase_structure=codebase_structure_for(project, language=lang),
+        codebase_structure=fill_codebase_purposes(
+            codebase_structure_for(project, language=lang),
+            project,
+            language=lang,
+        ),
         subsystems=subsystems_from_topics(outline.topics),
         see_also=topic_wiki_links(outline.topics),
         citations=cites,
@@ -933,6 +941,11 @@ def build_wiki_payload(
         wiki_data.overview.codebase_structure = codebase_structure_for(
             project, language=lang
         )
+    wiki_data.overview.codebase_structure = fill_codebase_purposes(
+        list(wiki_data.overview.codebase_structure or []),
+        project,
+        language=lang,
+    )
     if not (wiki_data.architecture.mermaid_component or "").strip():
         wiki_data.architecture.mermaid_component = (
             graph.to_mermaid()
@@ -979,6 +992,8 @@ def build_wiki_payload(
 
 def _setup_instructions(project: ProjectContext) -> list[str]:
     """How-to-run steps when the tree looks like an npm / source / Web UI repo."""
+    from repowiki.core.topics import process_entrypoint_paths
+
     paths = {(f.path or "").replace("\\", "/").lower() for f in project.files}
     js_workspace = bool(
         paths
@@ -991,16 +1006,51 @@ def _setup_instructions(project: ProjectContext) -> list[str]:
     )
     if not js_workspace:
         return []
-    return [
+    steps = [
         t(
             "Install at the repo root with the package manager the README names (npm / pnpm / yarn).",
             "在仓库根按 README 写的包管理器安装（npm / pnpm / yarn）。",
         ),
-        t(
-            "Start from source or the Web UI the README documents, then read architecture.",
-            "按 README 从源码或 Web UI 启动，确认进程起来后再读架构。",
-        ),
     ]
+    readme = next(
+        (f for f in project.files if (f.path or "").replace("\\", "/").lower() in {"readme.md", "readme"}),
+        None,
+    )
+    readme_text = (readme.content or readme.preview or "") if readme else ""
+    if re.search(r"\bdsh\s+web\b", readme_text):
+        steps.append(
+            t(
+                "Start the Web UI with `dsh web` (see README), then confirm the process is up.",
+                "用 `dsh web` 启动 Web UI（见 README），确认进程起来后再读架构。",
+            )
+        )
+    else:
+        steps.append(
+            t(
+                "Start from source or the Web UI the README documents, then read architecture.",
+                "按 README 从源码或 Web UI 启动，确认进程起来后再读架构。",
+            )
+        )
+    entries = process_entrypoint_paths(
+        [f.path for f in project.files],
+        flagged=[f.path for f in project.files if getattr(f, "is_entrypoint", False)],
+    )
+    args = [
+        (f.path or "").replace("\\", "/")
+        for f in project.files
+        if (f.path or "").replace("\\", "/").rsplit("/", 1)[-1] in {"args.ts", "args.js"}
+    ]
+    if entries:
+        extra = f"`{entries[0]}`"
+        if args:
+            extra += f" / `{args[0]}`"
+        steps.append(
+            t(
+                f"Process entry and flags: {extra}.",
+                f"进程入口与参数：{extra}。",
+            )
+        )
+    return steps
 
 
 def _sidebar_to_dict(item: Any) -> dict[str, Any]:
