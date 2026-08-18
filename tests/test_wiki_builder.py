@@ -1252,6 +1252,9 @@ def test_clip_mermaid_label_does_not_cut_mid_flag_or_path():
     mid_path = clip_mermaid_label("创建 AppWebEntry 并运行（apps/cli/src/index.ts）")
     assert not mid_path.endswith("（apps")
     assert "（apps" not in mid_path
+    preset = clip_mermaid_label("`writeDefaultPreset` 构造 `")
+    assert "构造 `" not in preset
+    assert clip_mermaid_label("返回 undefined") == "返回 undefined"
     rendered = shorten_mermaid_node_labels(
         "```mermaid\n"
         "flowchart TD\n"

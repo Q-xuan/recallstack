@@ -897,13 +897,14 @@ class Analyzer:
                     "Work enters at the process entrypoint, moves through hub types, "
                     "then out to dependents. The diagram follows that call, not the crate tree."
                 )
-        if not overview.mermaid_component:
-            overview.mermaid_component = (graph.to_mermaid() if graph else "") or ""
-        if not overview.mermaid_component:
-            overview.mermaid_component = runtime_mermaid_for(
-                entry_files=[f.path for f in project.files if f.is_entrypoint],
-                topics=(outline.topics if outline else None),
-            )
+        from repowiki.core.topics import prefer_overview_mermaid
+
+        overview.mermaid_component = prefer_overview_mermaid(
+            project,
+            graph,
+            topics=(outline.topics if outline else None),
+            current=overview.mermaid_component,
+        )
         if not overview.codebase_structure:
             overview.codebase_structure = codebase_structure_for(
                 project, language=self._lang()
@@ -993,13 +994,14 @@ class Analyzer:
     ) -> None:
         """Restore mermaid / structure after grounding emptied invented diagrams."""
         topics = outline.topics if outline else None
-        entries = [f.path for f in project.files if f.is_entrypoint]
-        if not (wiki.overview.mermaid_component or "").strip():
-            wiki.overview.mermaid_component = (graph.to_mermaid() if graph else "") or ""
-        if not (wiki.overview.mermaid_component or "").strip():
-            wiki.overview.mermaid_component = runtime_mermaid_for(
-                entry_files=entries, topics=topics
-            )
+        from repowiki.core.topics import prefer_overview_mermaid
+
+        wiki.overview.mermaid_component = prefer_overview_mermaid(
+            project,
+            graph,
+            topics=topics,
+            current=wiki.overview.mermaid_component,
+        )
         if not wiki.overview.codebase_structure:
             wiki.overview.codebase_structure = codebase_structure_for(
                 project, language=self._lang()
@@ -1013,14 +1015,12 @@ class Analyzer:
             wiki.overview = self._fill_overview_gaps(
                 wiki.overview, project, outline, graph
             )
-        if not (wiki.architecture.mermaid_component or "").strip():
-            wiki.architecture.mermaid_component = (
-                graph.to_mermaid() if graph else ""
-            ) or ""
-        if not (wiki.architecture.mermaid_component or "").strip():
-            wiki.architecture.mermaid_component = runtime_mermaid_for(
-                entry_files=entries, topics=topics
-            )
+        wiki.architecture.mermaid_component = prefer_overview_mermaid(
+            project,
+            graph,
+            topics=topics,
+            current=wiki.architecture.mermaid_component,
+        )
         if not (wiki.architecture.description or "").strip():
             wiki.architecture = self._fill_architecture_gaps(
                 wiki.architecture, project, outline, graph
@@ -1128,13 +1128,14 @@ class Analyzer:
                     "Work enters at the entrypoints, then through runtime, tools, and UI. "
                     "Types are roles on that path, not a file inventory."
                 )
-        if not arch.mermaid_component:
-            arch.mermaid_component = (graph.to_mermaid() if graph else "") or ""
-        if not arch.mermaid_component:
-            arch.mermaid_component = runtime_mermaid_for(
-                entry_files=[f.path for f in project.files if f.is_entrypoint],
-                topics=(outline.topics if outline else None),
-            )
+        from repowiki.core.topics import prefer_overview_mermaid
+
+        arch.mermaid_component = prefer_overview_mermaid(
+            project,
+            graph,
+            topics=(outline.topics if outline else None),
+            current=arch.mermaid_component,
+        )
         if not arch.term_tips:
             arch.term_tips = _generic_term_tips(self._lang())
         return arch
@@ -1225,39 +1226,39 @@ def _fallback_what_it_is(
             items.append(f"仓库目标与边界写在 README，而不是目录名。 `{readme.path}:1`")
         else:
             items.append(f"The goal lives in the README, not the folder names. `{readme.path}:1`")
-    from repowiki.core.topics import process_entrypoint_paths
+    from repowiki.core.topics import (
+        callpath_topics_for_overview,
+        overview_callpath_claim,
+        pick_topic_callpath_evidence,
+        pin_overview_claim_cites,
+        pin_topic_evidence_cite,
+        process_entry_cite,
+        process_entrypoint_paths,
+    )
 
     start_paths = process_entrypoint_paths(
         [f.path for f in project.files],
         flagged=[f.path for f in project.files if f.is_entrypoint],
     )
     for path in start_paths[:3]:
+        cite = process_entry_cite(path, project)
         if zh:
-            items.append(f"进程从 `{path}:1` 启动，一次调用从这里进图。")
+            items.append(f"进程从 `{cite}` 启动，一次调用从这里进图。")
         else:
-            items.append(f"The process starts at `{path}:1`; one call enters the graph here.")
+            items.append(f"The process starts at `{cite}`; one call enters the graph here.")
         if len(items) >= 4:
             break
     if outline:
-        from repowiki.core.topics import (
-            callpath_topics_for_overview,
-            pick_topic_callpath_evidence,
-        )
-
         known_paths = [f.path.replace("\\", "/") for f in project.files]
         for topic in callpath_topics_for_overview(outline.topics):
             path = pick_topic_callpath_evidence(topic, known_paths)
             if not path:
                 continue
-            cite = path if re.search(r":\d+", path) else f"{path}:1"
-            title = topic.title or topic.id
-            if zh:
-                items.append(f"「{title}」接住链路上的一段工作，证据在 `{cite}`。")
-            else:
-                items.append(f"{title} owns one stretch of the call path; see `{cite}`.")
+            cite = pin_topic_evidence_cite(path, project, topic.id or "")
+            items.append(overview_callpath_claim(topic, cite, zh=zh))
             if len(items) >= 6:
                 break
-    return items[:6]
+    return pin_overview_claim_cites(items[:6], project)
 
 
 def _generic_term_tips(language: str) -> list[TermTip]:

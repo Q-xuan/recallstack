@@ -16,6 +16,8 @@ from recallstack.learning.wiki_serve import materialize_wiki_payload
 from repowiki.core.cite_check import verify_wiki_data
 from repowiki.core.graph import DependencyGraph
 from repowiki.core.grounding import (
+    is_hollow_tip,
+    rewrite_lecture_claim,
     should_reuse_analyzed_wiki,
     wiki_payload_cites_foreign_tree,
 )
@@ -28,6 +30,7 @@ from repowiki.core.models import (
     ProjectContext,
     ProjectOverview,
     Subsystem,
+    TermTip,
     WikiData,
 )
 from repowiki.core.modules import group_into_modules
@@ -35,10 +38,23 @@ from repowiki.core.outline import build_deterministic_outline, merge_outline
 from repowiki.core.scanner import build_file_tree
 from repowiki.core.topics import (
     build_deterministic_topics,
+    callpath_mermaid_for,
     codebase_structure_for,
+    fill_codebase_purposes,
     is_boilerplate_pack_purpose,
+    is_config_file_concept,
+    is_english_pack_purpose,
+    mermaid_is_local_package_subgraph,
+    pin_topic_evidence_cite,
+    prefer_overview_mermaid,
 )
-from repowiki.core.wiki_builder import WikiBuilder, collapse_repeated_mermaid_labels
+from repowiki.core.wiki_builder import (
+    WikiBuilder,
+    clip_mermaid_label,
+    collapse_repeated_mermaid_labels,
+    localize_split_table_markdown,
+    rewrite_start_claim_helper_symbols,
+)
 
 GROK_SLUGS = {
     "agent-loop",
@@ -92,7 +108,12 @@ export type Config = { name: string };
 """
     architecture = """# Architecture
 
-Capability Seam: Service Definition / Provider / Consumer.
+This note is the title page, not the seam contract.
+
+## Capability Seam
+
+A seam is a swappable capability defined by three roles:
+Service Definition (`ctx.llm`, `ctx.fs`), Service Provider, and Consumer.
 `packages/core` is the product API spine. `packages/fs` and `packages/llm`
 are providers. `vendor/cordis` loads plugins onto ctx.
 """
@@ -183,8 +204,30 @@ def _dsh_project_with_decoys() -> ProjectContext:
         ),
         _file(
             "apps/cli/src/bin.ts",
+            "export function readVersion() { return '1' }\n"
             "export function main() { boot() }\n",
             entry=True,
+        ),
+        _file(
+            "packages/acp/package.json",
+            '{"name":"@dsh/acp","description":"The ACP group exposes harness agents over JSON-RPC"}\n',
+            language="json",
+        ),
+        _file(
+            "packages/acp/src/index.ts",
+            "export function serveAcp() {}\n",
+        ),
+        _file(
+            "packages/api/src/index.ts",
+            "export function createApi() {}\n",
+        ),
+        _file(
+            "packages/client/src/session.ts",
+            "export function openSession() {}\n",
+        ),
+        _file(
+            "packages/client/src/ui.ts",
+            "export function renderUi() {}\n",
         ),
         _file(
             "apps/web/src/main.ts",
@@ -933,3 +976,262 @@ def test_mermaid_does_not_keep_start_turn_self_loop():
     out = collapse_repeated_mermaid_labels(raw)
     assert "B --> C" not in out
     assert "A --> B" in out
+
+
+def _polluted_90_wiki(project: ProjectContext) -> WikiData:
+    """LLM leftover that must still reach 90 after fallback/verify."""
+    return WikiData(
+        overview=ProjectOverview(
+            name="deepseek-harness",
+            what_it_is=[
+                "解释 Capability Seam 如何界定插件与宿主之间的能力边界。"
+                "证据在 `docs/architecture.md:1`。",
+                "说明 client runtime 中的 conversation 如何保存会话。",
+                "进程从 `apps/cli/src/bin.ts:20 readVersion` 启动，一次调用从这里进图。",
+            ],
+            mermaid_component=(
+                "flowchart TD\n"
+                '  a["packages/client/src/session.ts"] --> b["packages/client/src/ui.ts"]\n'
+                '  b --> c["packages/client/src/store.ts"]\n'
+            ),
+            codebase_structure=[
+                CodebasePart(
+                    name="acp",
+                    location="packages/acp",
+                    purpose="English | The ACP group exposes harness agents over JSON-RPC",
+                ),
+                CodebasePart(
+                    name="cli",
+                    location="apps/cli",
+                    purpose="Parse argv and start the runner by profile",
+                ),
+                CodebasePart(
+                    name="boot",
+                    location="packages/boot",
+                    purpose="Stack bundle patches into the Cordis root",
+                ),
+                CodebasePart(
+                    name="client",
+                    location="packages/client",
+                    purpose="The client package implements the browser SDK talking to the host",
+                ),
+            ],
+        ),
+        architecture=ArchitectureDiagram(
+            architecture_type="plugin-system",
+            mermaid_component=(
+                "flowchart TD\n"
+                '  a["packages/client/src/session.ts"] --> b["packages/client"]\n'
+            ),
+            term_tips=[
+                TermTip(term="Capability Seam", tip="插件通过 seam 暴露的上下文（如 、）"),
+                TermTip(term="profile", tip="包含 `package.json`、 与"),
+                TermTip(term="cmdline", tip="把 交给 app"),
+            ],
+        ),
+    )
+
+
+def test_fixture_1_split_table_is_handbook_zh(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    project = _dsh_project_with_decoys()
+    rows = fill_codebase_purposes(
+        [
+            CodebasePart(
+                name="acp",
+                location="packages/acp",
+                purpose="English | The ACP group exposes harness agents over JSON-RPC",
+            ),
+            CodebasePart(name="cli", location="apps/cli", purpose=""),
+            CodebasePart(name="boot", location="packages/boot", purpose=""),
+            CodebasePart(name="client", location="packages/client", purpose=""),
+        ],
+        project,
+        language="zh",
+    )
+    by_name = {r.name: r.purpose for r in rows}
+    assert not any(is_english_pack_purpose(p) for p in by_name.values())
+    assert "English |" not in by_name["acp"]
+    assert "The ACP group" not in by_name["acp"]
+    assert "解析 argv" in by_name["cli"] and "profile" in by_name["cli"]
+    assert "bundle" in by_name["boot"] and "Cordis" in by_name["boot"]
+    assert "浏览器" in by_name["client"] or "桌面" in by_name["client"]
+
+    table = localize_split_table_markdown(
+        "## 代码如何拆分\n\n"
+        "| 名称 | 位置 | 职责 |\n"
+        "| --- | --- | --- |\n"
+        "| acp | packages/acp | English | The ACP group exposes harness agents |\n",
+        language="zh",
+    )
+    assert "English |" not in table
+    assert "The ACP group" not in table
+
+    payload = build_wiki_payload(project, DependencyGraph.build_from_project(project), [])
+    index = next(p for p in payload["pages"] if p["id"] == "index")
+    split = index["content"].split("代码如何拆分", 1)[1].split("## ", 1)[0]
+    assert "English |" not in split
+    assert "The ACP group" not in split
+    assert "解析 argv" in split or "profile" in split
+
+
+def test_fixture_2_overview_mermaid_is_one_call_not_client_subgraph(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    project = _dsh_project_with_decoys()
+    graph = DependencyGraph.build_from_project(project)
+    client_only = (
+        "flowchart TD\n"
+        '  a["packages/client/src/session.ts"] --> b["packages/client/src/ui.ts"]\n'
+        '  b --> c["packages/client/src/store.ts"]\n'
+    )
+    assert mermaid_is_local_package_subgraph(client_only)
+    diagram = prefer_overview_mermaid(project, graph, current=client_only)
+    assert mermaid_is_local_package_subgraph(diagram) is False
+    for token in ("CLI", "Bundle", "Boot/Cordis", "ACP", "API", "Client", "Web"):
+        assert token in diagram
+    assert "packages/client/src/session.ts" not in diagram
+    raw = callpath_mermaid_for(project)
+    assert raw.startswith("flowchart LR")
+    assert "CLI" in raw and "Web" in raw
+
+    cleaned = verify_wiki_data(_polluted_90_wiki(project), project)
+    payload = build_wiki_payload(project, graph, [], wiki_data=cleaned)
+    index = next(p for p in payload["pages"] if p["id"] == "index")
+    arch = next(p for p in payload["pages"] if p["id"] == "architecture")
+    for page in (index, arch):
+        assert "packages/client/src/session.ts" not in page["content"]
+        assert "CLI" in page["content"]
+        assert "Boot/Cordis" in page["content"] or "Cordis" in page["content"]
+
+
+def test_fixture_3_overview_drops_lecture_how_voice(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    assert "解释" not in rewrite_lecture_claim(
+        "解释 Capability Seam 如何界定插件与宿主之间的能力边界。"
+    )
+    assert "说明" not in rewrite_lecture_claim(
+        "说明 client runtime 中的 conversation 如何保存会话。"
+    )
+    assert "Service Definition" in rewrite_lecture_claim(
+        "解释 Capability Seam 如何界定插件与宿主之间的能力边界。"
+    )
+    project = _dsh_project_with_decoys()
+    graph = DependencyGraph.build_from_project(project)
+    payload = build_wiki_payload(
+        project, graph, [], wiki_data=_polluted_90_wiki(project)
+    )
+    index = next(p for p in payload["pages"] if p["id"] == "index")
+    assert "解释 Capability Seam 如何" not in index["content"]
+    assert "说明 client runtime 中的 conversation" not in index["content"]
+    assert "Capability Seam 是 Service Definition" in index["content"]
+    assert "conversation 是浏览器/桌面端会话" in index["content"]
+
+
+def test_fixture_4_capability_seam_pins_definition_line(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    project = _dsh_project_with_decoys()
+    cite = pin_topic_evidence_cite(
+        "docs/architecture.md:1", project, "capability-seam"
+    )
+    assert cite != "docs/architecture.md:1"
+    assert cite.startswith("docs/architecture.md:")
+    line = int(cite.rsplit(":", 1)[1])
+    assert line > 1
+    text = next(f.content for f in project.files if f.path == "docs/architecture.md")
+    hit = text.splitlines()[line - 1]
+    assert any(
+        tok in hit
+        for tok in ("Service Definition", "Provider", "Consumer", "ctx.llm", "ctx.fs")
+    )
+    payload = build_wiki_payload(
+        project,
+        DependencyGraph.build_from_project(project),
+        [],
+        wiki_data=_polluted_90_wiki(project),
+    )
+    index = next(p for p in payload["pages"] if p["id"] == "index")
+    assert "docs/architecture.md:1" not in index["content"]
+    assert "docs/architecture.md:" in index["content"]
+    assert "Service Definition" in index["content"]
+    assert "Provider" in index["content"]
+    assert "Consumer" in index["content"]
+
+
+def test_fixture_5_hollow_terms_are_filled_or_dropped(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    assert is_hollow_tip("插件通过 seam 暴露的上下文（如 、）")
+    assert is_hollow_tip("包含 `package.json`、 与")
+    assert is_hollow_tip("把 交给 app")
+    project = _dsh_project_with_decoys()
+    payload = build_wiki_payload(
+        project,
+        DependencyGraph.build_from_project(project),
+        [],
+        wiki_data=_polluted_90_wiki(project),
+    )
+    arch = next(p for p in payload["pages"] if p["id"] == "architecture")
+    assert "（如 、）" not in arch["content"]
+    assert "如 、" not in arch["content"]
+    assert "把 交给" not in arch["content"]
+    assert "`package.json`、 与" not in arch["content"]
+    if "Capability Seam" in arch["content"]:
+        assert "ctx.llm" in arch["content"] or "ctx.fs" in arch["content"]
+
+
+def test_overview_start_chip_is_bin_main_not_readversion(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    project = _dsh_project_with_decoys()
+    payload = build_wiki_payload(
+        project,
+        DependencyGraph.build_from_project(project),
+        [],
+        wiki_data=_polluted_90_wiki(project),
+    )
+    index = next(p for p in payload["pages"] if p["id"] == "index")
+    start_lines = [
+        ln for ln in index["content"].splitlines() if "启动，一次调用从这里进图" in ln
+    ]
+    assert start_lines
+    assert all("readVersion" not in ln for ln in start_lines)
+    assert any("apps/cli/src/bin.ts" in ln for ln in start_lines)
+    rewritten = rewrite_start_claim_helper_symbols(
+        "进程从 `apps/cli/src/bin.ts:20 readVersion` 启动，一次调用从这里进图。"
+    )
+    assert "readVersion" not in rewritten
+    assert "apps/cli/src/bin.ts" in rewritten
+
+
+def test_config_filename_is_not_a_concept_page(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    assert is_config_file_concept("vitest.shared.ts", "vitest.shared.ts")
+    assert is_config_file_concept("vitest-shared-ts", "vitest.shared.ts")
+    project = _dsh_project_with_decoys()
+    wiki = WikiBuilder().build(
+        project,
+        build_deterministic_wiki_data(
+            project, DependencyGraph.build_from_project(project), []
+        ),
+        DependencyGraph.build_from_project(project),
+        language="zh",
+    )
+    draft = ConceptDraft(
+        slug="vitest.shared.ts",
+        title="vitest.shared.ts",
+        description="shared vitest config",
+        importance=0.4,
+        source_references=[SourceReference(path="vitest.shared.ts", start_line=1)],
+    )
+    out = append_concept_pages(wiki, [draft])
+    assert out.get_page("concepts/vitest.shared.ts") is None
+
+
+def test_clip_mermaid_label_keeps_backticks_and_full_words():
+    assert "`" not in clip_mermaid_label("`writeDefaultPreset` 构造 `") or (
+        clip_mermaid_label("`writeDefaultPreset` 构造 `").count("`") % 2 == 0
+    )
+    clipped = clip_mermaid_label("`writeDefaultPreset` 构造 `defaultPreset`")
+    assert not clipped.endswith("`") or clipped.count("`") % 2 == 0
+    assert "构造 `" not in clipped
+    assert clip_mermaid_label("返回 undefined") == "返回 undefined"
+    long_en = clip_mermaid_label("返回 undefined 并继续写下去直到被截断")
+    assert not long_en.endswith("undefine")

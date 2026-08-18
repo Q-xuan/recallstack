@@ -293,8 +293,17 @@ class WikiBuilder:
                         return False
             return True
 
+        from repowiki.core.topics import pin_overview_claim_cites
+
         what = _dedupe_claim_lines(
-            s for s in (getattr(overview, "what_it_is", None) or []) if _keep_what(str(s))
+            pin_overview_claim_cites(
+                [
+                    rewrite_lecture_claim(str(s))
+                    for s in (getattr(overview, "what_it_is", None) or [])
+                    if _keep_what(rewrite_lecture_claim(str(s)))
+                ],
+                project,
+            )
         )
         lines.append(f"## {structural_title('what-is', language)}\n")
         if what:
@@ -897,6 +906,106 @@ def _split_path_line(path: str) -> tuple[str, str]:
     return raw, ""
 
 
+def localize_split_table_markdown(content: str, *, language: str = "zh") -> str:
+    """GET: rewrite 职责 cells that are `English |` or pasted package.json English."""
+    if language != "zh" or not content or "代码如何拆分" not in content:
+        return content
+    from repowiki.core.topics import (
+        is_english_pack_purpose,
+        purpose_for_pack,
+        should_rewrite_pack_purpose,
+    )
+
+    parts = re.split(r"(?m)(?=^## )", content)
+    out: list[str] = []
+    for part in parts:
+        first, _, _rest = part.partition("\n")
+        if not re.match(r"^##\s*代码如何拆分\s*$", first):
+            out.append(part)
+            continue
+        rows = []
+        for line in part.splitlines():
+            if not line.startswith("|") or set(line.replace("|", "").strip()) <= {"-", " "}:
+                rows.append(line)
+                continue
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if len(cells) < 3 or cells[0] in {"名称", "Name"}:
+                rows.append(line)
+                continue
+            name, loc, purpose = cells[0], cells[1], " | ".join(cells[2:])
+            purpose = purpose.replace("\\|", "|")
+            if should_rewrite_pack_purpose(purpose, language="zh") or is_english_pack_purpose(purpose):
+                purpose = purpose_for_pack(name, loc, None, language="zh")
+            rows.append(
+                "| "
+                + " | ".join(
+                    [
+                        name.replace("|", "\\|"),
+                        loc.replace("|", "\\|"),
+                        purpose.replace("|", "\\|"),
+                    ]
+                )
+                + " |"
+            )
+        out.append("\n".join(rows) + ("\n" if part.endswith("\n") else ""))
+    return "".join(out)
+
+
+def replace_subgraph_overview_mermaid(content: str, *, page_id: str = "") -> str:
+    """GET: swap a packages/client-only overview diagram for the call-path stages."""
+    if page_id not in {"index", "architecture", ""} or "```mermaid" not in (content or ""):
+        return content
+    from repowiki.core.topics import mermaid_is_local_package_subgraph
+
+    fence = _MERMAID_FENCE_RE.search(content)
+    if not fence or not mermaid_is_local_package_subgraph(fence.group(1)):
+        return content
+    stages: list[str] = []
+    for token, label in (
+        ("apps/cli", "CLI"),
+        ("apps/dsh", "CLI"),
+        ("packages/bundle", "Bundle"),
+        ("packages/boot", "Boot/Cordis"),
+        ("vendor/cordis", "Boot/Cordis"),
+        ("packages/acp", "ACP"),
+        ("packages/api", "API"),
+        ("packages/client", "Client"),
+        ("apps/web", "Web"),
+    ):
+        if token in content and label not in stages:
+            stages.append(label)
+    if len(stages) < 2:
+        stages = ["CLI", "Bundle", "Boot/Cordis", "ACP", "API", "Client", "Web"]
+    lines = ["flowchart LR"]
+    ids = [f"s{i}" for i in range(len(stages))]
+    for nid, lab in zip(ids, stages, strict=True):
+        lines.append(f'  {nid}["{lab}"]')
+    for src, dst in zip(ids, ids[1:], strict=False):
+        lines.append(f"  {src} --> {dst}")
+    diagram = "\n".join(lines)
+    return content[: fence.start()] + f"```mermaid\n{diagram}\n```" + content[fence.end() :]
+
+
+def upgrade_term_tip_markdown(content: str, *, language: str = "zh") -> str:
+    """GET: fill or drop hollow「如 、」term glosses."""
+    if not content or "## " not in content:
+        return content
+    from repowiki.core.grounding import fill_hollow_term_tip, is_hollow_tip
+
+    def repl(match: re.Match[str]) -> str:
+        term, tip = match.group(1), match.group(2)
+        filled = fill_hollow_term_tip(term, tip, language=language)
+        if not filled or is_hollow_tip(filled):
+            return ""
+        return f"> **{term}** — {filled}"
+
+    return re.sub(
+        r"(?m)^>[ \t]*\*\*([^*]+)\*\*[ \t]*[—–−-][ \t]*(.+)$",
+        repl,
+        content,
+    )
+
+
 def _codebase_structure_table(rows, language: str = "en") -> list[str]:
     if language == "zh":
         headers = ["名称", "位置", "职责"]
@@ -1076,6 +1185,12 @@ def upgrade_handbook_section_headings(content: str) -> str:
     return re.sub(r"(?m)^## (.+?)\s*$", repl, content)
 
 
+def rewrite_lecture_claim(text: str) -> str:
+    from repowiki.core.grounding import rewrite_lecture_claim as _rewrite
+
+    return _rewrite(text)
+
+
 def upgrade_zh_handbook_voice(content: str) -> str:
     """Strip lecture clauses; keep 你 not 您. Do not rewrite into 读完应能."""
     if not content:
@@ -1083,6 +1198,14 @@ def upgrade_zh_handbook_voice(content: str) -> str:
     content = _LECTURE_CLAUSE_RE.sub("", content)
     content = _AFTER_READING_RE.sub("", content)
     content = _DOC_COVERS_PREFIX_RE.sub("", content)
+
+    def _bullet_repl(match: re.Match[str]) -> str:
+        prefix, body = match.group(1), match.group(2)
+        if re.match(r"(?:解释|说明)\s", body):
+            return f"{prefix}{rewrite_lecture_claim(body)}"
+        return match.group(0)
+
+    content = re.sub(r"(?m)^([ \t]*[-*][ \t]+)(.+)$", _bullet_repl, content)
     content = re.sub(r"[ \t]{2,}", " ", content)
     content = re.sub(r"。{2,}", "。", content)
     return content.replace("您", "你")
@@ -1134,18 +1257,46 @@ def upgrade_wiki_page_content(
     content = fill_key_type_chip_lines(content)
     content = upgrade_mermaid_fences(content)
     content = thicken_subsystem_diagrams(content)
+    content = replace_subgraph_overview_mermaid(content, page_id=page_id)
     content = shorten_mermaid_node_labels(content)
     content = strip_reading_wiki_homework(content, page_id=page_id)
     content = upgrade_architecture_loop_wording(content)
     content = filter_unknown_wiki_links(content, known_ids)
     if language == "zh" or "您" in content or "阅读后" in content or "读完" in content:
         content = upgrade_zh_handbook_voice(content)
+    content = localize_split_table_markdown(content, language=language)
+    content = upgrade_term_tip_markdown(content, language=language)
     content = upgrade_handbook_section_headings(content)
     content = strip_pathless_type_bullets(content)
     content = upgrade_codegraph_heading(content)
     if page_id == "getting-started":
         content = thicken_getting_started(content, known_ids, language=language)
+    content = rewrite_start_claim_helper_symbols(content)
     return content
+
+
+def rewrite_start_claim_helper_symbols(content: str) -> str:
+    """Drop helper exports (readVersion) from 进程从 `path:line Symbol` chips."""
+    if not content:
+        return content
+    from repowiki.core.topics import is_entry_chip_symbol
+
+    def repl(match: re.Match[str]) -> str:
+        prefix, inner = match.group(1), match.group(2)
+        bits = inner.strip().split()
+        if len(bits) < 2:
+            return match.group(0)
+        path, symbol = bits[0], bits[1]
+        if is_entry_chip_symbol(symbol):
+            return match.group(0)
+        loc = path.split(":")[0]
+        return f"{prefix}`{loc}`"
+
+    return re.sub(
+        r"(?i)((?:进程从|The process starts at)\s*)`([^`]+)`",
+        repl,
+        content,
+    )
 
 
 def _see_also_lines(
@@ -1204,23 +1355,24 @@ def _see_also_lines(
 
 
 def _append_term_tips(lines: list[str], tips, language: str = "en") -> None:
-    from repowiki.core.grounding import is_hollow_tip
+    from repowiki.core.grounding import fill_hollow_term_tip, is_hollow_tip
 
-    items = [
-        tip
-        for tip in (tips or [])
-        if getattr(tip, "term", "")
-        and not is_hollow_tip(getattr(tip, "tip", "") or "")
-    ]
+    items = []
+    for tip in tips or []:
+        term = getattr(tip, "term", "") or ""
+        if not term:
+            continue
+        text = fill_hollow_term_tip(
+            term, getattr(tip, "tip", "") or "", language=language
+        )
+        if not text or is_hollow_tip(text):
+            continue
+        items.append((term, text))
     if not items:
         return
     lines.append(f"## {structural_title('term-tips', language)}\n")
-    for tip in items:
-        text = getattr(tip, "tip", "") or ""
-        if text:
-            lines.append(f"> **{tip.term}** — {text}")
-        else:
-            lines.append(f"> **{tip.term}**")
+    for term, text in items:
+        lines.append(f"> **{term}** — {text}")
     lines.append("")
 
 
@@ -1715,16 +1867,38 @@ def clip_mermaid_label(text: str) -> str:
     if not cleaned:
         return ""
     cap = 12 if _mostly_cjk(cleaned) else 28
+    parts = re.findall(r"`[^`]+`|\S+", cleaned)
+    if not parts:
+        return _strip_incomplete_mermaid_trail(cleaned)
     if len(cleaned) > cap:
-        chunk = cleaned[:cap]
-        cut = -1
-        # Do not break on '-' (--profile) or '/' (apps/cli mid-path).
-        for sep in (" ", "、", "，", "；"):
-            idx = chunk.rfind(sep)
-            if idx >= max(2, cap // 3):
-                cut = max(cut, idx)
-        cleaned = chunk[:cut].rstrip() if cut > 0 else chunk
-    return _strip_incomplete_mermaid_trail(cleaned)
+        acc: list[str] = []
+        length = 0
+        for part in parts:
+            add = (1 if acc else 0) + len(part)
+            if acc and length + add > cap:
+                break
+            if not acc and len(part) > cap and not part.startswith("`"):
+                chunk = part[:cap]
+                cut = -1
+                for sep in (" ", "、", "，", "；"):
+                    idx = chunk.rfind(sep)
+                    if idx >= max(2, cap // 3):
+                        cut = max(cut, idx)
+                part = chunk[:cut].rstrip() if cut > 0 else chunk
+                acc.append(part)
+                break
+            acc.append(part)
+            length += add
+        cleaned = " ".join(acc) if acc else parts[0]
+    if cleaned.count("`") % 2:
+        cleaned = cleaned.rsplit("`", 1)[0].rstrip()
+    cleaned = re.sub(
+        r"\b(?:undefine|constructo|functio|retur|writeDefaultPrese)\b",
+        "",
+        cleaned,
+        flags=re.I,
+    )
+    return _strip_incomplete_mermaid_trail(cleaned.strip())
 
 
 def shorten_mermaid_node_labels(content: str) -> str:
@@ -2515,6 +2689,10 @@ def is_concept_nav_slug(slug: str) -> bool:
     if not raw or raw in _CONCEPT_NAV_SKIP or raw in _GENERIC_WEB_PAGE_SLUGS:
         return False
     if raw.startswith(("module-", "file-", "focus-")):
+        return False
+    from repowiki.core.topics import is_config_file_concept
+
+    if is_config_file_concept(raw):
         return False
     return True
 
