@@ -141,25 +141,93 @@ def topic_paths_are_agent_memory(paths) -> bool:
     return bool(items) and all(is_agent_memory_path(p) for p in items)
 
 
+_PLACEHOLDER_TITLES = frozenset(
+    {
+        "typename",
+        "type name",
+        "project name",
+        "name",
+        "untitled",
+        "overview",
+        "概述",
+        "symbol",
+        "filename",
+        "path",
+        "line",
+    }
+)
+_PLACEHOLDER_EXACT = frozenset({"TypeName", "FileName", "Symbol", "Type"})
+
+
+def is_placeholder_title(name: str) -> bool:
+    """True for schema leftovers (TypeName) or an empty identifier."""
+    raw = (name or "").strip().strip("`")
+    if not raw:
+        return True
+    if raw in _PLACEHOLDER_EXACT:
+        return True
+    if raw.lower() in _PLACEHOLDER_TITLES:
+        return True
+    if re.fullmatch(r"src/file\.\w+", raw, re.I):
+        return True
+    return False
+
+
+def readme_product_title(project) -> str:
+    """First README H1, e.g. ``# DeepSeek Harness`` → DeepSeek Harness."""
+    for item in getattr(project, "files", None) or []:
+        path = (getattr(item, "path", "") or "").replace("\\", "/").lower()
+        if path not in {"readme.md", "readme"}:
+            continue
+        text = getattr(item, "content", "") or getattr(item, "preview", "") or ""
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("# ") and not stripped.startswith("## "):
+                title = re.sub(r"\s*\(.*\)$", "", stripped[2:].strip().strip("`")).strip()
+                if title and not is_placeholder_title(title):
+                    return title
+    return ""
+
+
+def product_display_name(overview, project) -> str:
+    """Handbook H1: product title, never TypeName or an empty identifier."""
+    overview_name = (getattr(overview, "name", "") or "").strip()
+    if name_is_notes_product(overview_name):
+        overview_name = ""
+    project_name = (getattr(project, "name", "") or "").strip()
+    readme_title = readme_product_title(project)
+
+    def _slug(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+
+    if overview_name and not is_placeholder_title(overview_name):
+        if readme_title and _slug(overview_name) == _slug(project_name):
+            return readme_title
+        return overview_name
+    if readme_title:
+        return readme_title
+    if project_name and not is_placeholder_title(project_name):
+        return project_name
+    return readme_title or "Overview"
+
+
 def prefer_product_overview(overview, project, *, language: str = "zh") -> None:
     """Rewrite notes-as-product overview fields back to the harness product."""
     paths = [getattr(f, "path", "") for f in (getattr(project, "files", None) or [])]
     if repo_is_notes_primary(paths):
         return
-    name = getattr(overview, "name", "") or ""
-    if name_is_notes_product(name):
-        overview.name = getattr(project, "name", "") or name
+    overview.name = product_display_name(overview, project)
     zh = (language or "zh").startswith("zh") or (language or "").startswith("cn")
-    product = getattr(project, "name", "") or "this repo"
+    product = overview.name or getattr(project, "name", "") or "this repo"
     if prose_treats_notes_as_product(getattr(overview, "document_scope", "") or ""):
         overview.document_scope = (
             f"{product} 的目标、一次真实调用经过谁、仓库怎么拆。"
-            "关键类型保持英文 identifier，证据用 `path:line Symbol` 贴在断言旁边。"
+            "关键类型保持英文 identifier，证据用 path:line Symbol 贴在断言旁边。"
             if zh
             else (
                 f"{product}: the goal, who a real call passes through, "
                 "and how the repo is split. Key types stay English identifiers; "
-                "evidence is `path:line Symbol` next to the claim."
+                "evidence is path:line Symbol next to the claim."
             )
         )
     if prose_treats_notes_as_product(getattr(overview, "one_liner", "") or ""):

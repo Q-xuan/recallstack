@@ -8,6 +8,7 @@ from repowiki.core.cite_check import (
     sanitize_text,
     verify_wiki_data,
 )
+from repowiki.core.grounding import scrub_ungrounded_prose, text_cites_foreign_tree
 from repowiki.core.models import (
     ArchitectureDiagram,
     CallChain,
@@ -127,6 +128,76 @@ def test_sanitize_text_resolves_unique_basename():
     index = CiteIndex.from_project(_project())
     out = sanitize_text("look at `main.py:3`", index)
     assert out == "look at `app/main.py:3`"
+
+
+def test_sanitize_text_keeps_path_line_symbol_and_drops_truncated_chips():
+    index = CiteIndex.from_project(_project())
+    kept = sanitize_text("boot lives in `app/core.py:1 boot` next to the claim.", index)
+    assert "`app/core.py:1 boot`" in kept
+    dropped = sanitize_text(
+        "schema leftover `src/file.ts:12 TypeName` and `ts:1` and `README.ts:24 Config`.",
+        index,
+    )
+    assert "src/file.ts" not in dropped
+    assert "TypeName" not in dropped
+    assert "`ts:1`" not in dropped
+    assert "README.ts" not in dropped
+    nested = sanitize_text(
+        "进程从 `apps/dsh/src/main.ts:1` 启动。",
+        CiteIndex.from_project(
+            ProjectContext(
+                name="dsh",
+                root=".",
+                files=[
+                    FileInfo(
+                        path="apps/dsh/src/main.ts",
+                        size=8,
+                        language="typescript",
+                        lines=2,
+                        content="export function main() {}\n",
+                    )
+                ],
+            )
+        ),
+    )
+    assert "`apps/dsh/src/main.ts:1`" in nested
+    assert "`ts:1`" not in nested
+    dsh = CiteIndex.from_project(
+        ProjectContext(
+            name="dsh",
+            root=".",
+            files=[
+                FileInfo(
+                    path="README.md",
+                    size=20,
+                    language="markdown",
+                    lines=2,
+                    content="# DeepSeek Harness\n",
+                ),
+                FileInfo(
+                    path="apps/dsh/src/main.ts",
+                    size=8,
+                    language="typescript",
+                    lines=2,
+                    content="export function main() {}\n",
+                )
+            ],
+        )
+    )
+    assert not text_cites_foreign_tree(
+        "进程从 `apps/dsh/src/main.ts:1` 启动，一次调用从这里进图。",
+        dsh,
+    )
+    scrubbed = scrub_ungrounded_prose(
+        "进程从 `apps/dsh/src/main.ts:1` 启动，一次调用从这里进图。"
+        "相关源码: `README.md` `apps/dsh/src/main.ts`",
+        dsh,
+    )
+    assert "`apps/dsh/src/main.ts:1`" in scrubbed
+    assert "`README.md`" in scrubbed
+    assert "README.ts" not in scrubbed
+    assert "`ts:1`" not in scrubbed
+    assert not scrubbed.startswith("ts:")
 
 
 def test_cite_check_works_without_llm_on_deterministic_content():

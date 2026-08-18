@@ -248,7 +248,9 @@ class WikiBuilder:
         architecture=None,
         topics=None,
     ) -> str:
-        name = overview.name or project.name
+        from repowiki.core.path_class import product_display_name
+
+        name = product_display_name(overview, project)
         lines = [f"# {name}\n"]
 
         chip_lines = _related_source_chip_lines(
@@ -268,13 +270,15 @@ class WikiBuilder:
         ):
             lines.append(f"{overview.one_liner}\n")
 
-        what = [s for s in (getattr(overview, "what_it_is", None) or []) if str(s).strip()]
+        what = _dedupe_claim_lines(
+            s for s in (getattr(overview, "what_it_is", None) or []) if str(s).strip()
+        )
         lines.append(f"## {structural_title('what-is', language)}\n")
         if what:
             for item in what:
                 lines.append(f"- {item}")
             lines.append("")
-        elif overview.description:
+        elif overview.description and not _looks_like_readme_dump(overview.description):
             lines.append(f"{overview.description}\n")
         else:
             lines.append(f"{lede}\n")
@@ -364,22 +368,16 @@ class WikiBuilder:
             lines.append(f"{one}\n")
         if language == "zh":
             lines.append(f"## {structural_title('what-is', language)}\n")
-            desc = (overview.description or "").strip()
-            if desc and not prose_treats_notes_as_product(desc):
-                lines.append(f"{desc[:1200]}\n")
-            else:
-                lines.append(
-                    "从 README 的 npm / pnpm / 源码 / Web UI 启动步骤把项目跑起来，再进架构。\n"
-                )
+            lines.append(
+                "从 README 的 npm / pnpm / 源码 / Web UI 启动步骤把项目跑起来，再进架构。"
+                "细节以 `README.md` 为准。\n"
+            )
         else:
             lines.append(f"## {structural_title('what-is', language)}\n")
-            desc = (overview.description or "").strip()
-            if desc and not prose_treats_notes_as_product(desc):
-                lines.append(f"{desc[:1200]}\n")
-            else:
-                lines.append(
-                    "Follow the README (npm / pnpm / source / Web UI) until the process starts, then read architecture.\n"
-                )
+            lines.append(
+                "Follow the README (npm / pnpm / source / Web UI) until the process starts, then read architecture. "
+                "Cite `README.md`; do not paste the README into this section.\n"
+            )
         flow = (getattr(overview, "runtime_flow", "") or "").strip()
         if flow:
             lines.append(f"## {structural_title('how-a-call-runs', language)}\n")
@@ -1842,6 +1840,35 @@ def thicken_getting_started(
         return content
     heading = "## 跑起来之后" if language == "zh" else "## After it runs"
     return content.rstrip() + "\n\n" + heading + "\n\n" + "\n".join(links) + "\n"
+
+
+def _looks_like_readme_dump(text: str) -> bool:
+    """True when overview.description is a pasted README, not a handbook lede."""
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    if raw.startswith("# "):
+        return True
+    if "\n# " in raw or "\n## " in raw:
+        return True
+    return len(raw) > 600 and raw.count("\n") > 8
+
+
+def _dedupe_claim_lines(items) -> list[str]:
+    """Drop repeated '启动，一次调用从这里进图' bullets that only differ by a broken chip."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in items:
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        key = re.sub(r"`[^`]+`", "", text)
+        key = re.sub(r"\s+", " ", key).strip()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(text)
+    return out
 
 
 def _overview_lede(name: str, one_liner: str, language: str) -> str:

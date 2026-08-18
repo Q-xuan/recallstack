@@ -20,7 +20,7 @@ from repowiki.core.models import (
 )
 
 # Bump when grounding rules change so the same content_hash is rescanned.
-WIKI_GROUND_REVISION = 1
+WIKI_GROUND_REVISION = 2
 
 # Training-memory product tokens. Kept only when the tree actually has them.
 _FOREIGN_PRODUCT_CRATES = (
@@ -40,12 +40,15 @@ _FOREIGN_SYMBOLS = (
     "ToolBridge",
     "Pager",
 )
+# Lookbehind: do not treat `src/foo` inside `apps/dsh/src/foo.ts` as a crate path.
 _CRATE_PATH_RE = re.compile(
-    r"(?:packages|crates|apps|vendor|src)/[A-Za-z0-9_./@-]+",
+    r"(?<![A-Za-z0-9_./@-])(?:packages|crates|apps|vendor|src)/[A-Za-z0-9_./@-]+",
     re.I,
 )
 _XAI_GROK_RE = re.compile(r"(?:packages/|crates/(?:codegen/)?)?xai-grok-[\w.-]+", re.I)
-_SENTENCE_SPLIT = re.compile(r"(?<=[。！？.!?\n])")
+# Do not treat the dot in `file.ts` / `README.md` as a sentence end — that
+# was chopping chips into `ts:1` and gluing `README.` + `ts` into `README.ts`.
+_SENTENCE_SPLIT = re.compile(r"(?<=[。！？!?\n])|(?<=\.)(?=\s)")
 _MERMAID_NODE = re.compile(
     r'([A-Za-z][\w-]*)\s*\[\s*"?([^"\]]+)"?\s*\]'
 )
