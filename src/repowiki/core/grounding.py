@@ -20,7 +20,7 @@ from repowiki.core.models import (
 )
 
 # Bump when grounding rules change so the same content_hash is rescanned.
-WIKI_GROUND_REVISION = 3
+WIKI_GROUND_REVISION = 4
 
 # Training-memory product tokens. Kept only when the tree actually has them.
 _FOREIGN_PRODUCT_CRATES = (
@@ -204,7 +204,12 @@ def scrub_foreign_product_prose(text: str, index: CiteIndex) -> str:
     if not text:
         return text
     parts = _SENTENCE_SPLIT.split(text)
-    kept = [part for part in parts if not text_cites_foreign_product(part, index)]
+    kept = [
+        part
+        for part in parts
+        if not text_cites_foreign_product(part, index)
+            and not _drop_scaffold_or_weak_start(part)
+    ]
     return repair_grounded_prose("".join(kept))
 
 
@@ -213,10 +218,66 @@ def is_inventory_focus(text: str) -> bool:
     return bool(_INVENTORY_FOCUS_RE.search(text or ""))
 
 
+_START_CLAIM_RE = re.compile(
+    r"(?:进程从|The process starts at)\s*`([^`]+)`",
+    re.I,
+)
+
+
+def _chip_path(inner: str) -> str:
+    raw = (inner or "").strip().split()[0] if inner else ""
+    return raw.split(":")[0].replace("\\", "/")
+
+
+def _drop_scaffold_or_weak_start(part: str) -> bool:
+    """True when a sentence cites e2e/WebScaffold or a leftover stub start chip."""
+    from repowiki.core.topics import (
+        is_weak_entrypoint_path,
+        text_cites_scaffold_evidence,
+    )
+
+    if text_cites_scaffold_evidence(part):
+        return True
+    match = _START_CLAIM_RE.search(part or "")
+    if not match:
+        return False
+    return is_weak_entrypoint_path(_chip_path(match.group(1)))
+
+
+def rewrite_weak_start_claims(text: str, index: CiteIndex) -> str:
+    """Swap stub/e2e start-line chips for a real process entry, or drop them."""
+    if not text or not _START_CLAIM_RE.search(text):
+        return text
+    from repowiki.core.topics import is_weak_entrypoint_path, pick_process_entrypoint
+
+    replacement = pick_process_entrypoint(list(index.paths))
+    out = text
+
+    def repl(match: re.Match[str]) -> str:
+        path = _chip_path(match.group(1))
+        if not is_weak_entrypoint_path(path):
+            return match.group(0)
+        if not replacement:
+            return ""
+        prefix = match.group(0).split("`", 1)[0]
+        return f"{prefix}`{replacement}:1`"
+
+    out = _START_CLAIM_RE.sub(repl, out)
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    return out
+
+
 def is_fragment_claim(text: str) -> bool:
-    """True when a bullet/sentence is a cite leftover, not a real claim."""
-    raw = (text or "").strip()
-    s = re.sub(r"^[-*]\s+", "", raw).strip()
+    """True when a bullet/sentence is a cite leftover, not a real claim.
+
+    Whitespace-only parts (markdown ``\\n`` after a zero-width split) are
+    structure, not fragments — callers must keep them so headings/lists
+    do not glue onto the previous sentence.
+    """
+    raw = text or ""
+    if raw and not raw.strip():
+        return False
+    s = re.sub(r"^[-*]\s+", "", raw.strip()).strip()
     if not s:
         return True
     if re.fullmatch(r"`?[A-Za-z0-9_.@-]+:\d+(?:-\d+)?`?[。.]?", s):
@@ -265,7 +326,15 @@ def repair_grounded_prose(text: str) -> str:
     out = re.sub(r"[ \t]{2,}", " ", out)
     out = re.sub(r"\n{3,}", "\n\n", out)
     parts = _SENTENCE_SPLIT.split(out)
-    kept = [part for part in parts if not is_fragment_claim(part)]
+    kept: list[str] = []
+    for part in parts:
+        # Zero-width split after ``\n`` yields a newline-only part. Dropping
+        # those is what glued ``。## 概述`` and list items onto one line.
+        if part and not part.strip():
+            kept.append(part)
+            continue
+        if not is_fragment_claim(part):
+            kept.append(part)
     return "".join(kept).strip()
 
 
@@ -276,10 +345,13 @@ def scrub_ungrounded_prose(text: str, index: CiteIndex) -> str:
     from repowiki.core.cite_check import sanitize_text
 
     cleaned = sanitize_text(text, index)
+    cleaned = rewrite_weak_start_claims(cleaned, index)
     parts = _SENTENCE_SPLIT.split(cleaned)
     kept: list[str] = []
     for part in parts:
         if text_cites_foreign_tree(part, index):
+            continue
+        if _drop_scaffold_or_weak_start(part):
             continue
         if is_inventory_focus(part) and "entrypoint" not in part.lower():
             continue

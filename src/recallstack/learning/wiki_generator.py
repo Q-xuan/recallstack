@@ -20,6 +20,7 @@ from recallstack.learning.learning_contract import (
     flow_narrative,
     handbook_lede,
     handbook_position,
+    is_junk_evidence_path,
     related_source_chip_line,
     wiki_prose_excerpt,
 )
@@ -94,9 +95,13 @@ def build_deterministic_wiki_data(
 
     ranked = graph.rank_files()
     top_files = [p for p, _ in ranked[:12]]
-    entry_files = graph.get_entry_points()[:8] or [
-        f.path for f in project.files if getattr(f, "is_entrypoint", False)
-    ][:8]
+    from repowiki.core.topics import process_entrypoint_paths
+
+    entry_files = process_entrypoint_paths(
+        [f.path for f in project.files],
+        flagged=[f.path for f in project.files if getattr(f, "is_entrypoint", False)],
+        graph_entries=graph.get_entry_points(),
+    )[:8]
 
     lang = content_lang()
 
@@ -409,6 +414,8 @@ def _tips_for_concept(concept: ConceptDraft) -> list[TermTip]:
 
 def _what_body(concept: ConceptDraft, folded: str = "") -> str:
     """Handbook 'what it is' — description / why, not the path-step task."""
+    from repowiki.core.topics import text_cites_scaffold_evidence
+
     parts: list[str] = []
     body = _clean_concept_body(concept.description)
     why = (concept.why_learn or "").strip()
@@ -416,12 +423,13 @@ def _what_body(concept: ConceptDraft, folded: str = "") -> str:
         why = ""
     if body and why and body == why:
         why = ""
-    if body:
+    if body and not text_cites_scaffold_evidence(body):
         parts.append(body)
-    if why and why not in body:
+    if why and why not in body and not text_cites_scaffold_evidence(why):
         parts.append(why)
-    if folded and not any(folded in p or p in folded for p in parts):
-        parts.append(folded)
+    if folded and not text_cites_scaffold_evidence(folded):
+        if not any(folded in p or p in folded for p in parts):
+            parts.append(folded)
     if parts:
         return "\n\n".join(parts)
     return first_principles(concept, "")
@@ -538,8 +546,13 @@ def append_concept_pages(
             f"# {c.title}\n",
             f"> {handbook_lede(c.slug, c.title)}\n",
         ]
-        chip_locs = [_format_ref(ref) for ref in c.source_references[:8]]
-        chip_symbols = [(ref.symbol or "") for ref in c.source_references[:8]]
+        usable_refs = [
+            ref
+            for ref in c.source_references
+            if not is_junk_evidence_path(getattr(ref, "path", "") or "", slug=c.slug)
+        ]
+        chip_locs = [_format_ref(ref) for ref in usable_refs[:8]]
+        chip_symbols = [(ref.symbol or "") for ref in usable_refs[:8]]
         chip_line = related_source_chip_line(chip_locs, symbols=chip_symbols)
         if chip_line:
             lines.append(f"{chip_line}\n")
@@ -552,8 +565,8 @@ def append_concept_pages(
 
         if flow:
             lines.append(t("## Call path\n", "## 调用链\n"))
-            if c.source_references:
-                lines.append(f"{flow} `{_format_ref(c.source_references[0])}`\n")
+            if usable_refs:
+                lines.append(f"{flow} `{_format_ref(usable_refs[0])}`\n")
             else:
                 lines.append(f"{flow}\n")
 

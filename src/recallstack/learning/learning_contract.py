@@ -10,7 +10,11 @@ from typing import Any, Iterator
 
 from recallstack.domain.schemas import ConceptDraft, SourceReference
 from recallstack.learning.i18n import t
-from repowiki.core.topics import is_entry_boot_file, is_toolchain_boot_file
+from repowiki.core.topics import (
+    is_entry_boot_file,
+    is_toolchain_boot_file,
+    is_weak_topic_evidence_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -251,6 +255,10 @@ _SLUG_DENY_NEEDLES: dict[str, tuple[str, ...]] = {
         "protoc",
         "postmortem",
         "/e2e/",
+        ".e2e.",
+        "/tests/",
+        "/test/",
+        "/__tests__/",
         "/fixtures/",
         "tsdown",
         "session.jsonl",
@@ -1240,12 +1248,14 @@ def path_step_contract(
 
 
 def is_junk_evidence_path(path: str, *, slug: str = "") -> bool:
-    """Cargo.toml / package.json / examples / shell — never the one path chip."""
+    """Cargo.toml / package.json / examples / e2e / tests / shell — never the one path chip."""
     raw = (path or "").replace("\\", "/")
     low = raw.lower()
     name = low.rsplit("/", 1)[-1]
     if name in {"readme.md", "readme"}:
         return slug != "project-goal"
+    if slug != "project-goal" and is_weak_topic_evidence_path(raw):
+        return True
     if name in _JUNK_BASENAMES or name.endswith(_JUNK_EXTS):
         return True
     wrapped = f"/{low}/"
@@ -1481,6 +1491,8 @@ def _is_production_src(path: str, *, slug: str = "") -> bool:
     if not norm or is_junk_evidence_path(norm, slug=slug) or _is_js_trampoline(norm):
         return False
     if not norm.lower().endswith(_SRC_EXT):
+        return False
+    if is_weak_topic_evidence_path(norm):
         return False
     wrapped = f"/{norm.lower()}/"
     if "/examples/" in wrapped or "/example/" in wrapped or "/fixtures/" in wrapped:
@@ -3231,10 +3243,14 @@ def concept_definition_hits(
     hits: list[tuple[str, int, str]] = []
     seen: set[str] = set()
 
+    slug = getattr(concept, "slug", "") or ""
+
     def add(path: str, line: int, symbol: str) -> None:
         path = (path or "").replace("\\", "/")
         symbol = (symbol or "").strip()
         if not path or int(line or 0) < 1 or not symbol or _is_dummy_symbol(symbol):
+            return
+        if is_junk_evidence_path(path, slug=slug):
             return
         key = _resolve_store_key(store, path)
         if not key:
@@ -3254,13 +3270,13 @@ def concept_definition_hits(
         path = (ref.path or "").replace("\\", "/")
         symbol = (ref.symbol or "").strip()
         line = int(ref.start_line or 0)
+        if is_junk_evidence_path(path, slug=slug):
+            continue
         if symbol:
             resolved = resolve_symbol_definition(store, symbol, prefer_path=path)
             if resolved:
                 path, line = resolved
         add(path, line, symbol)
-
-    slug = getattr(concept, "slug", "") or ""
     suffixes, hint_sym = _EVIDENCE_HINTS.get(slug, ((), ""))
     if hint_sym and hint_sym.lower() not in _WEAK_SYMBOLS:
         picked = _pick_symbol_in_store(store, hint_sym, slug, suffixes)

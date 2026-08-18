@@ -56,9 +56,16 @@ def build_deterministic_outline(
         n_deep = max(_MIN_DEEP, min(_MAX_DEEP, ceil(len(names) * _DEEP_FRACTION)))
         n_deep = min(n_deep, len(names))
 
-    entry_paths = [f.path for f in project.files if f.is_entrypoint]
-    if not entry_paths:
-        entry_paths = graph.get_entry_points()[:8]
+    from repowiki.core.topics import process_entrypoint_paths
+
+    flagged = [f.path for f in project.files if f.is_entrypoint]
+    graph_entries = graph.get_entry_points()[:8]
+    entry_paths = flagged or graph_entries
+    start_paths = process_entrypoint_paths(
+        [f.path for f in project.files],
+        flagged=flagged,
+        graph_entries=graph_entries,
+    )
     entry_set = set(entry_paths)
 
     entry_modules: list[str] = []
@@ -115,7 +122,7 @@ def build_deterministic_outline(
         top_mods = names[: min(6, len(names))]
     zh = (language or "en").strip().lower().startswith(("zh", "cn"))
     hubs = ", ".join(f"`{n}`" for n in top_mods[:6]) if top_mods else ""
-    entries = ", ".join(f"`{p}`" for p in entry_paths[:6]) if entry_paths else ""
+    entries = ", ".join(f"`{p}`" for p in (start_paths or entry_paths)[:6]) if (start_paths or entry_paths) else ""
     if zh:
         overview_bits = [
             f"{project.name} 的目标、一次真实调用经过谁、仓库怎么拆。"

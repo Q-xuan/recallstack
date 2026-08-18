@@ -1041,25 +1041,120 @@ _LOOP_SKIP_NEEDLES = (
     "/e2e/",
     "/fixtures/",
     "/fixture/",
+    "/tests/",
+    "/test/",
+    "/__tests__/",
     "tsdown",
+    "webscaffold",
+    "session.jsonl",
+    ".e2e.",
     ".yml",
     ".yaml",
+)
+_TEST_FILE_SUFFIXES = (
+    ".e2e.ts",
+    ".e2e.tsx",
+    ".e2e.js",
+    ".e2e.jsx",
+    ".spec.ts",
+    ".spec.tsx",
+    ".spec.js",
+    ".test.ts",
+    ".test.tsx",
+    ".test.js",
+)
+_SCAFFOLD_TEXT_RE = re.compile(
+    r"webscaffold|\.e2e\.(?:ts|tsx|js|jsx)\b|/e2e/|session\.jsonl",
+    re.I,
 )
 
 
 def is_weak_topic_evidence_path(path: str) -> bool:
-    """Docs / postmortem / e2e / tsdown / yaml presets are not runtime evidence."""
+    """Docs / postmortem / e2e / tests / tsdown / yaml presets are not runtime evidence.
+
+    ``apps/web/tests/foo.e2e.ts`` is a test file even though it is not under
+    ``/e2e/``. ``WebScaffold`` / ``session.jsonl`` are harnesses, not the loop.
+    """
     low = _norm_topic_path(path)
     if low.endswith("docs/architecture.md") or low == "docs/architecture.md":
         return False
     if any(n in low for n in _LOOP_SKIP_NEEDLES):
         return True
     leaf = low.rsplit("/", 1)[-1]
-    if leaf.endswith((".md", ".yml", ".yaml", ".json")):
+    if leaf.endswith((".md", ".yml", ".yaml", ".json", ".jsonl")):
+        return True
+    if leaf.endswith(_TEST_FILE_SUFFIXES):
         return True
     if leaf in {"agents.md", "claude.md", "readme.md", "readme"}:
         return True
+    compact = leaf.replace("-", "").replace("_", "")
+    if "webscaffold" in compact:
+        return True
     return False
+
+
+def is_weak_entrypoint_path(path: str) -> bool:
+    """Stub / fixture / e2e / tsdown — never the process start chip."""
+    if is_weak_topic_evidence_path(path):
+        return True
+    low = _norm_topic_path(path)
+    leaf = low.rsplit("/", 1)[-1]
+    stem = leaf.rsplit(".", 1)[0]
+    if stem.endswith(("-stub", "_stub")) or stem == "stub":
+        return True
+    if "stub" in stem and ("module" in stem or "node" in stem):
+        return True
+    return False
+
+
+def text_cites_scaffold_evidence(text: str) -> bool:
+    """True when prose names an e2e harness (WebScaffold / ``*.e2e.ts``)."""
+    return bool(_SCAFFOLD_TEXT_RE.search(text or ""))
+
+
+def _looks_like_process_entry(path: str) -> bool:
+    if is_weak_entrypoint_path(path) or is_toolchain_boot_file(path):
+        return False
+    low = _norm_topic_path(path)
+    name = low.rsplit("/", 1)[-1]
+    stem = name.rsplit(".", 1)[0]
+    if name not in _BOOT_NAME and stem not in {"main", "bin", "cli", "index", "boot", "app"}:
+        return False
+    if not name.endswith((".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".rs", ".go")):
+        return False
+    if low.startswith("apps/") or "/apps/" in f"/{low}/":
+        return True
+    if low.startswith(("src/", "bin/", "cmd/")) or "/src/bin/" in f"/{low}/":
+        return True
+    return False
+
+
+def pick_process_entrypoint(paths: list[str] | None) -> str | None:
+    """Best ``apps/*/src/{bin,main}.ts``-style entry. Never stub / e2e / tsdown."""
+    picked = process_entrypoint_paths(list(paths or []))
+    return picked[0] if picked else None
+
+
+def process_entrypoint_paths(
+    paths: list[str] | None = None,
+    *,
+    flagged: list[str] | None = None,
+    graph_entries: list[str] | None = None,
+) -> list[str]:
+    """Real process entries for the overview start line."""
+    ordered: list[str] = []
+    for pool in (flagged, graph_entries, paths):
+        for raw in pool or []:
+            path = (raw or "").replace("\\", "/")
+            if path and path not in ordered:
+                ordered.append(path)
+    picked = [
+        p
+        for p in ordered
+        if not is_weak_entrypoint_path(p)
+        and (is_entry_boot_file(p) or _looks_like_process_entry(p))
+    ]
+    return _prefer_boot(picked)
 
 
 def is_agent_loop_file(path: str) -> bool:
@@ -1108,7 +1203,7 @@ def is_toolchain_boot_file(path: str) -> bool:
 
 def is_entry_boot_file(path: str) -> bool:
     """grok / pager binary boot, not toolchain scripts or aux CLIs."""
-    if is_toolchain_boot_file(path):
+    if is_toolchain_boot_file(path) or is_weak_entrypoint_path(path):
         return False
     low = _norm_topic_path(path)
     parts = [p for p in low.split("/") if p]
@@ -1134,7 +1229,7 @@ def is_entry_boot_file(path: str) -> bool:
             return True
         if low.startswith("apps/") or "/apps/" in f"/{low}/":
             return True
-    if stem in {"cli", "index"} and name.endswith((".ts", ".js", ".mjs", ".cjs")):
+    if stem in {"cli", "index", "bin"} and name.endswith((".ts", ".js", ".mjs", ".cjs")):
         if low.startswith("apps/") or "/apps/" in f"/{low}/":
             return True
     return False
@@ -1339,8 +1434,12 @@ def _boot_rank(path: str) -> int:
         score -= 10
     if "pager" in low:
         score -= 8
-    if leaf.startswith("main.") or leaf in {"main.rs", "app.rs", "boot.rs"}:
+    if leaf.startswith("main.") or leaf in {"main.rs", "app.rs", "boot.rs", "bin.ts", "bin.js"}:
         score -= 5
+    if low.startswith("apps/") or "/apps/" in f"/{low}/":
+        score -= 4
+    if "/cli/" in f"/{low}/":
+        score -= 2
     if low.startswith("bin/") or "/bin/" in f"/{low}/":
         score -= 2
     score += _production_rank(path) * 20

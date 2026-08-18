@@ -271,11 +271,21 @@ class WikiBuilder:
             lines.append(f"{overview.one_liner}\n")
 
         from repowiki.core.grounding import is_fragment_claim, is_inventory_focus
+        from repowiki.core.topics import is_weak_entrypoint_path, text_cites_scaffold_evidence
+
+        def _keep_what(raw: str) -> bool:
+            text = str(raw or "").strip()
+            if not text or is_fragment_claim(text) or text_cites_scaffold_evidence(text):
+                return False
+            match = re.search(r"(?:进程从|The process starts at)\s*`([^`]+)`", text, re.I)
+            if match:
+                path = match.group(1).strip().split()[0].split(":")[0]
+                if is_weak_entrypoint_path(path):
+                    return False
+            return True
 
         what = _dedupe_claim_lines(
-            s
-            for s in (getattr(overview, "what_it_is", None) or [])
-            if str(s).strip() and not is_fragment_claim(str(s))
+            s for s in (getattr(overview, "what_it_is", None) or []) if _keep_what(str(s))
         )
         lines.append(f"## {structural_title('what-is', language)}\n")
         if what:

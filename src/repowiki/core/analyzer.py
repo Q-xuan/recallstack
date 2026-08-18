@@ -1212,13 +1212,17 @@ def _fallback_what_it_is(
             items.append(f"仓库目标与边界写在 README，而不是目录名。 `{readme.path}:1`")
         else:
             items.append(f"The goal lives in the README, not the folder names. `{readme.path}:1`")
-    for f in project.files:
-        if not f.is_entrypoint:
-            continue
+    from repowiki.core.topics import process_entrypoint_paths
+
+    start_paths = process_entrypoint_paths(
+        [f.path for f in project.files],
+        flagged=[f.path for f in project.files if f.is_entrypoint],
+    )
+    for path in start_paths[:3]:
         if zh:
-            items.append(f"进程从 `{f.path}:1` 启动，一次调用从这里进图。")
+            items.append(f"进程从 `{path}:1` 启动，一次调用从这里进图。")
         else:
-            items.append(f"The process starts at `{f.path}:1`; one call enters the graph here.")
+            items.append(f"The process starts at `{path}:1`; one call enters the graph here.")
         if len(items) >= 4:
             break
     if outline:

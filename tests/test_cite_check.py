@@ -9,11 +9,13 @@ from repowiki.core.cite_check import (
     verify_wiki_data,
 )
 from repowiki.core.grounding import (
+    cite_index_from_texts,
     is_doc_pack_row,
     is_fragment_claim,
     is_hollow_tip,
     repair_grounded_prose,
     scrub_ungrounded_prose,
+    scrub_wiki_page_content,
     text_cites_foreign_tree,
 )
 from repowiki.core.models import (
@@ -212,6 +214,8 @@ def test_repair_grounded_prose_drops_orphan_ext_and_hollow_tips():
     assert is_fragment_claim("`ts:1`。")
     assert is_fragment_claim("`client.ts:1`。")
     assert is_fragment_claim("- ts:1 启动，一次调用从这里进图。")
+    assert not is_fragment_claim("\n")
+    assert not is_fragment_claim("\n\n")
     assert not is_fragment_claim(
         "进程从 `apps/dsh/src/main.ts:1` 启动，一次调用从这里进图。"
     )
@@ -240,6 +244,44 @@ def test_repair_grounded_prose_drops_orphan_ext_and_hollow_tips():
     assert "`ts:1`" not in leftover
     assert "client.ts:1" not in leftover
     assert "启动，一次调用从这里进图" not in leftover
+
+
+def test_repair_grounded_prose_keeps_markdown_newlines_and_drops_orphan_chip():
+    """GET scrub must not eat ``\\n`` so headings/lists stay on their own lines."""
+    raw = (
+        "关键类型保持英文 identifier，证据用 path:line Symbol 贴在断言旁边。\n"
+        "\n"
+        "## 概述\n"
+        "- 仓库目标与边界写在 README，而不是目录名。\n"
+        "- 进程从 `apps/cli/src/bin.ts:1` 启动，一次调用从这里进图。\n"
+        "不按目录。\n"
+        "\n"
+        "**相关源码:** `apps/cli/src/bin.ts`\n"
+        "再进架构和Cordis 与插件容器。\n"
+        "\n"
+        "## 概述\n"
+        "- `ts:1` 启动，一次调用从这里进图。\n"
+    )
+    repaired = repair_grounded_prose(raw)
+    assert "旁边。## 概述" not in repaired
+    assert "目录名。- 进程从" not in repaired
+    assert "不按目录。**相关源码:**" not in repaired
+    assert "插件容器。## 概述" not in repaired
+    assert "\n## 概述\n" in repaired
+    assert "\n- 仓库目标与边界写在 README" in repaired
+    assert "`ts:1`" not in repaired
+
+    index = cite_index_from_texts(
+        {
+            "apps/cli/src/bin.ts": "export function main() {}\n",
+            "README.md": "# dsh\n",
+        }
+    )
+    scrubbed = scrub_wiki_page_content(raw, index)
+    assert "旁边。## 概述" not in scrubbed
+    assert "\n## 概述\n" in scrubbed
+    assert "\n- 仓库目标与边界写在 README" in scrubbed
+    assert "`ts:1`" not in scrubbed
 
 
 def test_cite_check_works_without_llm_on_deterministic_content():

@@ -288,6 +288,37 @@ def test_entry_and_boot_excludes_protoc_dotslash_as_primary():
     assert is_entry_boot_file("crates/xai-grok-pager/src/lib.rs")
 
 
+def test_e2e_tests_and_stubs_are_not_loop_or_process_evidence():
+    from recallstack.learning.learning_contract import (
+        chip_needs_restamp,
+        is_junk_evidence_path,
+    )
+    from repowiki.core.topics import (
+        is_agent_loop_file,
+        is_entry_boot_file,
+        is_weak_entrypoint_path,
+        is_weak_topic_evidence_path,
+        pick_process_entrypoint,
+        text_cites_scaffold_evidence,
+    )
+
+    e2e = "apps/web/tests/goal-multi-turn-actions.e2e.ts"
+    stub = "apps/web/src/node-module-stub.ts"
+    assert is_weak_topic_evidence_path(e2e)
+    assert is_weak_topic_evidence_path("apps/cli/e2e/WebScaffold.ts")
+    assert is_weak_topic_evidence_path("apps/cli/e2e/session.jsonl")
+    assert not is_agent_loop_file(e2e)
+    assert is_junk_evidence_path(e2e, slug="agent-loop")
+    assert chip_needs_restamp("agent-loop", f"{e2e}:15 WebScaffold")
+    assert is_weak_entrypoint_path(stub)
+    assert not is_entry_boot_file(stub)
+    assert is_entry_boot_file("apps/cli/src/bin.ts")
+    assert is_entry_boot_file("apps/web/src/main.ts")
+    assert pick_process_entrypoint([stub, e2e, "apps/cli/src/bin.ts"]) == "apps/cli/src/bin.ts"
+    assert text_cites_scaffold_evidence("一轮由 e2e 测试通过 WebScaffold 驱动。")
+    assert text_cites_scaffold_evidence(f"`{e2e}:15 WebScaffold`")
+
+
 def test_merge_topics_drops_generic_web_slugs_on_grok_tree():
     from repowiki.core.models import TopicOutline
     from repowiki.core.topics import build_deterministic_topics, merge_topics
