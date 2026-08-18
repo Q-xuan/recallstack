@@ -167,6 +167,25 @@ def _dsh_project_with_decoys() -> ProjectContext:
         ),
         _file("apps/cli/e2e/session.jsonl", '{"d":1}\n', language="jsonl"),
         _file(
+            "apps/web/tests/goal-multi-turn-actions.e2e.ts",
+            "export class WebScaffold {\n  drive() {}\n}\n",
+        ),
+        _file(
+            "apps/web/src/node-module-stub.ts",
+            "export type LoadHookContext = { href: string }\n"
+            "export function load(ctx: LoadHookContext) { return ctx }\n",
+        ),
+        _file(
+            "apps/cli/src/bin.ts",
+            "export function main() { boot() }\n",
+            entry=True,
+        ),
+        _file(
+            "apps/web/src/main.ts",
+            "export function main() { mount() }\n",
+            entry=True,
+        ),
+        _file(
             "packages/boot/src/index.ts",
             "export function boot() { loadBundle() }\n",
         ),
@@ -624,6 +643,7 @@ def test_dsh_decoys_do_not_steal_overview_or_topics(monkeypatch):
     if "agent-loop" in by_id:
         loop_files = by_id["agent-loop"].key_files
         assert not any("postmortem" in p or "e2e" in p or p.endswith(".md") for p in loop_files)
+        assert not any("WebScaffold" in p or "/tests/" in p for p in loop_files)
 
     payload = build_wiki_payload(project, graph, [])
     texts = {f.path: f.content or "" for f in project.files}
@@ -651,6 +671,20 @@ def test_dsh_decoys_do_not_steal_overview_or_topics(monkeypatch):
     assert "whenTurnsSettled" not in index["content"]
     assert "agent.cordis.yml" not in index["content"]
     assert "WebScaffold" not in index["content"]
+    assert "node-module-stub" not in index["content"]
+    assert "LoadHookContext" not in index["content"]
+    start_lines = [
+        ln for ln in index["content"].splitlines() if "启动，一次调用从这里进图" in ln
+    ]
+    assert start_lines
+    assert all(
+        "node-module-stub" not in ln and "e2e" not in ln and "fixture" not in ln
+        for ln in start_lines
+    )
+    assert any(
+        "apps/cli/src/bin.ts" in ln or "apps/web/src/main.ts" in ln or "apps/dsh/src/main.ts" in ln
+        for ln in start_lines
+    )
     assert "start_turn" not in blob.lower() or "start_turn" in texts.get(
         "packages/core/src/session.ts", ""
     )
@@ -682,6 +716,56 @@ def test_dsh_decoys_do_not_steal_overview_or_topics(monkeypatch):
     assert "start_turn 是这一轮的闸门" not in page.content
     assert "不是重绘界面" not in page.content
     assert "WebScaffold" not in page.content
+    assert ".e2e.ts" not in page.content
+    assert "goal-multi-turn-actions" not in page.content
+
+    stolen = ConceptDraft(
+        slug="agent-loop",
+        title="Agent Loop",
+        description="一轮由 e2e 测试通过 WebScaffold 驱动。",
+        importance=0.9,
+        source_references=[
+            SourceReference(
+                path="apps/web/tests/goal-multi-turn-actions.e2e.ts",
+                start_line=15,
+                symbol="WebScaffold",
+            ),
+        ],
+    )
+    stolen_page = append_concept_pages(
+        WikiBuilder().build(
+            project,
+            build_deterministic_wiki_data(project, graph, []),
+            graph,
+            language="zh",
+        ),
+        [stolen],
+        file_texts=texts,
+    ).get_page("concepts/agent-loop")
+    assert stolen_page is not None
+    assert "WebScaffold" not in stolen_page.content
+    assert ".e2e.ts" not in stolen_page.content
+    materialized = materialize_wiki_payload(
+        {
+            "pages": [
+                {
+                    "id": "concepts/agent-loop",
+                    "title": "Agent Loop",
+                    "content": stolen_page.content,
+                    "parent_id": "",
+                    "order": 1,
+                }
+            ],
+            "sidebar": [],
+        },
+        [stolen],
+        texts,
+    )
+    concept_md = next(
+        p["content"] for p in materialized["pages"] if p["id"] == "concepts/agent-loop"
+    )
+    assert "WebScaffold" not in concept_md
+    assert ".e2e.ts" not in concept_md
 
 
 def test_mermaid_does_not_keep_start_turn_self_loop():
