@@ -665,6 +665,76 @@ a {
   padding: 10px 8px;
 }
 
+.rs-wiki-opening-copy {
+  margin: 0 0 20px;
+  font-size: 14px;
+  color: var(--rs-ink-2);
+}
+
+.rs-wiki-opening-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.rs-skel {
+  position: relative;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--rs-surface-3);
+}
+
+.rs-skel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--rs-hover-2),
+    transparent
+  );
+  animation: rs-skel-shimmer 1.4s ease-in-out infinite;
+}
+
+.rs-skel-title {
+  height: 28px;
+  width: 56%;
+  margin-bottom: 18px;
+}
+
+.rs-skel-line {
+  height: 12px;
+  width: 100%;
+  margin-bottom: 12px;
+}
+
+.rs-skel-nav {
+  height: 14px;
+  width: 82%;
+  margin-left: 10px;
+}
+
+.rs-skel.is-mid,
+.rs-skel-nav.is-mid {
+  width: 64%;
+}
+
+.rs-skel.is-short,
+.rs-skel-nav.is-short {
+  width: 42%;
+}
+
+@keyframes rs-skel-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
 .rs-wiki-sidebar-foot {
   border-top: 1px solid var(--rs-line);
   padding: 10px;

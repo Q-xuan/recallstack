@@ -90,6 +90,11 @@ export default function RepositoryPage() {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  /** Repo id whose /wiki + version fetch has settled. First paint and id
+   *  switches stay `opening` until this matches, so we never flash the
+   *  empty-state CTA over a wiki that is still in flight. */
+  const [hydratedId, setHydratedId] = useState<string | null>(null);
+  const loadGen = useRef(0);
   const [sourceLocation, setSourceLocation] = useState("");
   const [sourceType, setSourceType] = useState<"local" | "github">("local");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -108,6 +113,7 @@ export default function RepositoryPage() {
   const articleRef = useRef<HTMLDivElement>(null);
 
   const analyzing = Boolean(status && RUNNING.has(status));
+  const opening = Boolean(id) && hydratedId !== id;
 
   function openPage(pageId: string) {
     const sp = new URLSearchParams(searchParams);
@@ -128,26 +134,38 @@ export default function RepositoryPage() {
   }
 
   const loadRepo = useCallback(async (repoId: string) => {
+    const gen = ++loadGen.current;
     setLoading(true);
     setError(null);
     try {
       const r = await recallstackApi.getRepository(repoId);
-      setRepo(r);
       const [v, w, g, p] = await Promise.all([
         recallstackApi.latestVersion(repoId).catch(() => null),
         recallstackApi.wiki(repoId).catch(() => null),
         recallstackApi.concepts(repoId).catch(() => null),
         recallstackApi.learningPath(repoId).catch(() => null),
       ]);
+      if (gen !== loadGen.current) return;
+      setRepo(r);
       setVersion(v);
       setStatus(v?.status ?? null);
       setWiki(w);
       setConcepts(g?.concepts ?? []);
       setPath(p);
     } catch (e: unknown) {
+      if (gen !== loadGen.current) return;
+      setRepo(null);
+      setWiki(null);
+      setVersion(null);
+      setStatus(null);
+      setConcepts([]);
+      setPath(null);
       setError(e instanceof Error ? e.message : tNow("加载失败", "Failed to load"));
     } finally {
-      setLoading(false);
+      if (gen === loadGen.current) {
+        setHydratedId(repoId);
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -173,6 +191,8 @@ export default function RepositoryPage() {
   useEffect(() => {
     if (id) loadRepo(id);
     else {
+      loadGen.current += 1;
+      setHydratedId(null);
       setRepo(null);
       setWiki(null);
       setConcepts([]);
@@ -192,11 +212,18 @@ export default function RepositoryPage() {
         const v = await recallstackApi.latestVersion(id);
         if (cancelled) return;
         setVersion(v);
-        setStatus(v.status);
-        if (!RUNNING.has(v.status)) {
-          window.clearInterval(timer);
-          if (v.status === "failed") setError(v.error_message || tNow("分析失败", "Analysis failed"));
-          else await loadRepo(id);
+        if (RUNNING.has(v.status)) {
+          setStatus(v.status);
+          return;
+        }
+        window.clearInterval(timer);
+        if (v.status === "failed") {
+          setStatus(v.status);
+          setError(v.error_message || tNow("分析失败", "Analysis failed"));
+        } else {
+          // Stay on the analyzing surface until wiki lands — flipping
+          // status to ready first would flash the empty-state CTA.
+          await loadRepo(id);
         }
       } catch {
         /* transient; the next tick retries */
@@ -461,14 +488,16 @@ export default function RepositoryPage() {
       <div className="rs-wiki-sidebar-head">
         <div className="rs-eyebrow">{mode === "learn" ? t("学习路径", "Learning Path") : t("目录", "Contents")}</div>
         <div className="mt-1 text-[15px] font-semibold tracking-tight truncate">
-          {wiki?.project_name || repo?.name || "Repository"}
+          {opening
+            ? t("正在打开这份知识", "Opening this knowledge")
+            : wiki?.project_name || repo?.name || "Repository"}
         </div>
         <button type="button" className="rs-searchbox" onClick={() => setPaletteOpen(true)}>
           <span aria-hidden>⌕</span>
           <span className="flex-1 text-left">{t("搜索 Wiki", "Search wiki")}</span>
           <kbd className="rs-kbd">⌘K</kbd>
         </button>
-        {ready && mode === "read" && (
+        {ready && !opening && mode === "read" && (
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
@@ -479,7 +508,9 @@ export default function RepositoryPage() {
       </div>
 
       <div className="rs-wiki-sidebar-scroll">
-        {mode === "learn" && path ? (
+        {opening ? (
+          <SidebarOpening />
+        ) : mode === "learn" && path ? (
           <ol className="space-y-0.5">
             {path.nodes.map((n, idx) => {
               const pageId = pathPageId(n);
@@ -528,7 +559,7 @@ export default function RepositoryPage() {
             type="button"
             className={mode === "learn" ? "is-active" : ""}
             onClick={() => setMode("learn")}
-            disabled={!path}
+            disabled={!path || opening}
           >
             {t("学习路径", "Learning path")}
           </button>
@@ -560,14 +591,18 @@ export default function RepositoryPage() {
             </Link>
             <div className="min-w-0">
               <div className="text-[14px] font-semibold tracking-tight truncate">
-                {repo?.name || t("仓库", "Repository")}
+                {opening ? t("仓库", "Repository") : repo?.name || t("仓库", "Repository")}
               </div>
               <ScanHeaderProgress
-                commitSha={version?.commit_sha}
-                status={status}
-                progressMessage={version?.progress_message}
-                createdAt={version?.created_at}
-                idleLabel={statusLabel(status, t)}
+                commitSha={opening ? null : version?.commit_sha}
+                status={opening ? null : status}
+                progressMessage={opening ? null : version?.progress_message}
+                createdAt={opening ? null : version?.created_at}
+                idleLabel={
+                  opening
+                    ? t("正在打开这份知识", "Opening this knowledge")
+                    : statusLabel(status, t)
+                }
               />
             </div>
           </div>
@@ -582,7 +617,7 @@ export default function RepositoryPage() {
               <span>{t("搜索", "Search")}</span>
               <kbd className="rs-kbd">⌘K</kbd>
             </button>
-            {ready && (
+            {ready && !opening && (
               <button
                 type="button"
                 onClick={() => {
@@ -594,25 +629,27 @@ export default function RepositoryPage() {
                 ✦ {t("提问", "Ask")}
               </button>
             )}
-            <button
-              type="button"
-              onClick={handleAnalyze}
-              disabled={analyzing}
-              className="rs-btn rs-btn-primary h-8 px-3.5 text-[12px]"
-            >
-              {analyzing
-                ? t("你发起的分析", "Your analysis")
-                : ready
-                  ? t("你在重扫这份知识", "You are rescanning this knowledge")
-                  : t("发起你的分析", "Start your analysis")}
-            </button>
+            {!opening && (
+              <button
+                type="button"
+                onClick={handleAnalyze}
+                disabled={analyzing}
+                className="rs-btn rs-btn-primary h-8 px-3.5 text-[12px]"
+              >
+                {analyzing
+                  ? t("你发起的分析", "Your analysis")
+                  : ready
+                    ? t("你在重扫这份知识", "You are rescanning this knowledge")
+                    : t("发起你的分析", "Start your analysis")}
+              </button>
+            )}
             <Link to="/reviews" className="rs-btn rs-btn-ghost h-8 px-3 text-[12px] hidden sm:flex">
               {t("复习", "Review")}
             </Link>
           </div>
         </div>
 
-        {error && <div className="rs-alert mx-4 mt-3">{error}</div>}
+        {error && !opening && <div className="rs-alert mx-4 mt-3">{error}</div>}
 
         <div className={`rs-wiki-body${askOpen ? " is-asking" : ""}`}>
           <aside className="rs-wiki-sidebar">{sidebar}</aside>
@@ -626,7 +663,9 @@ export default function RepositoryPage() {
           )}
 
           <main className="rs-wiki-main">
-            {!ready ? (
+            {opening ? (
+              <WikiOpening />
+            ) : !ready ? (
               <div className="rs-wiki-article text-center py-24">
                 <div className="rs-hero-mark">⌘</div>
                 <h1 className="rs-title text-[28px] font-semibold tracking-tight mt-5">
@@ -845,6 +884,37 @@ export default function RepositoryPage() {
         }}
       />
     </AppShell>
+  );
+}
+
+function SidebarOpening() {
+  const t = useT();
+  return (
+    <div className="rs-wiki-opening-nav" aria-busy="true" aria-live="polite">
+      <p className="px-3 text-[13px] text-[var(--rs-muted)]">
+        {t("正在打开这份知识", "Opening this knowledge")}
+      </p>
+      <div className="rs-skel rs-skel-nav" />
+      <div className="rs-skel rs-skel-nav is-mid" />
+      <div className="rs-skel rs-skel-nav is-short" />
+      <div className="rs-skel rs-skel-nav" />
+      <div className="rs-skel rs-skel-nav is-mid" />
+    </div>
+  );
+}
+
+function WikiOpening() {
+  const t = useT();
+  return (
+    <div className="rs-wiki-article rs-wiki-opening" aria-busy="true" aria-live="polite">
+      <p className="rs-wiki-opening-copy">{t("正在打开这份知识", "Opening this knowledge")}</p>
+      <div className="rs-skel rs-skel-title" />
+      <div className="rs-skel rs-skel-line" />
+      <div className="rs-skel rs-skel-line" />
+      <div className="rs-skel rs-skel-line is-short" />
+      <div className="rs-skel rs-skel-line" />
+      <div className="rs-skel rs-skel-line is-mid" />
+    </div>
   );
 }
 
