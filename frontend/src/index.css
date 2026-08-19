@@ -1757,14 +1757,15 @@ html[lang="zh-CN"] .rs-wiki-nav-group {
   background: var(--rs-surface-2);
 }
 
+/* Height must follow the SVG. Flex + max-height stretched mermaid's
+   height-less viewport into a 440px empty shell with the graph in the corner. */
 .rs-diagram-body {
-  display: flex;
-  justify-content: center;
   overflow-x: auto;
-  max-height: 440px;
 }
 
 .rs-diagram-body svg {
+  display: block;
+  width: 100%;
   max-width: 100%;
   height: auto;
 }
@@ -1843,6 +1844,8 @@ html[lang="zh-CN"] .rs-wiki-nav-group {
 }
 
 .rs-lightbox-inner svg {
+  display: block;
+  width: 100%;
   max-width: none;
   height: auto;
 }
