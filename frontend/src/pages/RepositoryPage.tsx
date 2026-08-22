@@ -639,7 +639,7 @@ export default function RepositoryPage() {
                 {analyzing
                   ? t("你发起的分析", "Your analysis")
                   : ready
-                    ? t("你在重扫这份知识", "You are rescanning this knowledge")
+                    ? t("重新扫描", "Rescan")
                     : t("发起你的分析", "Start your analysis")}
               </button>
             )}
