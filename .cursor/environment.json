@@ -1,0 +1,20 @@
+{
+  "name": "RecallStack",
+  "install": "./.cursor/install.sh",
+  "terminals": [
+    {
+      "name": "backend",
+      "command": ".venv/bin/python -m recallstack.cli serve --port 8000",
+      "description": "FastAPI backend (RepoWiki + RecallStack API) on http://127.0.0.1:8000"
+    },
+    {
+      "name": "frontend",
+      "command": "cd frontend && npm run dev",
+      "description": "Vite dev server on http://127.0.0.1:5173 (proxies /api to the backend)"
+    }
+  ],
+  "ports": [
+    { "name": "backend", "port": 8000 },
+    { "name": "frontend", "port": 5173 }
+  ]
+}
