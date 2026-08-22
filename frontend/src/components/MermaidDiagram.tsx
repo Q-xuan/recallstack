@@ -11,7 +11,7 @@ function mermaidConfig(theme: "default" | "dark") {
   return {
     startOnLoad: false,
     theme,
-    themeVariables: { fontFamily: "inherit" },
+    themeVariables: { fontFamily: "inherit", background: "transparent" },
     flowchart: mermaidSize,
     sequence: mermaidSize,
     class: mermaidSize,
@@ -85,17 +85,30 @@ export default function MermaidDiagram({ code }: Props) {
       return;
     }
 
+    let cancelled = false;
     const apply = () => {
+      if (cancelled) return;
       const el = container.querySelector("svg");
       if (!el) return;
+      // First layout often reports the tall mermaid canvas; retry after
+      // foreignObject / font metrics settle so a shallow LR chart can crop.
       fitMermaidSvg(el, container.clientWidth);
       setLightboxSvg(el.outerHTML);
     };
 
     apply();
+    const raf = requestAnimationFrame(() => {
+      apply();
+      requestAnimationFrame(apply);
+    });
+    void document.fonts?.ready.then(apply);
     const ro = new ResizeObserver(apply);
     ro.observe(container);
-    return () => ro.disconnect();
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
   }, [svg]);
 
   useEffect(() => {

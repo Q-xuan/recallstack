@@ -184,7 +184,7 @@ def build_deterministic_wiki_data(
             )
         ),
         mermaid_component=prefer_overview_mermaid(
-            project, graph, topics=outline.topics
+            project, graph, topics=outline.topics, language=lang
         ),
         codebase_structure=fill_codebase_purposes(
             codebase_structure_for(project, language=lang),
@@ -253,7 +253,7 @@ def build_deterministic_wiki_data(
         ),
         components=components,
         mermaid_component=prefer_overview_mermaid(
-            project, graph, topics=outline.topics
+            project, graph, topics=outline.topics, language=lang
         ),
         data_flow=t(
             "Entrypoints → core systems → dependents (see architecture and the learning path).",
@@ -942,6 +942,7 @@ def build_wiki_payload(
         graph,
         topics=topics,
         current=wiki_data.overview.mermaid_component,
+        language=lang,
     )
     if not wiki_data.overview.codebase_structure:
         wiki_data.overview.codebase_structure = codebase_structure_for(
@@ -963,6 +964,7 @@ def build_wiki_payload(
         graph,
         topics=topics,
         current=wiki_data.architecture.mermaid_component,
+        language=lang,
     )
     wiki = WikiBuilder().build(project, wiki_data, graph, language=lang)
     store = {

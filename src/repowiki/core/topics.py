@@ -2260,15 +2260,40 @@ def runtime_mermaid_for(
     return "\n".join(lines)
 
 
-_CALLPATH_STAGES: tuple[tuple[tuple[str, ...], str], ...] = (
-    (("apps/cli", "apps/dsh"), "CLI"),
-    (("packages/bundle",), "Bundle"),
-    (("packages/boot", "vendor/cordis"), "Boot/Cordis"),
-    (("packages/acp",), "ACP"),
-    (("packages/api",), "API"),
-    (("packages/client",), "Client"),
-    (("apps/web", "packages/web"), "Web"),
+# One-call stages: path prefixes → role label (handbook names, not bare CLI/Bundle).
+_CALLPATH_STAGE_PREFIXES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("cli", ("apps/cli", "apps/dsh")),
+    ("bundle", ("packages/bundle",)),
+    ("boot", ("packages/boot", "vendor/cordis")),
+    ("acp", ("packages/acp",)),
+    ("api", ("packages/api",)),
+    ("client", ("packages/client",)),
+    ("web", ("apps/web", "packages/web")),
 )
+# (en, zh). Proper nouns stay English.
+_CALLPATH_ROLE: dict[str, tuple[str, str]] = {
+    "cli": ("CLI launcher", "CLI 启动器"),
+    "bundle": ("Bundle assembly", "Bundle 装配"),
+    "boot": ("Boot/Cordis", "Boot/Cordis"),
+    "acp": ("ACP protocol", "ACP 协议层"),
+    "api": ("API gateway", "API 网关"),
+    "client": ("Client runtime", "Client 运行时"),
+    "web": ("Web app shell", "Web 应用壳"),
+}
+# Stored wikis still have the bare abbreviations; GET rewrite maps them back.
+_CALLPATH_LABEL_KEYS: dict[str, str] = {
+    "CLI": "cli",
+    "Bundle": "bundle",
+    "Boot/Cordis": "boot",
+    "ACP": "acp",
+    "API": "api",
+    "Client": "client",
+    "Web": "web",
+}
+for _key, (_en, _zh) in _CALLPATH_ROLE.items():
+    _CALLPATH_LABEL_KEYS[_en] = _key
+    _CALLPATH_LABEL_KEYS[_zh] = _key
+_CALLPATH_STAGE_KEYS: tuple[str, ...] = tuple(key for key, _prefixes in _CALLPATH_STAGE_PREFIXES)
 _SEAM_DEFINITION_NEEDLES = (
     "service definition",
     "service provider",
@@ -2290,25 +2315,98 @@ def _paths_hit_prefixes(paths: list[str], prefixes: tuple[str, ...]) -> bool:
     return False
 
 
-def callpath_mermaid_for(project: ProjectContext | None) -> str:
-    """One-call flowchart: CLI → Bundle → Boot/Cordis → ACP → API → Client → Web."""
-    if project is None:
-        return ""
-    paths = [(f.path or "").replace("\\", "/") for f in project.files]
-    stages = [
-        label
-        for prefixes, label in _CALLPATH_STAGES
-        if _paths_hit_prefixes(paths, prefixes)
-    ]
-    if len(stages) < 2:
-        return ""
+def _resolve_wiki_lang(language: str | None = None) -> str:
+    if language:
+        return "zh" if _is_zh(language) else "en"
+    try:
+        from recallstack.learning.i18n import content_lang
+
+        return "zh" if content_lang() == "zh" else "en"
+    except Exception:
+        return "en"
+
+
+def callpath_role_label(key: str, language: str | None = None) -> str:
+    """Handbook role name for a call-path stage (not a bare CLI/Bundle token)."""
+    pair = _CALLPATH_ROLE.get(key)
+    if not pair:
+        return key
+    en, zh = pair
+    return zh if _resolve_wiki_lang(language) == "zh" else en
+
+
+def _mermaid_node_labels(source: str) -> list[str]:
+    return [m.group(1).strip() for m in _MERMAID_NODE_LABEL.finditer(source or "")]
+
+
+def callpath_key_for_label(label: str) -> str | None:
+    text = (label or "").strip()
+    if not text:
+        return None
+    if text in _CALLPATH_LABEL_KEYS:
+        return _CALLPATH_LABEL_KEYS[text]
+    low = text.lower()
+    for alias, key in _CALLPATH_LABEL_KEYS.items():
+        if alias.lower() == low:
+            return key
+    return None
+
+
+def render_callpath_mermaid(labels: list[str]) -> str:
     lines = ["flowchart LR"]
-    ids = [f"s{i}" for i in range(len(stages))]
-    for nid, lab in zip(ids, stages, strict=True):
+    ids = [f"s{i}" for i in range(len(labels))]
+    for nid, lab in zip(ids, labels, strict=True):
         lines.append(f'  {nid}["{lab}"]')
     for src, dst in zip(ids, ids[1:], strict=False):
         lines.append(f"  {src} --> {dst}")
     return "\n".join(lines)
+
+
+def callpath_labels_for(keys: list[str] | None = None, *, language: str | None = None) -> list[str]:
+    stage_keys = list(keys) if keys else list(_CALLPATH_STAGE_KEYS)
+    return [callpath_role_label(key, language) for key in stage_keys]
+
+
+def detect_callpath_keys_from_text(text: str) -> list[str]:
+    """Stage keys mentioned by path token (apps/cli, packages/bundle, …)."""
+    blob = text or ""
+    keys: list[str] = []
+    for key, prefixes in _CALLPATH_STAGE_PREFIXES:
+        if any(pref in blob for pref in prefixes):
+            keys.append(key)
+    return keys
+
+
+def mermaid_is_callpath_overview(source: str) -> bool:
+    """True when every node is a known call-path stage (any language / alias)."""
+    labels = _mermaid_node_labels(source)
+    if len(labels) < 2:
+        return False
+    return all(callpath_key_for_label(lab) for lab in labels)
+
+
+def relabel_callpath_mermaid(source: str, *, language: str | None = None) -> str:
+    """Rebuild a stored call-path chart with handbook role names."""
+    labels = _mermaid_node_labels(source)
+    keys = [callpath_key_for_label(lab) for lab in labels]
+    if len(labels) < 2 or not all(keys):
+        return (source or "").strip()
+    return render_callpath_mermaid(callpath_labels_for([k for k in keys if k], language=language))
+
+
+def callpath_mermaid_for(project: ProjectContext | None, language: str | None = None) -> str:
+    """One-call flowchart: CLI → Bundle → Boot/Cordis → ACP → API → Client → Web."""
+    if project is None:
+        return ""
+    paths = [(f.path or "").replace("\\", "/") for f in project.files]
+    keys = [
+        key
+        for key, prefixes in _CALLPATH_STAGE_PREFIXES
+        if _paths_hit_prefixes(paths, prefixes)
+    ]
+    if len(keys) < 2:
+        return ""
+    return render_callpath_mermaid(callpath_labels_for(keys, language=language))
 
 
 def mermaid_is_local_package_subgraph(source: str) -> bool:
@@ -2344,9 +2442,10 @@ def prefer_overview_mermaid(
     graph: DependencyGraph | None = None,
     topics=None,
     current: str = "",
+    language: str | None = None,
 ) -> str:
     """Overview/architecture diagram follows one call, not a package subgraph."""
-    callpath = callpath_mermaid_for(project)
+    callpath = callpath_mermaid_for(project, language=language)
     graph_m = (graph.to_mermaid() if graph else "") or ""
     existing = (current or "").strip()
 

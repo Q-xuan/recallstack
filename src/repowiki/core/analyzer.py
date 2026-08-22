@@ -904,6 +904,7 @@ class Analyzer:
             graph,
             topics=(outline.topics if outline else None),
             current=overview.mermaid_component,
+            language=self._lang(),
         )
         if not overview.codebase_structure:
             overview.codebase_structure = codebase_structure_for(
@@ -1001,6 +1002,7 @@ class Analyzer:
             graph,
             topics=topics,
             current=wiki.overview.mermaid_component,
+            language=self._lang(),
         )
         if not wiki.overview.codebase_structure:
             wiki.overview.codebase_structure = codebase_structure_for(
@@ -1020,6 +1022,7 @@ class Analyzer:
             graph,
             topics=topics,
             current=wiki.architecture.mermaid_component,
+            language=self._lang(),
         )
         if not (wiki.architecture.description or "").strip():
             wiki.architecture = self._fill_architecture_gaps(
@@ -1135,6 +1138,7 @@ class Analyzer:
             graph,
             topics=(outline.topics if outline else None),
             current=arch.mermaid_component,
+            language=self._lang(),
         )
         if not arch.term_tips:
             arch.term_tips = _generic_term_tips(self._lang())

@@ -1831,6 +1831,8 @@ html[lang="zh-CN"] .rs-wiki-nav-group {
    height-less viewport into a 440px empty shell with the graph in the corner. */
 .rs-diagram-body {
   overflow-x: auto;
+  overflow-y: hidden;
+  line-height: 0;
 }
 
 .rs-diagram-body svg {
@@ -1838,6 +1840,7 @@ html[lang="zh-CN"] .rs-wiki-nav-group {
   width: 100%;
   max-width: 100%;
   height: auto;
+  vertical-align: top;
 }
 
 .rs-diagram-zoom {

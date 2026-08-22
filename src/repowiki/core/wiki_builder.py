@@ -955,38 +955,37 @@ def localize_split_table_markdown(content: str, *, language: str = "zh") -> str:
     return "".join(out)
 
 
-def replace_subgraph_overview_mermaid(content: str, *, page_id: str = "") -> str:
-    """GET: swap a packages/client-only overview diagram for the call-path stages."""
+def replace_subgraph_overview_mermaid(
+    content: str, *, page_id: str = "", language: str | None = None
+) -> str:
+    """GET: swap a packages/client-only overview, or relabel a bare call-path chain."""
     if page_id not in {"index", "architecture", ""} or "```mermaid" not in (content or ""):
         return content
-    from repowiki.core.topics import mermaid_is_local_package_subgraph
+    from repowiki.core.topics import (
+        callpath_labels_for,
+        detect_callpath_keys_from_text,
+        mermaid_is_callpath_overview,
+        mermaid_is_local_package_subgraph,
+        relabel_callpath_mermaid,
+        render_callpath_mermaid,
+    )
 
     fence = _MERMAID_FENCE_RE.search(content)
-    if not fence or not mermaid_is_local_package_subgraph(fence.group(1)):
+    if not fence:
         return content
-    stages: list[str] = []
-    for token, label in (
-        ("apps/cli", "CLI"),
-        ("apps/dsh", "CLI"),
-        ("packages/bundle", "Bundle"),
-        ("packages/boot", "Boot/Cordis"),
-        ("vendor/cordis", "Boot/Cordis"),
-        ("packages/acp", "ACP"),
-        ("packages/api", "API"),
-        ("packages/client", "Client"),
-        ("apps/web", "Web"),
-    ):
-        if token in content and label not in stages:
-            stages.append(label)
-    if len(stages) < 2:
-        stages = ["CLI", "Bundle", "Boot/Cordis", "ACP", "API", "Client", "Web"]
-    lines = ["flowchart LR"]
-    ids = [f"s{i}" for i in range(len(stages))]
-    for nid, lab in zip(ids, stages, strict=True):
-        lines.append(f'  {nid}["{lab}"]')
-    for src, dst in zip(ids, ids[1:], strict=False):
-        lines.append(f"  {src} --> {dst}")
-    diagram = "\n".join(lines)
+    body = fence.group(1)
+    if mermaid_is_local_package_subgraph(body):
+        keys = detect_callpath_keys_from_text(content)
+        labels = callpath_labels_for(keys or None, language=language)
+        if len(labels) < 2:
+            labels = callpath_labels_for(language=language)
+        diagram = render_callpath_mermaid(labels)
+    elif mermaid_is_callpath_overview(body):
+        diagram = relabel_callpath_mermaid(body, language=language)
+        if diagram == body.strip():
+            return content
+    else:
+        return content
     return content[: fence.start()] + f"```mermaid\n{diagram}\n```" + content[fence.end() :]
 
 
@@ -1247,7 +1246,9 @@ def upgrade_wiki_page_content(
     content = fill_key_type_chip_lines(content)
     content = upgrade_mermaid_fences(content)
     content = thicken_subsystem_diagrams(content)
-    content = replace_subgraph_overview_mermaid(content, page_id=page_id)
+    content = replace_subgraph_overview_mermaid(
+        content, page_id=page_id, language=language
+    )
     content = shorten_mermaid_node_labels(content)
     content = strip_reading_wiki_homework(content, page_id=page_id)
     content = upgrade_architecture_loop_wording(content)
