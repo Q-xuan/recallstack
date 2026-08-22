@@ -31,6 +31,7 @@ from repowiki.core.wiki_builder import (
     fill_key_type_chip_lines,
     filter_unknown_wiki_links,
     normalize_mermaid_source,
+    replace_subgraph_overview_mermaid,
     shorten_mermaid_node_labels,
     strip_reading_wiki_homework,
     upgrade_architecture_loop_wording,
@@ -1264,5 +1265,72 @@ def test_clip_mermaid_label_does_not_cut_mid_flag_or_path():
     )
     assert 's1["launcher 解析 --profile、-"]' not in rendered
     assert 's2["创建 AppWebEntry 并运行（apps"]' not in rendered
+
+
+_ABBREV_CALLPATH = (
+    "flowchart LR\n"
+    '  s0["CLI"]\n'
+    '  s1["Bundle"]\n'
+    '  s2["Boot/Cordis"]\n'
+    '  s3["ACP"]\n'
+    '  s4["API"]\n'
+    '  s5["Client"]\n'
+    '  s6["Web"]\n'
+    "  s0 --> s1\n"
+    "  s1 --> s2\n"
+    "  s2 --> s3\n"
+    "  s3 --> s4\n"
+    "  s4 --> s5\n"
+    "  s5 --> s6\n"
+)
+
+_CLIENT_SUBGRAPH = (
+    "flowchart TD\n"
+    '  a["packages/client/src/session.ts"] --> b["packages/client/src/ui.ts"]\n'
+    '  b --> c["packages/client/src/store.ts"]\n'
+)
+
+
+def test_replace_overview_relabels_abbrev_callpath_zh():
+    md = f"# 架构概览\n\n## 系统架构\n\n```mermaid\n{_ABBREV_CALLPATH}```\n"
+    out = replace_subgraph_overview_mermaid(md, page_id="architecture", language="zh")
+    assert 's0["CLI 启动器"]' in out
+    assert 's1["Bundle 装配"]' in out
+    assert 's2["Boot/Cordis"]' in out
+    assert 's3["ACP 协议层"]' in out
+    assert 's4["API 网关"]' in out
+    assert 's5["Client 运行时"]' in out
+    assert 's6["Web 应用壳"]' in out
+    assert 's0["CLI"]' not in out
+    via_get = upgrade_wiki_page_content(md, {"architecture"}, language="zh", page_id="architecture")
+    assert 's0["CLI 启动器"]' in via_get
+    assert 's6["Web 应用壳"]' in via_get
+
+
+def test_replace_overview_relabels_abbrev_callpath_en():
+    md = f"# Architecture\n\n## System architecture\n\n```mermaid\n{_ABBREV_CALLPATH}```\n"
+    out = replace_subgraph_overview_mermaid(md, page_id="architecture", language="en")
+    assert 's0["CLI launcher"]' in out
+    assert 's1["Bundle assembly"]' in out
+    assert 's3["ACP protocol"]' in out
+    assert 's4["API gateway"]' in out
+    assert 's5["Client runtime"]' in out
+    assert 's6["Web app shell"]' in out
+    assert 's0["CLI"]' not in out
+    assert 's1["Bundle"]' not in out
+
+
+def test_replace_overview_swaps_client_subgraph_for_zh_roles():
+    md = (
+        "# 概述\n\n"
+        "apps/cli packages/bundle packages/boot packages/acp "
+        "packages/api packages/client apps/web\n\n"
+        f"```mermaid\n{_CLIENT_SUBGRAPH}```\n"
+    )
+    out = replace_subgraph_overview_mermaid(md, page_id="index", language="zh")
+    assert "packages/client/src/session.ts" not in out
+    assert 's0["CLI 启动器"]' in out
+    assert 's1["Bundle 装配"]' in out
+    assert "flowchart LR" in out
 
 

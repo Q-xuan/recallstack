@@ -1154,14 +1154,27 @@ def test_fixture_2_overview_mermaid_is_one_call_not_client_subgraph(monkeypatch)
         '  b --> c["packages/client/src/store.ts"]\n'
     )
     assert mermaid_is_local_package_subgraph(client_only)
-    diagram = prefer_overview_mermaid(project, graph, current=client_only)
+    diagram = prefer_overview_mermaid(project, graph, current=client_only, language="zh")
     assert mermaid_is_local_package_subgraph(diagram) is False
-    for token in ("CLI", "Bundle", "Boot/Cordis", "ACP", "API", "Client", "Web"):
+    for token in (
+        "CLI 启动器",
+        "Bundle 装配",
+        "Boot/Cordis",
+        "ACP 协议层",
+        "API 网关",
+        "Client 运行时",
+        "Web 应用壳",
+    ):
         assert token in diagram
+    assert '["CLI"]' not in diagram
+    assert '["Bundle"]' not in diagram
     assert "packages/client/src/session.ts" not in diagram
-    raw = callpath_mermaid_for(project)
+    raw = callpath_mermaid_for(project, language="zh")
     assert raw.startswith("flowchart LR")
-    assert "CLI" in raw and "Web" in raw
+    assert "CLI 启动器" in raw and "Web 应用壳" in raw
+    en = callpath_mermaid_for(project, language="en")
+    assert "CLI launcher" in en and "Web app shell" in en
+    assert '["CLI"]' not in en
 
     cleaned = verify_wiki_data(_polluted_90_wiki(project), project)
     payload = build_wiki_payload(project, graph, [], wiki_data=cleaned)
@@ -1169,7 +1182,7 @@ def test_fixture_2_overview_mermaid_is_one_call_not_client_subgraph(monkeypatch)
     arch = next(p for p in payload["pages"] if p["id"] == "architecture")
     for page in (index, arch):
         assert "packages/client/src/session.ts" not in page["content"]
-        assert "CLI" in page["content"]
+        assert "CLI 启动器" in page["content"]
         assert "Boot/Cordis" in page["content"] or "Cordis" in page["content"]
 
 

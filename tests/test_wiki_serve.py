@@ -813,3 +813,45 @@ def test_path_out_does_not_walk_store_for_junk_other_slug(monkeypatch):
     )
     out = path_out(path)
     assert out.nodes[0].evidence_chip == "package.json:1"
+
+
+def test_materialize_relabels_abbrev_callpath_on_architecture(monkeypatch):
+    monkeypatch.setenv("RECALLSTACK_CONTENT_LANG", "zh")
+    payload = {
+        "serve_revision": 7,
+        "pages": [
+            {
+                "id": "architecture",
+                "title": "架构概览",
+                "content": (
+                    "# 架构概览\n\n## 系统架构\n\n"
+                    "```mermaid\n"
+                    "flowchart LR\n"
+                    '  s0["CLI"]\n'
+                    '  s1["Bundle"]\n'
+                    '  s2["Boot/Cordis"]\n'
+                    '  s3["ACP"]\n'
+                    '  s4["API"]\n'
+                    '  s5["Client"]\n'
+                    '  s6["Web"]\n'
+                    "  s0 --> s1\n"
+                    "  s1 --> s2\n"
+                    "  s2 --> s3\n"
+                    "  s3 --> s4\n"
+                    "  s4 --> s5\n"
+                    "  s5 --> s6\n"
+                    "```\n"
+                ),
+                "parent_id": "",
+                "order": 0,
+            }
+        ],
+        "sidebar": [],
+    }
+    out = materialize_wiki_payload(payload, [], {})
+    page = next(p for p in out["pages"] if p["id"] == "architecture")
+    assert 's0["CLI 启动器"]' in page["content"]
+    assert 's1["Bundle 装配"]' in page["content"]
+    assert 's6["Web 应用壳"]' in page["content"]
+    assert 's0["CLI"]' not in page["content"]
+    assert out["serve_revision"] == WIKI_SERVE_REVISION
