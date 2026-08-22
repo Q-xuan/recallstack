@@ -116,7 +116,7 @@ describe("fitMermaidSvg", () => {
   it("crops leftover viewBox height and hugs painted LR content", () => {
     const nodes = [
       {
-        getBBox: () => ({ x: 12, y: 10, width: 1360, height: 68 }),
+        getBBox: () => ({ x: 12, y: 10, width: 1360, height: 160 }),
       },
     ];
     const svg = mockSvg({
@@ -127,11 +127,11 @@ describe("fitMermaidSvg", () => {
     const fitted = fitMermaidSvg(svg, 720);
     assert.equal(fitted, true);
     const next = parseViewBoxAttr(svg.getAttribute("viewBox"));
-    const expected = paddedContentBox({ x: 12, y: 10, w: 1360, h: 68 });
+    const expected = paddedContentBox({ x: 12, y: 10, w: 1360, h: 160 });
     assert.ok(next);
     assert.equal(next.w, expected.w);
     assert.equal(next.h, expected.h);
-    assert.ok(next.h < 120, "shallow LR chart must not keep a tall canvas");
+    assert.ok(next.h < 220, "shallow LR chart must not keep a tall canvas");
     assert.equal(svg.getAttribute("width"), "100%");
     assert.equal(svg.style.aspectRatio, `${expected.w} / ${expected.h}`);
     assert.equal(svg.style.height, "auto");
